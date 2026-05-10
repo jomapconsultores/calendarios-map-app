@@ -36,6 +36,7 @@ class SupabaseAPI:
         h = self.headers.copy(); h['Prefer'] = 'return=representation'
         r = requests.post(f'{self.url}/rest/v1/{table}', headers=h, json=data)
         if r.status_code in [200, 201]: return r.json() if isinstance(r.json(), list) else [r.json()]
+        print(f"INSERT ERROR {r.status_code}: {r.text}")
         return None
     def update(self, table, id_val, data, id_col='id'):
         r = requests.patch(f'{self.url}/rest/v1/{table}?{id_col}=eq.{id_val}', headers=self.headers, json=data)
@@ -86,8 +87,6 @@ def create_app():
             if u: return User(u[0])
         return None
 
-    # ============= RUTAS PRINCIPALES =============
-    
     @app.route('/')
     def home():
         return redirect('/dashboard') if current_user.is_authenticated else render_template('index.html')
@@ -132,13 +131,24 @@ def create_app():
     @app.route('/register', methods=['GET', 'POST'])
     def register():
         if request.method == 'POST':
+            email = request.form.get('email')
+            password = request.form.get('password')
+            name = request.form.get('full_name')
+            cals = request.form.getlist('calendars')
+            
+            # Verificar si ya existe
+            existing = app.supabase.get('users', {'email': email})
+            if existing:
+                flash('Este email ya está registrado.', 'warning')
+                cals_all = app.supabase.get('calendar_config')
+                return render_template('register.html', calendarios=cals_all)
+            
             data = {
-                'email': request.form.get('email'),
-                'password_hash': generate_password_hash(request.form.get('password')),
-                'full_name': request.form.get('full_name'),
+                'email': email,
+                'password_hash': generate_password_hash(password),
+                'full_name': name,
                 'role': 'staff'
             }
-            cals = request.form.getlist('calendars')
             result = app.supabase.insert('users', data)
             if result:
                 uid = result[0]['id']
@@ -150,9 +160,9 @@ def create_app():
                     })
                 flash('✅ Registro enviado. Espera aprobación del administrador.', 'success')
                 return redirect('/login')
-            flash('Error al registrar', 'danger')
-        cals = app.supabase.get('calendar_config')
-        return render_template('register.html', calendarios=cals)
+            flash('Error al registrar. Intenta de nuevo.', 'danger')
+        cals_all = app.supabase.get('calendar_config')
+        return render_template('register.html', calendarios=cals_all)
 
     @app.route('/logout')
     @login_required
@@ -160,8 +170,6 @@ def create_app():
         logout_user()
         return redirect('/')
 
-    # ============= GOOGLE OAUTH =============
-    
     @app.route('/auth/google')
     @login_required
     def google_auth():
@@ -197,12 +205,10 @@ def create_app():
         flash('✅ Google Calendar conectado!', 'success')
         return redirect('/dashboard')
 
-    # ============= ADMIN =============
-    
     @app.route('/admin/approve-one/<pid>/<cal_id>', methods=['POST'])
     @login_required
     def admin_approve_one(pid, cal_id):
-        if not is_admin(): return {'success': False}
+        if not is_admin(): return {'success': False, 'error': 'No autorizado'}
         app.supabase.update('calendar_permissions', pid, {'status': 'approved'})
         return {'success': True}
 
@@ -222,8 +228,6 @@ def create_app():
             app.supabase.update('calendar_permissions', p['id'], {'status': 'rejected'})
         return {'success': True}
 
-    # ============= CALENDARIO =============
-    
     @app.route('/calendar')
     @login_required
     def calendar():
@@ -342,7 +346,7 @@ def create_app():
         creds = get_google_creds(app)
         if not creds:
             app.supabase.update('appointments', aid, {'status': 'confirmed'})
-            return {'success': True, 'message': 'Aprobada (sin Google)'}
+            return {'success': True, 'message': 'Aprobada'}
         try:
             service = build('calendar', 'v3', credentials=creds)
             cal_map = {c['calendar_id']: c['email'] for c in app.supabase.get('calendar_config') if c.get('email')}
