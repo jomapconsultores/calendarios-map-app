@@ -88,29 +88,27 @@ def create_app():
         return redirect('/dashboard') if current_user.is_authenticated else render_template('index.html')
 
     @app.route('/dashboard')
-    @login_required
-    def dashboard():
-        if is_admin():
-            cals = app.supabase.get('calendar_config')
-            # Solicitudes pendientes agrupadas por usuario
-            pending_raw = app.supabase.get('calendar_permissions', {'status': 'pending'})
-            seen = set(); pending = []
-            for p in pending_raw:
-                if p['user_id'] not in seen:
-                    seen.add(p['user_id'])
-                    u = app.supabase.get('users', {'id': p['user_id']})
-                    item = {'user_id': p['user_id'], 'user_name': '', 'user_email': '', 'perm_id': p['id'], 'calendars': []}
-                    if u:
-                        item['user_name'] = u[0].get('full_name', '')
-                        item['user_email'] = u[0].get('email', '')
-                    all_up = app.supabase.get('calendar_permissions', {'user_id': p['user_id'], 'status': 'pending'})
-                    cal_ids = [ap['calendar_id'] for ap in all_up]
-                    item['calendars'] = [c for c in app.supabase.get('calendar_config') if c['calendar_id'] in cal_ids]
-                    pending.append(item)
-        else:
-            cals = get_user_calendars(app, current_user.id); pending = []
-        google_ok = get_google_creds(app) is not None
-        return render_template('dashboard.html', calendarios=cals, pending=pending, google_connected=google_ok)
+@login_required
+def dashboard():
+    if is_admin():
+        cals = app.supabase.get('calendar_config')
+        pending_raw = app.supabase.get('calendar_permissions', {'status': 'pending'})
+        seen = set(); pending = []; pending_all = []
+        for p in pending_raw:
+            pending_all.append(p)
+            if p['user_id'] not in seen:
+                seen.add(p['user_id'])
+                u = app.supabase.get('users', {'id': p['user_id']})
+                item = {'user_id': p['user_id'], 'user_name': '', 'user_email': '', 'calendars': []}
+                if u: item['user_name'] = u[0].get('full_name', ''); item['user_email'] = u[0].get('email', '')
+                all_up = app.supabase.get('calendar_permissions', {'user_id': p['user_id'], 'status': 'pending'})
+                cal_ids = [ap['calendar_id'] for ap in all_up]
+                item['calendars'] = [c for c in app.supabase.get('calendar_config') if c['calendar_id'] in cal_ids]
+                pending.append(item)
+    else:
+        cals = get_user_calendars(app, current_user.id); pending = []; pending_all = []
+    google_ok = get_google_creds(app) is not None
+    return render_template('dashboard.html', calendarios=cals, pending=pending, pending_all=pending_all, google_connected=google_ok)
 
     @app.route('/login', methods=['GET', 'POST'])
     def login():

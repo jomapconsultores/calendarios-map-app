@@ -1,6 +1,6 @@
 <!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"><title>Panel - calendarios-map</title>
 <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-<style>body{background:#f8f9fc;font-family:'Segoe UI',sans-serif}.navbar{background:linear-gradient(135deg,#4e73df,#224abe)!important}.card{border-radius:12px;border:none;box-shadow:0 .15rem 1.75rem rgba(0,0,0,.05)}.dot{width:10px;height:10px;border-radius:50%;display:inline-block;margin-right:5px}.solicitud{border-left:4px solid #f6c23e;background:#fff;border-radius:8px;padding:14px;margin-bottom:8px}.cal-badge{display:inline-block;padding:3px 8px;border-radius:12px;font-size:10px;margin:2px;border:1px solid #ddd}.badge-pendiente{background:#fff3cd;color:#856404;font-size:10px;padding:3px 8px;border-radius:12px}</style></head>
+<style>body{background:#f8f9fc;font-family:'Segoe UI',sans-serif}.navbar{background:linear-gradient(135deg,#4e73df,#224abe)!important}.card{border-radius:12px;border:none;box-shadow:0 .15rem 1.75rem rgba(0,0,0,.05)}.dot{width:10px;height:10px;border-radius:50%;display:inline-block;margin-right:5px}.solicitud{background:#fff;border-radius:10px;padding:16px;margin-bottom:10px;border-left:4px solid #f6c23e}.cal-row{display:flex;align-items:center;justify-content:space-between;padding:6px 10px;margin:3px 0;background:#fafafa;border-radius:6px;font-size:13px}.cal-row .btn-sm{padding:2px 10px;font-size:11px}.badge-pendiente{background:#fff3cd;color:#856404;font-size:10px;padding:3px 8px;border-radius:12px}</style></head>
 <body>
 <nav class="navbar navbar-dark"><div class="container-fluid">
 <a class="navbar-brand" href="/dashboard">🗓️ calendarios-map</a>
@@ -14,20 +14,42 @@
 {% if current_user.role == 'admin' and pending %}
 <h5>⏳ Solicitudes Pendientes <span class="badge bg-warning text-dark">{{pending|length}}</span></h5>
 {% for p in pending %}
-<div class="solicitud"><div class="row align-items-center">
-<div class="col-md-4"><strong>{{p.user_name}}</strong><br><small class="text-muted">{{p.user_email}}</small><br><span class="badge-pendiente">Pendiente</span></div>
-<div class="col-md-5">{%for c in p.calendars%}<span class="cal-badge"><span class="dot" style="background:{{c.color}}"></span>{{c.name}}</span>{%endfor%}</div>
-<div class="col-md-3 text-end">
-<button class="btn btn-success btn-sm" onclick="appAll('{{p.user_id}}')">✓ Todo</button>
-<button class="btn btn-danger btn-sm" onclick="rejAll('{{p.user_id}}')">✕ Todo</button>
-</div></div></div>{%endfor%}{%endif%}
+<div class="solicitud">
+<div class="d-flex justify-content-between align-items-start mb-2">
+<div><strong>{{p.user_name}}</strong><br><small class="text-muted">{{p.user_email}}</small></div>
+<span class="badge-pendiente">Pendiente</span>
+</div>
+<div class="mb-2"><small class="text-muted fw-bold">Solicita acceso a:</small></div>
+{% for cal in p.calendars %}
+<div class="cal-row">
+<span><span class="dot" style="background:{{cal.color}}"></span>{{cal.name}} <small class="text-muted">{{cal.email}}</small></span>
+<span>
+{% set ns = namespace(perm_id='') %}
+{% for pp in pending_all %}
+{% if pp.user_id == p.user_id and pp.calendar_id == cal.calendar_id %}
+{% set ns.perm_id = pp.id %}
+{% endif %}
+{% endfor %}
+<button class="btn btn-success btn-sm rounded-pill" onclick="appOne('{{ns.perm_id}}')">✓ Aprobar</button>
+<button class="btn btn-outline-danger btn-sm rounded-pill" onclick="rejOne('{{ns.perm_id}}')">✕ Rechazar</button>
+</span>
+</div>
+{% endfor %}
+<div class="mt-2">
+<button class="btn btn-success btn-sm rounded-pill" onclick="appAll('{{p.user_id}}')">✅ Aprobar Todo</button>
+<button class="btn btn-danger btn-sm rounded-pill" onclick="rejAll('{{p.user_id}}')">❌ Rechazar Todo</button>
+</div>
+</div>
+{% endfor %}{% endif %}
 
 {% if current_user.role != 'admin' and calendarios|length == 0 %}
-<div class="alert alert-warning text-center"><h5>⏳ Acceso Pendiente</h5><p>El administrador revisará tu solicitud.</p></div>{%endif%}
+<div class="alert alert-warning text-center"><h5>⏳ Acceso Pendiente</h5><p>El administrador revisará tu solicitud pronto.</p></div>{%endif%}
 
 <div class="row mt-4"><div class="col-md-6"><div class="card p-4 text-center"><h3>📅</h3><h5>Mis Calendarios</h5><p class="text-muted">{{calendarios|length}} activos</p><a href="/calendar" class="btn btn-primary rounded-pill">Ir al Calendario</a></div></div>
 <div class="col-md-6"><div class="card p-4 text-center"><h3>🔗</h3><h5>Google Calendar</h5><p>{%if google_connected%}✅ Conectado{%else%}❌ No{%endif%}</p>{%if not google_connected%}<a href="/auth/google" class="btn btn-primary rounded-pill">Conectar</a>{%endif%}</div></div></div></div>
 <script>
-function appAll(uid){if(confirm('Aprobar todo?')){fetch('/admin/approve-all/'+uid,{method:'POST'}).then(r=>r.json()).then(d=>{if(d.success)location.reload()})}}
-function rejAll(uid){if(confirm('Rechazar todo?')){fetch('/admin/reject-all/'+uid,{method:'POST'}).then(r=>r.json()).then(d=>{if(d.success)location.reload()})}}
+function appOne(pid){fetch('/admin/approve-one/'+pid,{method:'POST'}).then(r=>r.json()).then(d=>{if(d.success)location.reload()})}
+function rejOne(pid){fetch('/admin/reject-one/'+pid,{method:'POST'}).then(r=>r.json()).then(d=>{if(d.success)location.reload()})}
+function appAll(uid){fetch('/admin/approve-all/'+uid,{method:'POST'}).then(r=>r.json()).then(d=>{if(d.success)location.reload()})}
+function rejAll(uid){fetch('/admin/reject-all/'+uid,{method:'POST'}).then(r=>r.json()).then(d=>{if(d.success)location.reload()})}
 </script></body></html>
