@@ -124,25 +124,30 @@ def create_app():
         return render_template('index.html')
     
     @app.route('/dashboard')
-    @login_required
-    def dashboard():
-        if is_admin():
-            cals = app.supabase.get('calendar_config')
-            # Cargar pendientes con info de usuario
-            pending_raw = app.supabase.get('calendar_permissions', {'status': 'pending'})
-            pending = []
-            for p in pending_raw:
-                users = app.supabase.get('users', {'id': p['user_id']})
-                if users:
-                    p['user_name'] = users[0].get('full_name','')
-                    p['user_email'] = users[0].get('email','')
-                pending.append(p)
-        else:
-            cals = get_user_calendars(app, current_user.id)
-            pending = []
-        
-        google_ok = get_google_creds(app) is not None
-        return render_template('dashboard.html', calendarios=cals, pending=pending, google_connected=google_ok)
+@login_required
+def dashboard():
+    if is_admin():
+        cals = app.supabase.get('calendar_config')
+        # Cargar pendientes con info
+        pending_raw = app.supabase.get('calendar_permissions', {'status': 'pending'})
+        pending = []
+        for p in pending_raw:
+            users = app.supabase.get('users', {'id': p['user_id']})
+            if users:
+                p['user_name'] = users[0].get('full_name','')
+                p['user_email'] = users[0].get('email','')
+            # Obtener todos los calendarios solicitados por este usuario
+            all_user_pending = app.supabase.get('calendar_permissions', {'user_id': p['user_id'], 'status': 'pending'})
+            cal_ids = [ap['calendar_id'] for ap in all_user_pending]
+            cal_configs = app.supabase.get('calendar_config')
+            p['calendars'] = [c for c in cal_configs if c['calendar_id'] in cal_ids]
+            pending.append(p)
+    else:
+        cals = get_user_calendars(app, current_user.id)
+        pending = []
+    
+    google_ok = get_google_creds(app) is not None
+    return render_template('dashboard.html', calendarios=cals, pending=pending, google_connected=google_ok)
     
     @app.route('/login', methods=['GET', 'POST'])
     def login():
@@ -227,20 +232,37 @@ def create_app():
     # ============= ADMIN =============
     
     @app.route('/admin/approve/<pid>', methods=['POST'])
-    @login_required
-    def admin_approve(pid):
-        if not is_admin():
-            return {'success': False, 'error': 'No autorizado'}
-        app.supabase.update('calendar_permissions', pid, {'status': 'approved'})
-        return {'success': True}
+@login_required
+def admin_approve(pid):
+    if not is_admin():
+        return {'success': False, 'error': 'No autorizado'}
     
-    @app.route('/admin/reject/<pid>', methods=['POST'])
-    @login_required
-    def admin_reject(pid):
-        if not is_admin():
-            return {'success': False, 'error': 'No autorizado'}
-        app.supabase.update('calendar_permissions', pid, {'status': 'rejected'})
-        return {'success': True}
+    # Obtener la solicitud
+    perms = app.supabase.get('calendar_permissions', {'id': pid})
+    if perms:
+        user_id = perms[0]['user_id']
+        # Aprobar TODAS las solicitudes pendientes de este usuario
+        pending = app.supabase.get('calendar_permissions', {'user_id': user_id, 'status': 'pending'})
+        for p in pending:
+            app.supabase.update('calendar_permissions', p['id'], {'status': 'approved'})
+    
+    return {'success': True}
+
+@app.route('/admin/reject/<pid>', methods=['POST'])
+@login_required
+def admin_reject(pid):
+    if not is_admin():
+        return {'success': False, 'error': 'No autorizado'}
+    
+    perms = app.supabase.get('calendar_permissions', {'id': pid})
+    if perms:
+        user_id = perms[0]['user_id']
+        # Rechazar TODAS las solicitudes pendientes de este usuario
+        pending = app.supabase.get('calendar_permissions', {'user_id': user_id, 'status': 'pending'})
+        for p in pending:
+            app.supabase.update('calendar_permissions', p['id'], {'status': 'rejected'})
+    
+    return {'success': True}
     
     # ============= CALENDARIO =============
     

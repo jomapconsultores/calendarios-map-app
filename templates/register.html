@@ -2,49 +2,55 @@
 <html lang="es">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Registro - calendarios-map</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body{background:#f8f9fc;font-family:'Segoe UI',sans-serif}
+        .card{border-radius:12px;border:none;box-shadow:0 .15rem 1.75rem rgba(0,0,0,.05)}
+        .form-control{border-radius:8px}
+        .cal-check{border:1px solid #ddd;border-radius:8px;padding:10px;margin-bottom:8px;cursor:pointer;transition:.2s;display:flex;align-items:center;gap:10px}
+        .cal-check:hover{background:#f0f4ff;border-color:#4e73df}
+        .cal-check.selected{background:#e8f0fe;border-color:#4e73df;font-weight:600}
+        .cal-check input{display:none}
+        .dot{width:12px;height:12px;border-radius:50%;display:inline-block}
+    </style>
 </head>
-<body class="bg-light">
-    <div class="container mt-5">
-        <div class="row justify-content-center">
-            <div class="col-md-4">
-                <div class="card shadow">
-                    <div class="card-body">
-                        <h3 class="text-center mb-4">Crear Cuenta</h3>
-                        
-                        {% with messages = get_flashed_messages(with_categories=true) %}
-                            {% if messages %}
-                                {% for category, message in messages %}
-                                    <div class="alert alert-{{ category }}">{{ message }}</div>
-                                {% endfor %}
-                            {% endif %}
-                        {% endwith %}
-                        
-                        <form method="POST">
-                            <div class="mb-3">
-                                <label>Nombre completo</label>
-                                <input type="text" name="full_name" class="form-control" required>
-                            </div>
-                            <div class="mb-3">
-                                <label>Email</label>
-                                <input type="email" name="email" class="form-control" required>
-                            </div>
-                            <div class="mb-3">
-                                <label>Contraseña</label>
-                                <input type="password" name="password" class="form-control" required>
-                            </div>
-                            <button type="submit" class="btn btn-success w-100">Registrarse</button>
-                        </form>
-                        
-                        <div class="text-center mt-3">
-                            <a href="/login">¿Ya tienes cuenta? Inicia sesión</a>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
+<body>
+<nav class="navbar navbar-dark" style="background:linear-gradient(135deg,#4e73df,#224abe)">
+    <div class="container"><a class="navbar-brand" href="/">🗓️ calendarios-map</a></div>
+</nav>
+
+<div class="container mt-5"><div class="row justify-content-center"><div class="col-md-6">
+<div class="card"><div class="card-body p-4">
+<h3 class="text-center mb-4">Crear Cuenta</h3>
+
+{% with messages = get_flashed_messages(with_categories=true) %}
+{% if messages %}{% for cat, msg in messages %}
+<div class="alert alert-{{cat}}">{{msg}}</div>
+{% endfor %}{% endif %}{% endwith %}
+
+<form method="POST">
+<div class="mb-3"><label class="form-label">Nombre completo *</label><input type="text" name="full_name" class="form-control" required></div>
+<div class="mb-3"><label class="form-label">Email *</label><input type="email" name="email" class="form-control" required></div>
+<div class="mb-3"><label class="form-label">Contraseña *</label><input type="password" name="password" class="form-control" required></div>
+
+<div class="mb-3"><label class="form-label fw-bold">📅 Solicitar acceso a calendarios:</label><p class="text-muted small">Selecciona los calendarios a los que necesitas acceso. El administrador los aprobará.</p>
+{% for c in calendarios %}
+<label class="cal-check" id="lbl_{{c.calendar_id}}">
+    <input type="checkbox" name="calendars" value="{{c.calendar_id}}" onchange="toggleSelect(this)">
+    <span class="dot" style="background:{{c.color}}"></span>
+    <div><strong>{{c.name}}</strong><br><small class="text-muted">{{c.email}}</small></div>
+</label>
+{% endfor %}</div>
+
+<button type="submit" class="btn btn-primary w-100 rounded-pill">Solicitar Acceso</button>
+</form>
+
+<div class="text-center mt-3"><a href="/login">¿Ya tienes cuenta? Inicia sesión</a></div>
+</div></div></div></div></div>
+
+<script>
+function toggleSelect(cb){cb.parentElement.classList.toggle('selected',cb.checked)}
+</script>
 </body>
 </html>
