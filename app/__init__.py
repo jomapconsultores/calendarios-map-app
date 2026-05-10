@@ -135,34 +135,20 @@ def create_app():
             password = request.form.get('password')
             name = request.form.get('full_name')
             cals = request.form.getlist('calendars')
-            
-            # Verificar si ya existe
             existing = app.supabase.get('users', {'email': email})
             if existing:
                 flash('Este email ya está registrado.', 'warning')
-                cals_all = app.supabase.get('calendar_config')
-                return render_template('register.html', calendarios=cals_all)
-            
-            data = {
-                'email': email,
-                'password_hash': generate_password_hash(password),
-                'full_name': name,
-                'role': 'staff'
-            }
+                return render_template('register.html', calendarios=app.supabase.get('calendar_config'))
+            data = {'email': email, 'password_hash': generate_password_hash(password), 'full_name': name, 'role': 'staff'}
             result = app.supabase.insert('users', data)
             if result:
                 uid = result[0]['id']
                 for cal_id in cals:
-                    app.supabase.insert('calendar_permissions', {
-                        'user_id': uid,
-                        'calendar_id': cal_id,
-                        'status': 'pending'
-                    })
-                flash('✅ Registro enviado. Espera aprobación del administrador.', 'success')
+                    app.supabase.insert('calendar_permissions', {'user_id': uid, 'calendar_id': cal_id, 'status': 'pending'})
+                flash('✅ Registro enviado. Espera aprobación.', 'success')
                 return redirect('/login')
-            flash('Error al registrar. Intenta de nuevo.', 'danger')
-        cals_all = app.supabase.get('calendar_config')
-        return render_template('register.html', calendarios=cals_all)
+            flash('Error al registrar', 'danger')
+        return render_template('register.html', calendarios=app.supabase.get('calendar_config'))
 
     @app.route('/logout')
     @login_required
@@ -174,14 +160,10 @@ def create_app():
     @login_required
     def google_auth():
         flow = Flow.from_client_config({
-            'web': {
-                'client_id': app.config['GOOGLE_CLIENT_ID'],
-                'client_secret': app.config['GOOGLE_CLIENT_SECRET'],
-                'auth_uri': 'https://accounts.google.com/o/oauth2/auth',
-                'token_uri': 'https://oauth2.googleapis.com/token',
-                'redirect_uris': [app.config['GOOGLE_REDIRECT_URI']]
-            }
-        }, scopes=['https://www.googleapis.com/auth/calendar'])
+            'web': {'client_id': app.config['GOOGLE_CLIENT_ID'], 'client_secret': app.config['GOOGLE_CLIENT_SECRET'],
+                    'auth_uri': 'https://accounts.google.com/o/oauth2/auth', 'token_uri': 'https://oauth2.googleapis.com/token',
+                    'redirect_uris': [app.config['GOOGLE_REDIRECT_URI']]}},
+            scopes=['https://www.googleapis.com/auth/calendar'])
         flow.redirect_uri = app.config['GOOGLE_REDIRECT_URI']
         auth_url, state = flow.authorization_url(access_type='offline', prompt='consent')
         session['state'] = state
@@ -191,24 +173,65 @@ def create_app():
     @login_required
     def google_callback():
         flow = Flow.from_client_config({
-            'web': {
-                'client_id': app.config['GOOGLE_CLIENT_ID'],
-                'client_secret': app.config['GOOGLE_CLIENT_SECRET'],
-                'auth_uri': 'https://accounts.google.com/o/oauth2/auth',
-                'token_uri': 'https://oauth2.googleapis.com/token',
-                'redirect_uris': [app.config['GOOGLE_REDIRECT_URI']]
-            }
-        }, scopes=['https://www.googleapis.com/auth/calendar'], state=session['state'])
+            'web': {'client_id': app.config['GOOGLE_CLIENT_ID'], 'client_secret': app.config['GOOGLE_CLIENT_SECRET'],
+                    'auth_uri': 'https://accounts.google.com/o/oauth2/auth', 'token_uri': 'https://oauth2.googleapis.com/token',
+                    'redirect_uris': [app.config['GOOGLE_REDIRECT_URI']]}},
+            scopes=['https://www.googleapis.com/auth/calendar'], state=session['state'])
         flow.redirect_uri = app.config['GOOGLE_REDIRECT_URI']
         flow.fetch_token(authorization_response=request.url)
         save_google_creds(app, flow.credentials)
         flash('✅ Google Calendar conectado!', 'success')
         return redirect('/dashboard')
 
+    # ============= ADMIN PANEL =============
+
+    @app.route('/admin/users')
+    @login_required
+    def admin_users():
+        if not is_admin(): return redirect('/dashboard')
+        users = app.supabase.get('users')
+        all_cals = app.supabase.get('calendar_config')
+        for u in users:
+            perms = app.supabase.get('calendar_permissions', {'user_id': u['id'], 'status': 'approved'})
+            cal_ids = [p['calendar_id'] for p in perms]
+            u['calendars'] = [c for c in all_cals if c['calendar_id'] in cal_ids]
+        return render_template('admin_users.html', users=users, calendarios=all_cals)
+
+    @app.route('/admin/user/update/<uid>', methods=['POST'])
+    @login_required
+    def admin_update_user(uid):
+        if not is_admin(): return redirect('/dashboard')
+        data = {}
+        if request.form.get('full_name'): data['full_name'] = request.form.get('full_name')
+        if request.form.get('email'): data['email'] = request.form.get('email')
+        if request.form.get('password'): data['password_hash'] = generate_password_hash(request.form.get('password'))
+        if request.form.get('role'): data['role'] = request.form.get('role')
+        if data: app.supabase.update('users', uid, data)
+        cal_ids = request.form.getlist('calendars')
+        if cal_ids:
+            for p in app.supabase.get('calendar_permissions', {'user_id': uid}):
+                app.supabase.delete('calendar_permissions', p['id'])
+            for cal_id in cal_ids:
+                app.supabase.insert('calendar_permissions', {'user_id': uid, 'calendar_id': cal_id, 'status': 'approved'})
+        flash('Usuario actualizado', 'success')
+        return redirect('/admin/users')
+
+    @app.route('/admin/user/delete/<uid>', methods=['POST'])
+    @login_required
+    def admin_delete_user(uid):
+        if not is_admin(): return {'success': False}
+        for p in app.supabase.get('calendar_permissions', {'user_id': uid}):
+            app.supabase.delete('calendar_permissions', p['id'])
+        for a in app.supabase.get('appointments', {'created_by': uid}):
+            app.supabase.delete('appointments', a['id'])
+        app.supabase.delete('users', uid)
+        flash('Usuario eliminado', 'success')
+        return redirect('/admin/users')
+
     @app.route('/admin/approve-one/<pid>/<cal_id>', methods=['POST'])
     @login_required
     def admin_approve_one(pid, cal_id):
-        if not is_admin(): return {'success': False, 'error': 'No autorizado'}
+        if not is_admin(): return {'success': False}
         app.supabase.update('calendar_permissions', pid, {'status': 'approved'})
         return {'success': True}
 
@@ -228,6 +251,8 @@ def create_app():
             app.supabase.update('calendar_permissions', p['id'], {'status': 'rejected'})
         return {'success': True}
 
+    # ============= CALENDARIO =============
+
     @app.route('/calendar')
     @login_required
     def calendar():
@@ -242,42 +267,33 @@ def create_app():
         else:
             ucal = [c['calendar_id'] for c in get_user_calendars(app, current_user.id)]
             events = []
-            for cid in ucal:
-                events.extend(app.supabase.get('appointments', {'calendar_id': cid}))
+            for cid in ucal: events.extend(app.supabase.get('appointments', {'calendar_id': cid}))
         colors = {'pending': '#ffc107', 'confirmed': '#28a745', 'cancelled': '#dc3545'}
-        return [{
-            'id': e['id'], 'title': f"{e['title']} - {e.get('encargado', '')}",
-            'start': e['start_time'], 'end': e['end_time'],
-            'backgroundColor': colors.get(e.get('status'), '#007bff'),
-            'borderColor': colors.get(e.get('status'), '#007bff'),
-            'extendedProps': {
-                'title': e.get('title', ''), 'encargado': e.get('encargado', ''),
-                'tema': e.get('tema', ''), 'client_name': e.get('client_name', ''),
-                'client_email': e.get('client_email', ''), 'status': e.get('status', 'pending'),
-                'calendar_id': e.get('calendar_id', ''), 'notes': e.get('notes', ''),
-                'google_event_id': e.get('google_event_id', '')
-            }
-        } for e in events]
+        return [{'id': e['id'], 'title': f"{e['title']} - {e.get('encargado', '')}",
+                 'start': e['start_time'], 'end': e['end_time'],
+                 'backgroundColor': colors.get(e.get('status'), '#007bff'),
+                 'borderColor': colors.get(e.get('status'), '#007bff'),
+                 'extendedProps': {'title': e.get('title', ''), 'encargado': e.get('encargado', ''),
+                 'tema': e.get('tema', ''), 'client_name': e.get('client_name', ''),
+                 'client_email': e.get('client_email', ''), 'status': e.get('status', 'pending'),
+                 'calendar_id': e.get('calendar_id', ''), 'notes': e.get('notes', ''),
+                 'google_event_id': e.get('google_event_id', '')}} for e in events]
 
     @app.route('/calendar/api/titles')
     @login_required
-    def api_titles():
-        return [t['title'] for t in app.supabase.get('appointment_titles')]
+    def api_titles(): return [t['title'] for t in app.supabase.get('appointment_titles')]
 
     @app.route('/calendar/api/encargados')
     @login_required
-    def api_encargados():
-        return [e['name'] for e in app.supabase.get('encargados')]
+    def api_encargados(): return [e['name'] for e in app.supabase.get('encargados')]
 
     @app.route('/calendar/api/temas')
     @login_required
-    def api_temas():
-        return [t['description'] for t in app.supabase.get('temas')]
+    def api_temas(): return [t['description'] for t in app.supabase.get('temas')]
 
     @app.route('/calendar/api/clients')
     @login_required
-    def api_clients():
-        return [{'name': c['name'], 'email': c.get('email', '')} for c in app.supabase.get('clients')]
+    def api_clients(): return [{'name': c['name'], 'email': c.get('email', '')} for c in app.supabase.get('clients')]
 
     @app.route('/calendar/api/book', methods=['POST'])
     @login_required
@@ -294,10 +310,8 @@ def create_app():
             client_name = request.form.get('client_name', '').strip().upper()
             client_email = request.form.get('client_email', '').strip()
             notificar = request.form.getlist('notificar')
-            
             if not title or not cal_id or not encargado or not tema:
                 return {'success': False, 'error': 'Faltan campos obligatorios'}
-            
             if title and not app.supabase.get('appointment_titles', {'title': title}):
                 app.supabase.insert('appointment_titles', {'title': title, 'calendar_id': cal_id})
             if encargado and not app.supabase.get('encargados', {'name': encargado}):
@@ -306,15 +320,10 @@ def create_app():
                 app.supabase.insert('temas', {'description': tema, 'calendar_id': cal_id})
             if client_name and not app.supabase.get('clients', {'name': client_name}):
                 app.supabase.insert('clients', {'name': client_name, 'email': client_email, 'created_by': current_user.id})
-            
-            data = {
-                'title': title, 'calendar_id': cal_id, 'encargado': encargado, 'tema': tema,
-                'client_name': client_name, 'client_email': client_email,
-                'start_time': start, 'end_time': end, 'status': 'pending',
-                'notes': request.form.get('notes', ''),
-                'invitados': ','.join(notificar) if notificar else '',
-                'created_by': current_user.id
-            }
+            data = {'title': title, 'calendar_id': cal_id, 'encargado': encargado, 'tema': tema,
+                    'client_name': client_name, 'client_email': client_email, 'start_time': start,
+                    'end_time': end, 'status': 'pending', 'notes': request.form.get('notes', ''),
+                    'invitados': ','.join(notificar) if notificar else '', 'created_by': current_user.id}
             result = app.supabase.insert('appointments', data)
             return {'success': True, 'id': result[0]['id']} if result else {'success': False, 'error': 'Error BD'}
         except Exception as e:
@@ -330,12 +339,10 @@ def create_app():
         else:
             ucal = [c['calendar_id'] for c in get_user_calendars(app, current_user.id)]
             pending = [a for a in events if a.get('status') == 'pending' and a.get('calendar_id') in ucal]
-        return [{
-            'id': a['id'], 'title': a['title'], 'encargado': a.get('encargado', ''),
-            'tema': a.get('tema', ''), 'client_name': a.get('client_name', ''),
-            'date': a['start_time'].split('T')[0], 'time': a['start_time'].split('T')[1][:5],
-            'calendar_id': a.get('calendar_id', '')
-        } for a in pending]
+        return [{'id': a['id'], 'title': a['title'], 'encargado': a.get('encargado', ''),
+                 'tema': a.get('tema', ''), 'client_name': a.get('client_name', ''),
+                 'date': a['start_time'].split('T')[0], 'time': a['start_time'].split('T')[1][:5],
+                 'calendar_id': a.get('calendar_id', '')} for a in pending]
 
     @app.route('/calendar/api/approve/<aid>', methods=['POST'])
     @login_required
@@ -356,22 +363,16 @@ def create_app():
             if apt.get('invitados'):
                 for inv in apt['invitados'].split(','):
                     inv = inv.strip()
-                    if inv and inv not in [a['email'] for a in attendees]:
-                        attendees.append({'email': inv})
+                    if inv and inv not in [a['email'] for a in attendees]: attendees.append({'email': inv})
             if not attendees: attendees.append({'email': 'mposligua0000@gmail.com'})
             desc = f"Titulo: {apt['title']}\nEncargado: {apt.get('encargado','')}\nTema: {apt.get('tema','')}"
             if apt.get('client_name'): desc += f"\nCliente: {apt['client_name']}"
             if apt.get('notes'): desc += f"\nNotas: {apt['notes']}"
-            event = {
-                'summary': f"{apt['title']} - {apt.get('encargado','')}",
-                'description': desc,
-                'start': {'dateTime': apt['start_time'], 'timeZone': 'America/Guayaquil'},
-                'end': {'dateTime': apt['end_time'], 'timeZone': 'America/Guayaquil'},
-                'attendees': attendees,
-                'reminders': {'useDefault': False, 'overrides': [
-                    {'method': 'email', 'minutes': 1440}, {'method': 'popup', 'minutes': 30}
-                ]}
-            }
+            event = {'summary': f"{apt['title']} - {apt.get('encargado','')}", 'description': desc,
+                     'start': {'dateTime': apt['start_time'], 'timeZone': 'America/Guayaquil'},
+                     'end': {'dateTime': apt['end_time'], 'timeZone': 'America/Guayaquil'},
+                     'attendees': attendees, 'reminders': {'useDefault': False, 'overrides': [
+                         {'method': 'email', 'minutes': 1440}, {'method': 'popup', 'minutes': 30}]}}
             created = service.events().insert(calendarId='primary', body=event, sendUpdates='all').execute()
             app.supabase.update('appointments', aid, {'status': 'confirmed', 'google_event_id': created.get('id')})
             return {'success': True, 'message': f'✅ Google: {len(attendees)} invitados'}
@@ -392,15 +393,12 @@ def create_app():
         if apts and apts[0].get('google_event_id'):
             creds = get_google_creds(app)
             if creds:
-                try:
-                    build('calendar', 'v3', credentials=creds).events().delete(
-                        calendarId='primary', eventId=apts[0]['google_event_id']).execute()
+                try: build('calendar', 'v3', credentials=creds).events().delete(calendarId='primary', eventId=apts[0]['google_event_id']).execute()
                 except: pass
         app.supabase.delete('appointments', aid)
         return {'success': True}
 
     @app.route('/health')
-    def health():
-        return {'status': 'ok'}
+    def health(): return {'status': 'ok'}
 
     return app
