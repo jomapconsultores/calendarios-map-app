@@ -1,0 +1,18 @@
+<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"><title>Panel - calendarios-map</title>
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+<style>body{background:#f8f9fc}.card{border-radius:12px;border:none;box-shadow:0 .15rem 1.75rem rgba(0,0,0,.05)}.navbar{background:linear-gradient(135deg,#4e73df,#224abe)!important}</style></head>
+<body>
+<nav class="navbar navbar-dark"><div class="container-fluid">
+<a class="navbar-brand" href="/dashboard">🗓️ calendarios-map</a>
+<div><span class="text-white me-3">{{current_user.full_name}}</span><a href="/calendar" class="btn btn-light btn-sm rounded-pill me-1">📅 Calendario</a><a href="/logout" class="btn btn-outline-light btn-sm rounded-pill">Salir</a></div>
+</div></nav>
+<div class="container mt-4">
+{%if current_user.role=='admin' and pending%}
+<div class="card mb-4"><div class="card-header bg-warning"><h5>⏳ Solicitudes Pendientes</h5></div>
+<div class="card-body"><table class="table table-sm"><thead><tr><th>Usuario</th><th>Email</th><th>Calendario</th><th>Acción</th></tr></thead><tbody>
+{%for p in pending%}<tr><td>{{p.user_name or 'N/A'}}</td><td>{{p.user_email or 'N/A'}}</td><td>{{p.calendar_id}}</td><td><button class="btn btn-success btn-sm" onclick="appr('{{p.id}}')">✓</button> <button class="btn btn-danger btn-sm" onclick="rejr('{{p.id}}')">✕</button></td></tr>{%endfor%}
+</tbody></table></div></div>{%endif%}
+<div class="row"><div class="col-md-6"><div class="card p-4 text-center"><h3>📅</h3><h5>Calendarios</h5><p class="text-muted">{{calendarios|length}} activos</p><a href="/calendar" class="btn btn-primary rounded-pill">Ir al Calendario</a></div></div>
+<div class="col-md-6"><div class="card p-4 text-center"><h3>🔗</h3><h5>Google</h5><p class="text-muted">{%if google_connected%}✅ Conectado{%else%}❌ No{%endif%}</p>{%if not google_connected%}<a href="/auth/google" class="btn btn-primary rounded-pill">Conectar</a>{%endif%}</div></div></div></div>
+<script>function appr(id){fetch('/admin/approve/'+id,{method:'POST'}).then(r=>r.json()).then(d=>{if(d.success)location.reload()})}function rejr(id){fetch('/admin/reject/'+id,{method:'POST'}).then(r=>r.json()).then(d=>{if(d.success)location.reload()})}</script>
+</body></html>

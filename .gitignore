@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# Entorno virtual
+venv/
+env/
+
+# Variables de entorno
+.env
+
+# IDE
+.vscode/
+.idea/
+
+# Sistema
+.DS_Store
+Thumbs.db
+
+# Google
+credentials.json
+client_secret.json
