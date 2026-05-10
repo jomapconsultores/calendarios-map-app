@@ -1,120 +1,33 @@
-<!DOCTYPE html>
-<html lang="es">
-<head>
-    <meta charset="UTF-8">
-    <title>Panel - calendarios-map</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.5/font/bootstrap-icons.css" rel="stylesheet">
-    <style>
-        body{background:#f8f9fc;font-family:'Segoe UI',sans-serif}
-        .navbar{background:linear-gradient(135deg,#4e73df,#224abe)!important}
-        .card{border-radius:12px;border:none;box-shadow:0 .15rem 1.75rem rgba(0,0,0,.05)}
-        .dot{width:10px;height:10px;border-radius:50%;display:inline-block;margin-right:6px}
-        .solicitud-row{border-left:4px solid #f6c23e;background:#fff;border-radius:8px;padding:14px;margin-bottom:10px;transition:.2s}
-        .solicitud-row:hover{box-shadow:0 2px 8px rgba(0,0,0,.08)}
-        .user-name{font-weight:700;font-size:14px}
-        .user-email{font-size:12px;color:#888}
-        .cal-badge{display:inline-block;padding:4px 10px;border-radius:20px;font-size:11px;margin:2px 4px;font-weight:500}
-        .menu-dots{cursor:pointer;font-size:18px;color:#aaa;padding:4px 8px;border-radius:4px}
-        .menu-dots:hover{background:#f0f0f0;color:#333}
-        .dropdown-menu{min-width:200px;border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.12);border:none}
-        .dropdown-item{font-size:13px;padding:8px 16px}
-        .dropdown-item:hover{background:#f0f4ff}
-        .badge-pendiente{background:#fff3cd;color:#856404;font-size:10px;padding:3px 8px;border-radius:12px}
-    </style>
-</head>
+<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"><title>Panel - calendarios-map</title>
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+<style>body{background:#f8f9fc;font-family:'Segoe UI',sans-serif}.navbar{background:linear-gradient(135deg,#4e73df,#224abe)!important}.card{border-radius:12px;border:none;box-shadow:0 .15rem 1.75rem rgba(0,0,0,.05)}.dot{width:10px;height:10px;border-radius:50%;display:inline-block;margin-right:5px}.solicitud{border-left:4px solid #f6c23e;background:#fff;border-radius:8px;padding:14px;margin-bottom:8px}.cal-badge{display:inline-block;padding:3px 8px;border-radius:12px;font-size:10px;margin:2px;border:1px solid #ddd}.badge-pendiente{background:#fff3cd;color:#856404;font-size:10px;padding:3px 8px;border-radius:12px}</style></head>
 <body>
 <nav class="navbar navbar-dark"><div class="container-fluid">
 <a class="navbar-brand" href="/dashboard">🗓️ calendarios-map</a>
-<div>
-    <span class="text-white me-3 small">{{current_user.full_name}}</span>
-    <a href="/calendar" class="btn btn-light btn-sm rounded-pill me-1">📅 Calendario</a>
-    <a href="/logout" class="btn btn-outline-light btn-sm rounded-pill">Salir</a>
-</div>
-</div></nav>
+<div><span class="text-white me-3 small">{{current_user.full_name}}</span>
+{%if current_user.role=='admin'%}<a href="/admin/users" class="btn btn-outline-light btn-sm rounded-pill me-1">👥 Usuarios</a>{%endif%}
+<a href="/calendar" class="btn btn-light btn-sm rounded-pill me-1">📅 Calendario</a>
+<a href="/logout" class="btn btn-outline-light btn-sm rounded-pill">Salir</a></div></div></nav>
 
 <div class="container mt-4">
 
 {% if current_user.role == 'admin' and pending %}
-<div class="d-flex justify-content-between align-items-center mb-3">
-    <h5>⏳ Solicitudes de Acceso <span class="badge bg-warning text-dark">{{pending|length}}</span></h5>
-</div>
-
+<h5>⏳ Solicitudes Pendientes <span class="badge bg-warning text-dark">{{pending|length}}</span></h5>
 {% for p in pending %}
-<div class="solicitud-row">
-    <div class="row align-items-center">
-        <div class="col-md-4">
-            <div class="user-name">{{p.user_name or 'N/A'}}</div>
-            <div class="user-email">{{p.user_email or 'N/A'}}</div>
-            <span class="badge-pendiente">Pendiente</span>
-        </div>
-        <div class="col-md-5">
-            <small class="text-muted">Solicita acceso a:</small><br>
-            {% for cal in p.calendars %}
-            <span class="cal-badge" style="background:{{cal.color}}20;color:{{cal.color}};border:1px solid {{cal.color}}40">
-                <span class="dot" style="background:{{cal.color}}"></span>{{cal.name}}
-            </span>
-            {% endfor %}
-        </div>
-        <div class="col-md-3 text-end">
-            <div class="dropdown">
-                <span class="menu-dots" data-bs-toggle="dropdown">⋮</span>
-                <ul class="dropdown-menu dropdown-menu-end">
-                    <li><h6 class="dropdown-header">Aprobar acceso a:</h6></li>
-                    {% for cal in p.calendars %}
-                    <li>
-                        <a class="dropdown-item" href="#" onclick="approveCalendar('{{p.id}}','{{cal.calendar_id}}')">
-                            <span class="dot" style="background:{{cal.color}}"></span> {{cal.name}}
-                        </a>
-                    </li>
-                    {% endfor %}
-                    <li><hr class="dropdown-divider"></li>
-                    <li>
-                        <a class="dropdown-item text-success" href="#" onclick="approveAll('{{p.user_id}}')">
-                            ✅ Aprobar TODOS
-                        </a>
-                    </li>
-                    <li>
-                        <a class="dropdown-item text-danger" href="#" onclick="rejectAll('{{p.user_id}}')">
-                            ❌ Rechazar TODOS
-                        </a>
-                    </li>
-                </ul>
-            </div>
-        </div>
-    </div>
-</div>
-{% endfor %}
-{% endif %}
+<div class="solicitud"><div class="row align-items-center">
+<div class="col-md-4"><strong>{{p.user_name}}</strong><br><small class="text-muted">{{p.user_email}}</small><br><span class="badge-pendiente">Pendiente</span></div>
+<div class="col-md-5">{%for c in p.calendars%}<span class="cal-badge"><span class="dot" style="background:{{c.color}}"></span>{{c.name}}</span>{%endfor%}</div>
+<div class="col-md-3 text-end">
+<button class="btn btn-success btn-sm" onclick="appAll('{{p.user_id}}')">✓ Todo</button>
+<button class="btn btn-danger btn-sm" onclick="rejAll('{{p.user_id}}')">✕ Todo</button>
+</div></div></div>{%endfor%}{%endif%}
 
 {% if current_user.role != 'admin' and calendarios|length == 0 %}
-<div class="alert alert-warning text-center">
-    <h5>⏳ Acceso Pendiente</h5>
-    <p>El administrador revisará tu solicitud pronto.</p>
-</div>
-{% endif %}
+<div class="alert alert-warning text-center"><h5>⏳ Acceso Pendiente</h5><p>El administrador revisará tu solicitud.</p></div>{%endif%}
 
-<div class="row mt-4">
-    <div class="col-md-6"><div class="card p-4 text-center"><h3>📅</h3><h5>Mis Calendarios</h5><p class="text-muted">{{calendarios|length}} activos</p><a href="/calendar" class="btn btn-primary rounded-pill">Ir al Calendario</a></div></div>
-    <div class="col-md-6"><div class="card p-4 text-center"><h3>🔗</h3><h5>Google Calendar</h5><p class="text-muted">{%if google_connected%}✅ Conectado{%else%}❌ No{%endif%}</p>{%if not google_connected%}<a href="/auth/google" class="btn btn-primary rounded-pill">Conectar</a>{%endif%}</div></div>
-</div></div>
-
-<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+<div class="row mt-4"><div class="col-md-6"><div class="card p-4 text-center"><h3>📅</h3><h5>Mis Calendarios</h5><p class="text-muted">{{calendarios|length}} activos</p><a href="/calendar" class="btn btn-primary rounded-pill">Ir al Calendario</a></div></div>
+<div class="col-md-6"><div class="card p-4 text-center"><h3>🔗</h3><h5>Google Calendar</h5><p>{%if google_connected%}✅ Conectado{%else%}❌ No{%endif%}</p>{%if not google_connected%}<a href="/auth/google" class="btn btn-primary rounded-pill">Conectar</a>{%endif%}</div></div></div></div>
 <script>
-function approveCalendar(permId, calId){
-    fetch('/admin/approve-one/'+permId+'/'+calId, {method:'POST'})
-    .then(r=>r.json()).then(d=>{if(d.success)location.reload()})
-}
-function approveAll(uid){
-    fetch('/admin/approve-all/'+uid, {method:'POST'})
-    .then(r=>r.json()).then(d=>{if(d.success)location.reload()})
-}
-function rejectAll(uid){
-    if(confirm('¿Rechazar todas las solicitudes de este usuario?')){
-        fetch('/admin/reject-all/'+uid, {method:'POST'})
-        .then(r=>r.json()).then(d=>{if(d.success)location.reload()})
-    }
-}
-</script>
-</body>
-</html>
+function appAll(uid){if(confirm('Aprobar todo?')){fetch('/admin/approve-all/'+uid,{method:'POST'}).then(r=>r.json()).then(d=>{if(d.success)location.reload()})}}
+function rejAll(uid){if(confirm('Rechazar todo?')){fetch('/admin/reject-all/'+uid,{method:'POST'}).then(r=>r.json()).then(d=>{if(d.success)location.reload()})}}
+</script></body></html>
