@@ -19,7 +19,6 @@
         .form-label{font-size:11px;font-weight:600;margin-bottom:2px;color:#555}
         .form-control,.form-select{border-radius:6px;font-size:13px;border:1px solid #ddd;text-transform:uppercase}
         .form-control:focus,.form-select:focus{border-color:var(--pri);box-shadow:0 0 0 .15rem rgba(78,115,223,.15)}
-        .form-control.not-upper{text-transform:none}
         .not-upper{text-transform:none!important}
         .sug-box{position:absolute;z-index:9999;background:#fff;border:1px solid #ddd;border-radius:0 0 6px 6px;max-height:150px;overflow-y:auto;width:100%;display:none;box-shadow:0 4px 12px rgba(0,0,0,.1)}
         .sug-item{padding:6px 10px;cursor:pointer;font-size:12px;border-bottom:1px solid #f5f5f5}
@@ -37,6 +36,7 @@
 <a class="navbar-brand" href="/dashboard">🗓️ calendarios-map</a>
 <div class="d-flex align-items-center gap-2">
 <span class="text-white small">{{current_user.full_name}}</span>
+<a href="/profile" class="btn btn-outline-light btn-sm rounded-pill">👤 Perfil</a>
 {%if not google_connected%}<a href="/auth/google" class="btn btn-light btn-sm rounded-pill">🔗 Google</a>{%else%}<span class="badge bg-success rounded-pill">✅ Google</span>{%endif%}
 <a href="/dashboard" class="btn btn-outline-light btn-sm rounded-pill">📊 Panel</a>
 <a href="/logout" class="btn btn-outline-light btn-sm rounded-pill">Salir</a>
@@ -66,25 +66,33 @@
 </div>
 <div class="row mb-2">
 <div class="col-md-6 position-relative"><label class="form-label">ENCARGADO *</label><input id="fEncargado" class="form-control" placeholder="Selecciona o escribe..." autocomplete="off" required><div class="sug-box" id="sugEncargado"></div></div>
-<div class="col-md-6"><label class="form-label">TEMA *</label><input id="fTema" class="form-control not-upper" placeholder="Describe el tema a tratar..." autocomplete="off" required></div>
+<div class="col-md-6"><label class="form-label">TEMA *</label><input id="fTema" class="form-control not-upper" placeholder="Describe el tema..." required></div>
 </div>
 <div class="row mb-2"><div class="col-md-4"><label class="form-label">FECHA *</label><input id="fDate" type="date" class="form-control not-upper" required></div>
 <div class="col-md-4"><label class="form-label">HORA *</label><input id="fTime" type="time" class="form-control not-upper" required></div>
-<div class="col-md-4"><label class="form-label">DURACIÓN</label><select id="fDuration" class="form-select"><option value="30">30 min</option><option value="60">1 hora</option></select></div></div>
-<div class="row mb-2"><div class="col-md-6"><label class="form-label">TIPO</label><select id="fType" class="form-select" onchange="toggleLink()"><option value="presencial">Presencial</option><option value="virtual">Virtual (Meet/Zoom)</option></select></div>
-<div class="col-md-6" id="divLink" style="display:none"><label class="form-label">🔗 Link reunión</label><input id="fLink" class="form-control not-upper" placeholder="https://meet.google.com/..."></div></div>
-<hr><div class="section-label">📧 NOTIFICACIONES (Opcional)</div>
-<div class="row mb-2"><div class="col-md-6 position-relative"><label class="form-label">Cliente</label><input id="fClient" class="form-control" placeholder="Buscar o crear cliente..." autocomplete="off"><div class="sug-box" id="sugClient"></div></div>
-<div class="col-md-6"><label class="form-label">Email cliente</label><input id="fEmail" type="email" class="form-control not-upper" placeholder="Se autocompleta al seleccionar"></div></div>
-<div class="mb-2"><label class="form-label">Notificar a otros emails:</label><div id="notifyList"><div class="notify-row"><input class="form-control not-upper notify-email" placeholder="email@ejemplo.com"><button onclick="removeNotify(this)" title="Quitar">×</button></div></div><button id="btnAddNotify" onclick="addNotify()">+ Agregar otro email</button></div>
-<hr><div class="mb-2"><label class="form-label">Notas</label><textarea id="fNotes" class="form-control not-upper" rows="2"></textarea></div></div>
-<div class="modal-footer border-0">
-<button class="btn btn-outline-danger rounded-pill" id="btnDelete" style="display:none" onclick="deleteAppt()">🗑️ Eliminar</button>
-<button class="btn btn-light" data-bs-dismiss="modal">Cancelar</button>
-<button id="btnSend" class="btn btn-primary rounded-pill" onclick="saveBooking()">✅ GUARDAR</button>
-</div></div></div></div>
+<div class="col-md-4"><label class="form-label">DURACIÓN</label>
+<select id="fDuration" class="form-select" onchange="checkCustomDuration()">
+    <option value="30">30 minutos</option>
+    <option value="60">1 hora</option>
+    <option value="90">1.5 horas</option>
+    <option value="120">2 horas</option>
+    <option value="180">3 horas</option>
+    <option value="custom">✨ Otro tiempo...</option>
+</select>
+<input id="fCustomDuration" class="form-control mt-1 not-upper" type="number" placeholder="Minutos (mín 15)" min="15" step="15" style="display:none">
+</div></div>
+<div class="row mb-2"><div class="col-md-6"><label class="form-label">TIPO</label><select id="fType" class="form-select" onchange="toggleLink()"><option value="presencial">Presencial</option><option value="virtual">Virtual</option></select></div>
+<div class="col-md-6" id="divLink" style="display:none"><label class="form-label">🔗 Link</label><input id="fLink" class="form-control not-upper" placeholder="https://meet.google.com/..."></div></div>
+<hr><div class="section-label">📧 NOTIFICACIONES</div>
+<div class="row mb-2"><div class="col-md-6 position-relative"><label class="form-label">Cliente</label><input id="fClient" class="form-control" placeholder="Buscar cliente..." autocomplete="off"><div class="sug-box" id="sugClient"></div></div>
+<div class="col-md-6"><label class="form-label">Email cliente</label><input id="fEmail" type="email" class="form-control not-upper" placeholder="Se autocompleta"></div></div>
+<div class="mb-2"><label class="form-label">Más emails:</label><div id="notifyList"><div class="notify-row"><input class="form-control not-upper notify-email" placeholder="email@ejemplo.com"><button onclick="removeNotify(this)">×</button></div></div><button id="btnAddNotify" onclick="addNotify()">+ Agregar email</button></div>
+<hr><div class="mb-2"><label class="form-label">Notas</label><textarea id="fNotes" class="form-control not-upper" rows="2"></textarea></div>
+</div>
+<div class="modal-footer border-0"><button class="btn btn-outline-danger rounded-pill" id="btnDelete" style="display:none" onclick="deleteAppt()">🗑️ Eliminar</button><button class="btn btn-light" data-bs-dismiss="modal">Cancelar</button><button id="btnSend" class="btn btn-primary rounded-pill" onclick="saveBooking()">✅ GUARDAR</button></div>
+</div></div></div>
 
-<!-- MODAL NUEVO CLIENTE -->
+<!-- MODAL CLIENTE -->
 <div class="modal fade" id="clientModal" tabindex="-1"><div class="modal-dialog modal-sm"><div class="modal-content border-0 shadow">
 <div class="modal-header bg-info text-white"><h6>➕ Nuevo Cliente</h6><button class="btn-close btn-close-white" data-bs-dismiss="modal"></button></div>
 <div class="modal-body">
@@ -92,7 +100,7 @@
 <input id="ncPhone" class="form-control mb-2 not-upper" placeholder="Celular">
 <input id="ncEmail" class="form-control mb-2 not-upper" placeholder="Correo electrónico">
 </div>
-<div class="modal-footer"><button class="btn btn-light" data-bs-dismiss="modal">Cancelar</button><button class="btn btn-primary btn-sm" onclick="saveClient()">Guardar Cliente</button></div>
+<div class="modal-footer"><button class="btn btn-light" data-bs-dismiss="modal">Cancelar</button><button class="btn btn-primary btn-sm" onclick="saveClient()">Guardar</button></div>
 </div></div></div>
 
 <div class="f-credit">Creado por <strong>Marco Antonio Posligua San Martín</strong> | calendarios-map © 2026</div>
@@ -104,9 +112,8 @@
 
 <script>
 let cal, modal, clientModal, clientsData=[], editId=null;
-
-const DEFAULT_TITLES = ['REUNIÓN','WEBINAR','CAPACITACIÓN','CONSULTA','ENTREVISTA','ASESORÍA'];
-const DEFAULT_ENCARGADOS = ['MAP'];
+const DEFAULTS_T=['REUNIÓN','WEBINAR','CAPACITACIÓN','CONSULTA','ENTREVISTA','ASESORÍA'];
+const DEFAULTS_E=['MAP'];
 
 document.addEventListener('DOMContentLoaded',function(){
  cal=new FullCalendar.Calendar(document.getElementById('calendar'),{initialView:'dayGridMonth',locale:'es',headerToolbar:{left:'prev,next today',center:'title',right:'dayGridMonth,timeGridWeek'},events:'/calendar/api/events',eventClick:editAppt,height:'auto'});
@@ -114,126 +121,81 @@ document.addEventListener('DOMContentLoaded',function(){
  modal=new bootstrap.Modal(document.getElementById('myModal'));
  clientModal=new bootstrap.Modal(document.getElementById('clientModal'));
  document.getElementById('fDate').min=new Date().toISOString().split('T')[0];
- setupTitleAutocomplete();
- setupEncargadoAutocomplete();
- setupClientAutocomplete();
+ setupAutocomplete('fTitle','sugTitle','/calendar/api/titles',DEFAULTS_T);
+ setupAutocomplete('fEncargado','sugEncargado','/calendar/api/encargados',DEFAULTS_E);
+ setupClientAC();
  loadPending();
 });
 
 function toggleLink(){document.getElementById('divLink').style.display=document.getElementById('fType').value==='virtual'?'block':'none';}
+function checkCustomDuration(){var c=document.getElementById('fCustomDuration');c.style.display=document.getElementById('fDuration').value==='custom'?'block':'none';if(c.style.display==='block')c.focus();}
+function addNotify(){var d=document.createElement('div');d.className='notify-row';d.innerHTML='<input class="form-control not-upper notify-email" placeholder="email@ejemplo.com"><button onclick="removeNotify(this)">×</button>';document.getElementById('notifyList').appendChild(d);}
+function removeNotify(b){b.parentElement.remove();}
 
-function addNotify(){
- const div=document.createElement('div');div.className='notify-row';
- div.innerHTML='<input class="form-control not-upper notify-email" placeholder="email@ejemplo.com"><button onclick="removeNotify(this)" title="Quitar">×</button>';
- document.getElementById('notifyList').appendChild(div);
-}
-function removeNotify(btn){btn.parentElement.remove();}
-
-function setupTitleAutocomplete(){
- const input=document.getElementById('fTitle'), sug=document.getElementById('sugTitle');
- let titles=[...DEFAULT_TITLES];
- fetch('/calendar/api/titles').then(r=>r.json()).then(d=>{d.forEach(t=>{if(!titles.includes(t))titles.push(t)})});
- input.addEventListener('focus',function(){showTitleSuggestions(titles,input,sug)});
- input.addEventListener('input',function(){showTitleSuggestions(titles,input,sug)});
+function setupAutocomplete(inpId,sugId,url,defs){
+ let input=document.getElementById(inpId),sug=document.getElementById(sugId),opts=[...defs];
+ fetch(url).then(r=>r.json()).then(d=>{d.forEach(v=>{let val=typeof v==='string'?v:(v.name||v.title||v.description||'');if(val&&!opts.includes(val))opts.push(val)})});
+ input.addEventListener('input',function(){
+  let v=this.value.toUpperCase();if(v.length<1){sug.style.display='none';return}
+  let matches=opts.filter(o=>o.toUpperCase().includes(v));
+  sug.innerHTML=matches.slice(0,6).map(m=>`<div class="sug-item">${m}</div>`).join('');
+  if(v&&!opts.includes(v))sug.innerHTML+=`<div class="sug-item sug-new">➕ Crear "${v}"</div>`;
+  sug.style.display='block';
+  sug.querySelectorAll('.sug-item').forEach(i=>i.addEventListener('mousedown',function(e){e.preventDefault();input.value=this.textContent.replace('➕ Crear "','').replace('"','');sug.style.display='none'}));
+ });
  input.addEventListener('blur',()=>setTimeout(()=>sug.style.display='none',200));
 }
-function showTitleSuggestions(titles,input,sug){
- const v=input.value.toUpperCase();
- const matches=titles.filter(t=>t.includes(v)||v.length===0);
- sug.innerHTML=matches.slice(0,8).map(t=>`<div class="sug-item">${t}</div>`).join('');
- if(v&&!titles.includes(v))sug.innerHTML+=`<div class="sug-item sug-new">➕ Crear "${v}"</div>`;
- if(matches.length>0||(v&&!titles.includes(v)))sug.style.display='block';else sug.style.display='none';
- sug.querySelectorAll('.sug-item').forEach(i=>i.addEventListener('mousedown',function(e){e.preventDefault();input.value=this.textContent.replace('➕ Crear "','').replace('"','');sug.style.display='none'}));
-}
 
-function setupEncargadoAutocomplete(){
- const input=document.getElementById('fEncargado'), sug=document.getElementById('sugEncargado');
- let encs=[...DEFAULT_ENCARGADOS];
- fetch('/calendar/api/encargados').then(r=>r.json()).then(d=>{d.forEach(e=>{if(!encs.includes(e))encs.push(e)})});
- input.addEventListener('focus',function(){showEncSuggestions(encs,input,sug)});
- input.addEventListener('input',function(){showEncSuggestions(encs,input,sug)});
- input.addEventListener('blur',()=>setTimeout(()=>sug.style.display='none',200));
-}
-function showEncSuggestions(encs,input,sug){
- const v=input.value.toUpperCase();
- const matches=encs.filter(e=>e.includes(v)||v.length===0);
- sug.innerHTML=matches.slice(0,8).map(e=>`<div class="sug-item">${e}</div>`).join('');
- if(v&&!encs.includes(v))sug.innerHTML+=`<div class="sug-item sug-new">➕ Crear "${v}"</div>`;
- sug.style.display=(matches.length>0||(v&&!encs.includes(v)))?'block':'none';
- sug.querySelectorAll('.sug-item').forEach(i=>i.addEventListener('mousedown',function(e){e.preventDefault();input.value=this.textContent.replace('➕ Crear "','').replace('"','');sug.style.display='none'}));
-}
-
-function setupClientAutocomplete(){
- const input=document.getElementById('fClient'), sug=document.getElementById('sugClient');
+function setupClientAC(){
+ let input=document.getElementById('fClient'),sug=document.getElementById('sugClient');
  fetch('/calendar/api/clients').then(r=>r.json()).then(d=>{clientsData=d});
- input.addEventListener('focus',function(){showClientSuggestions(input,sug)});
- input.addEventListener('input',function(){showClientSuggestions(input,sug)});
+ input.addEventListener('input',function(){
+  let v=this.value.toUpperCase();if(v.length<1){sug.style.display='none';return}
+  let matches=clientsData.filter(c=>c.name.toUpperCase().includes(v));
+  sug.innerHTML=matches.slice(0,6).map(c=>`<div class="sug-item" data-email="${c.email||''}">${c.name}</div>`).join('');
+  if(v)sug.innerHTML+=`<div class="sug-item sug-new">➕ "${v}"</div><div class="sug-item sug-new">📝 Crear completo...</div>`;
+  sug.style.display='block';
+  sug.querySelectorAll('.sug-item').forEach(i=>i.addEventListener('mousedown',function(e){e.preventDefault();
+   if(this.textContent.includes('Crear completo')){document.getElementById('ncName').value=v;clientModal.show()}
+   else if(this.textContent.includes('➕')){input.value=v}
+   else{input.value=this.textContent;document.getElementById('fEmail').value=this.dataset.email||''}
+   sug.style.display='none'}));
+ });
  input.addEventListener('blur',()=>setTimeout(()=>sug.style.display='none',200));
-}
-function showClientSuggestions(input,sug){
- const v=input.value.toUpperCase();
- const matches=clientsData.filter(c=>c.name.toUpperCase().includes(v)||v.length===0);
- sug.innerHTML=matches.slice(0,6).map(c=>`<div class="sug-item" data-email="${c.email||''}">${c.name}</div>`).join('');
- if(v)sug.innerHTML+=`<div class="sug-item sug-new">➕ Nuevo cliente: "${v}"</div>`;
- sug.innerHTML+=`<div class="sug-item sug-new">📝 Crear cliente con datos completos...</div>`;
- sug.style.display='block';
- sug.querySelectorAll('.sug-item').forEach(i=>i.addEventListener('mousedown',function(e){
-  e.preventDefault();
-  if(this.textContent.includes('Crear cliente con datos')){
-   document.getElementById('ncName').value=v;
-   clientModal.show();
-  }else if(this.textContent.includes('Nuevo cliente')){
-   input.value=v;
-  }else{
-   input.value=this.textContent;
-   document.getElementById('fEmail').value=this.dataset.email||'';
-  }
-  sug.style.display='none';
- }));
 }
 
 function saveClient(){
- const name=document.getElementById('ncName').value.trim().toUpperCase();
- const phone=document.getElementById('ncPhone').value.trim();
- const email=document.getElementById('ncEmail').value.trim();
- if(!name){alert('El nombre es obligatorio');return}
- document.getElementById('fClient').value=name;
- document.getElementById('fEmail').value=email;
- clientsData.push({name:name,email:email,phone:phone});
+ let n=document.getElementById('ncName').value.trim().toUpperCase();
+ if(!n){alert('Nombre obligatorio');return}
+ document.getElementById('fClient').value=n;
+ document.getElementById('fEmail').value=document.getElementById('ncEmail').value.trim();
+ clientsData.push({name:n,email:document.getElementById('ncEmail').value.trim()});
  clientModal.hide();
 }
 
 function openModal(calId){
- editId=null;
- document.getElementById('fEditId').value='';
+ editId=null;document.getElementById('fEditId').value='';
  document.getElementById('modalTitle').textContent='📝 Nueva Cita';
  document.getElementById('btnDelete').style.display='none';
- clearForm();
- document.getElementById('fCalendar').value=calId||'';
- modal.show();
+ clearForm();document.getElementById('fCalendar').value=calId||'';modal.show();
 }
 function quickBook(calId){openModal(calId);}
 
 function editAppt(info){
- const p=info.event.extendedProps;
- editId=info.event.id;
+ let p=info.event.extendedProps;editId=info.event.id;
  document.getElementById('fEditId').value=editId;
  document.getElementById('modalTitle').textContent='✏️ Editar Cita';
  document.getElementById('btnDelete').style.display='inline-block';
- document.getElementById('fTitle').value=p.title||'';
- document.getElementById('fCalendar').value=p.calendar_id||'';
- document.getElementById('fEncargado').value=p.encargado||'';
- document.getElementById('fTema').value=p.tema||'';
- document.getElementById('fClient').value=p.client_name||'';
- document.getElementById('fEmail').value=p.client_email||'';
- document.getElementById('fNotes').value=p.notes||'';
- document.getElementById('fLink').value=p.meeting_link||'';
+ document.getElementById('fTitle').value=p.title||'';document.getElementById('fCalendar').value=p.calendar_id||'';
+ document.getElementById('fEncargado').value=p.encargado||'';document.getElementById('fTema').value=p.tema||'';
+ document.getElementById('fClient').value=p.client_name||'';document.getElementById('fEmail').value=p.client_email||'';
+ document.getElementById('fNotes').value=p.notes||'';document.getElementById('fLink').value=p.meeting_link||'';
  document.getElementById('fType').value=p.meeting_link?'virtual':'presencial';
  document.getElementById('divLink').style.display=p.meeting_link?'block':'none';
- const dt=new Date(info.event.start);
+ let dt=new Date(info.event.start);
  document.getElementById('fDate').value=dt.toISOString().split('T')[0];
  document.getElementById('fTime').value=dt.toTimeString().slice(0,5);
- document.getElementById('notifyList').innerHTML='<div class="notify-row"><input class="form-control not-upper notify-email" placeholder="email@ejemplo.com"><button onclick="removeNotify(this)" title="Quitar">×</button></div>';
+ document.getElementById('notifyList').innerHTML='<div class="notify-row"><input class="form-control not-upper notify-email" placeholder="email@ejemplo.com"><button onclick="removeNotify(this)">×</button></div>';
  modal.show();
 }
 
@@ -243,59 +205,43 @@ function clearForm(){
  document.getElementById('fEmail').value='';document.getElementById('fNotes').value='';
  document.getElementById('fDate').value='';document.getElementById('fTime').value='';
  document.getElementById('fLink').value='';document.getElementById('fType').value='presencial';
- document.getElementById('divLink').style.display='none';
- document.getElementById('notifyList').innerHTML='<div class="notify-row"><input class="form-control not-upper notify-email" placeholder="email@ejemplo.com"><button onclick="removeNotify(this)" title="Quitar">×</button></div>';
+ document.getElementById('divLink').style.display='none';document.getElementById('fDuration').value='30';
+ document.getElementById('fCustomDuration').style.display='none';document.getElementById('fCustomDuration').value='';
+ document.getElementById('notifyList').innerHTML='<div class="notify-row"><input class="form-control not-upper notify-email" placeholder="email@ejemplo.com"><button onclick="removeNotify(this)">×</button></div>';
  document.querySelectorAll('.sug-box').forEach(b=>b.style.display='none');
 }
 
 function saveBooking(){
- const btn=document.getElementById('btnSend');btn.disabled=true;btn.textContent='⏳...';
- const title=document.getElementById('fTitle').value.trim().toUpperCase();
- const calId=document.getElementById('fCalendar').value;
- const encargado=document.getElementById('fEncargado').value.trim().toUpperCase();
- const tema=document.getElementById('fTema').value.trim();
- const clientName=document.getElementById('fClient').value.trim().toUpperCase();
- const clientEmail=document.getElementById('fEmail').value.trim();
- const date=document.getElementById('fDate').value;
- const time=document.getElementById('fTime').value;
- const link=document.getElementById('fLink').value.trim();
- if(!title||!calId||!encargado||!tema||!date||!time){alert('❌ Completa campos obligatorios (*)');btn.disabled=false;btn.textContent='✅ GUARDAR';return;}
- 
- if(editId) fetch('/calendar/api/delete/'+editId,{method:'POST'});
- 
- const form=new FormData();
- form.append('title',title);form.append('calendar_id',calId);
- form.append('encargado',encargado);form.append('tema',tema);
- form.append('client_name',clientName);form.append('client_email',clientEmail);
- form.append('date',date);form.append('time',time);
- form.append('duration',document.getElementById('fDuration').value);
+ let btn=document.getElementById('btnSend');btn.disabled=true;btn.textContent='⏳...';
+ let title=document.getElementById('fTitle').value.trim().toUpperCase();
+ let calId=document.getElementById('fCalendar').value;
+ let encargado=document.getElementById('fEncargado').value.trim().toUpperCase();
+ let tema=document.getElementById('fTema').value.trim();
+ let clientName=document.getElementById('fClient').value.trim().toUpperCase();
+ let clientEmail=document.getElementById('fEmail').value.trim();
+ let date=document.getElementById('fDate').value,time=document.getElementById('fTime').value;
+ let link=document.getElementById('fLink').value.trim();
+ if(!title||!calId||!encargado||!tema||!date||!time){alert('❌ Completa campos *');btn.disabled=false;btn.textContent='✅ GUARDAR';return}
+ if(editId){fetch('/calendar/api/delete/'+editId,{method:'POST'});}
+ let durSel=document.getElementById('fDuration').value;
+ let dur=durSel==='custom'?document.getElementById('fCustomDuration').value:durSel;
+ let form=new FormData();
+ form.append('title',title);form.append('calendar_id',calId);form.append('encargado',encargado);
+ form.append('tema',tema);form.append('client_name',clientName);form.append('client_email',clientEmail);
+ form.append('date',date);form.append('time',time);form.append('duration',dur);
  form.append('notes',document.getElementById('fNotes').value.trim());
- if(link) form.append('meeting_link',link);
- document.querySelectorAll('.notify-email').forEach(i=>{const e=i.value.trim();if(e)form.append('notificar',e)});
- 
+ if(link)form.append('meeting_link',link);
+ document.querySelectorAll('.notify-email').forEach(i=>{let e=i.value.trim();if(e)form.append('notificar',e)});
  fetch('/calendar/api/book',{method:'POST',body:form})
  .then(r=>r.json()).then(d=>{btn.disabled=false;btn.textContent='✅ GUARDAR';
   if(d.success){alert(editId?'✅ Actualizada!':'✅ Creada!');modal.hide();cal.refetchEvents();loadPending();}
-  else alert('❌ '+(d.error||'Error'));
- }).catch(()=>{btn.disabled=false;btn.textContent='✅ GUARDAR'});
+  else alert('❌ '+(d.error||'Error'));}).catch(()=>{btn.disabled=false;btn.textContent='✅ GUARDAR'});
 }
 
-function deleteAppt(){
- if(!editId)return;
- if(!confirm('¿Eliminar esta cita permanentemente?'))return;
- fetch('/calendar/api/delete/'+editId,{method:'POST'})
- .then(r=>r.json()).then(d=>{alert('🗑️ Eliminada');modal.hide();cal.refetchEvents();loadPending();});
-}
-
-function loadPending(){
- fetch('/calendar/api/pending').then(r=>r.json()).then(d=>{
-  let h='';if(!d.length)h='<p class="text-success small">✅ Sin pendientes</p>';
-  else d.forEach(i=>{h+=`<div class="pend-item"><strong>${i.title}</strong><br><small>👤 ${i.encargado||''} | ${i.date} ${i.time}</small><br><button class="btn btn-success btn-sm mt-1" onclick="apr('${i.id}')">✓</button> <button class="btn btn-danger btn-sm mt-1" onclick="rej('${i.id}')">✕</button></div>`});
-  document.getElementById('pendingList').innerHTML=h;
- });
-}
-function apr(id){if(confirm('¿Aprobar?')){fetch('/calendar/api/approve/'+id,{method:'POST'}).then(r=>r.json()).then(d=>{alert(d.message||'OK');cal.refetchEvents();loadPending()})}}
-function rej(id){if(confirm('¿Rechazar?')){fetch('/calendar/api/reject/'+id,{method:'POST'}).then(r=>r.json()).then(d=>{alert('Rechazada');cal.refetchEvents();loadPending()})}}
+function deleteAppt(){if(!editId)return;if(!confirm('¿Eliminar?'))return;fetch('/calendar/api/delete/'+editId,{method:'POST'}).then(r=>r.json()).then(d=>{alert('🗑️ Eliminada');modal.hide();cal.refetchEvents();loadPending();});}
+function loadPending(){fetch('/calendar/api/pending').then(r=>r.json()).then(d=>{let h='';if(!d.length)h='<p class="text-success small">✅ Sin pendientes</p>';else d.forEach(i=>{h+=`<div class="pend-item"><strong>${i.title}</strong><br><small>👤 ${i.encargado||''} | ${i.date} ${i.time}</small><br><button class="btn btn-success btn-sm mt-1" onclick="apr('${i.id}')">✓</button> <button class="btn btn-danger btn-sm mt-1" onclick="rej('${i.id}')">✕</button></div>`});document.getElementById('pendingList').innerHTML=h;});}
+function apr(id){if(confirm('¿Aprobar?')){fetch('/calendar/api/approve/'+id,{method:'POST'}).then(r=>r.json()).then(d=>{alert(d.message||'OK');cal.refetchEvents();loadPending()});}}
+function rej(id){if(confirm('¿Rechazar?')){fetch('/calendar/api/reject/'+id,{method:'POST'}).then(r=>r.json()).then(d=>{alert('Rechazada');cal.refetchEvents();loadPending()});}}
 </script>
 </body>
 </html>
