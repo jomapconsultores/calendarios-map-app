@@ -143,6 +143,19 @@ def create_app():
     @login_required
     def logout(): logout_user(); return redirect('/')
 
+    @app.route('/profile', methods=['GET', 'POST'])
+    @login_required
+    def profile():
+        if request.method == 'POST':
+            data = {}
+            if request.form.get('full_name'): data['full_name'] = request.form.get('full_name')
+            if request.form.get('email'): data['email'] = request.form.get('email')
+            if request.form.get('password'): data['password_hash'] = generate_password_hash(request.form.get('password'))
+            if data: app.supabase.update('users', current_user.id, data)
+            flash('✅ Datos actualizados', 'success')
+            return redirect('/profile')
+        return render_template('profile.html')
+
     @app.route('/auth/google')
     @login_required
     def google_auth():
@@ -165,8 +178,6 @@ def create_app():
         flow.fetch_token(authorization_response=request.url)
         save_google_creds(app, flow.credentials)
         flash('✅ Google Calendar conectado!', 'success'); return redirect('/dashboard')
-
-    # ============= ADMIN =============
 
     @app.route('/admin/users')
     @login_required
@@ -246,8 +257,6 @@ def create_app():
             app.supabase.update('calendar_permissions', p['id'], {'status': 'rejected'})
         return {'success': True}
 
-    # ============= CALENDARIO =============
-
     @app.route('/calendar')
     @login_required
     def calendar():
@@ -293,7 +302,8 @@ def create_app():
     def api_book():
         try:
             date = request.form.get('date'); time = request.form.get('time')
-            dur = int(request.form.get('duration', 30))
+            dur_sel = request.form.get('duration', '30')
+            dur = int(request.form.get('custom_duration', dur_sel))
             start = f"{date}T{time}:00"; end = (datetime.fromisoformat(start) + timedelta(minutes=dur)).isoformat()
             title = request.form.get('title', '').strip().upper()
             cal_id = request.form.get('calendar_id', 'personal')
