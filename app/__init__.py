@@ -35,6 +35,7 @@ class SupabaseAPI:
         h = self.headers.copy(); h['Prefer'] = 'return=representation'
         r = requests.post(f'{self.url}/rest/v1/{table}', headers=h, json=data)
         if r.status_code in [200, 201]: return r.json() if isinstance(r.json(), list) else [r.json()]
+        print(f"INSERT ERROR {r.status_code}: {r.text}")
         return None
     def update(self, table, id_val, data, id_col='id'):
         r = requests.patch(f'{self.url}/rest/v1/{table}?{id_col}=eq.{id_val}', headers=self.headers, json=data)
@@ -66,16 +67,6 @@ def get_user_calendars(app, uid):
 
 def is_admin():
     return current_user.is_authenticated and current_user.role == 'admin'
-
-def to_iso_z(dt_str):
-    """Convierte fecha/hora local Ecuador a ISO 8601 con Z"""
-    try:
-        local_dt = datetime.fromisoformat(dt_str)
-        local_dt = TIMEZONE.localize(local_dt)
-        utc_dt = local_dt.astimezone(pytz.UTC)
-        return utc_dt.isoformat()
-    except:
-        return dt_str
 
 def create_app():
     app = Flask(__name__, template_folder='../templates', static_folder='../static')
@@ -321,10 +312,6 @@ def create_app():
             date = request.form.get('date'); time = request.form.get('time')
             dur_sel = request.form.get('duration', '30')
             dur = int(request.form.get('custom_duration', dur_sel))
-            # Crear datetime en zona Ecuador
-            local_dt = TIMEZONE.localize(datetime.fromisoformat(f"{date}T{time}:00"))
-            start = local_dt.isoformat()
-            end = (local_dt + timedelta(minutes=dur)).isoformat()
             title = request.form.get('title', '').strip().upper()
             cal_id = request.form.get('calendar_id', 'personal')
             encargado = request.form.get('encargado', '').strip().upper()
@@ -336,10 +323,14 @@ def create_app():
             direccion = request.form.get('direccion', '').strip()
             ciudad = request.form.get('ciudad', 'Cuenca').strip().upper()
             link = request.form.get('meeting_link', '').strip()
+            
             if not title or not cal_id or not encargado or not tema:
                 return {'success': False, 'error': 'Faltan campos'}
+            
+            # Guardar ciudad si es nueva
             if ciudad and not app.supabase.get('ciudades', {'name': ciudad}):
                 app.supabase.insert('ciudades', {'name': ciudad})
+            
             if title and not app.supabase.get('appointment_titles', {'title': title}):
                 app.supabase.insert('appointment_titles', {'title': title})
             if encargado and not app.supabase.get('encargados', {'name': encargado}):
@@ -348,18 +339,30 @@ def create_app():
                 app.supabase.insert('temas', {'description': tema})
             if client_name and not app.supabase.get('clients', {'name': client_name}):
                 app.supabase.insert('clients', {'name': client_name, 'email': client_email, 'created_by': current_user.id})
-            result = app.supabase.insert('appointments', {
+            
+            # Usar formato simple sin timezone para evitar errores
+            start_str = f"{date}T{time}:00-05:00"
+            from datetime import datetime as dt
+            start_dt = dt.fromisoformat(start_str)
+            end_dt = start_dt + timedelta(minutes=dur)
+            
+            data = {
                 'title': title, 'calendar_id': cal_id, 'encargado': encargado, 'tema': tema,
                 'client_name': client_name, 'client_email': client_email,
-                'start_time': start, 'end_time': end, 'status': 'pending',
+                'start_time': start_dt.isoformat(), 'end_time': end_dt.isoformat(),
+                'status': 'pending',
                 'notes': request.form.get('notes', ''),
                 'invitados': ','.join(notificar) if notificar else '',
-                'direccion': direccion if tipo == 'presencial' else link,
+                'direccion': direccion if tipo == 'presencial' else '',
                 'ciudad': ciudad,
                 'meeting_link': link if tipo == 'virtual' else '',
-                'created_by': current_user.id})
+                'created_by': current_user.id
+            }
+            result = app.supabase.insert('appointments', data)
             return {'success': True, 'id': result[0]['id']} if result else {'success': False, 'error': 'Error BD'}
-        except Exception as e: return {'success': False, 'error': str(e)}
+        except Exception as e:
+            traceback.print_exc()
+            return {'success': False, 'error': str(e)}
 
     @app.route('/calendar/api/pending')
     @login_required
@@ -371,7 +374,7 @@ def create_app():
             pending = [a for a in events if a.get('status') == 'pending' and a.get('calendar_id') in ucal]
         return [{'id': a['id'], 'title': a['title'], 'encargado': a.get('encargado', ''),
                  'tema': a.get('tema', ''), 'client_name': a.get('client_name', ''),
-                 'date': a['start_time'].split('T')[0], 'time': a['start_time'].split('T')[1][:5]} for a in pending]
+                 'date': a['start_time'].split('T')[0], 'time': a['start_time'].split('T')[1].split('-')[0].split('+')[0][:5]} for a in pending]
 
     @app.route('/calendar/api/approve/<aid>', methods=['POST'])
     @login_required
