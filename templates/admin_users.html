@@ -6,11 +6,11 @@
 <a class="navbar-brand" href="/dashboard">🗓️ calendarios-map</a>
 <div><span class="text-white me-3 small">{{current_user.full_name}}</span>
 <a href="/dashboard" class="btn btn-outline-light btn-sm rounded-pill me-1">📊 Panel</a>
+<a href="/admin/database" class="btn btn-outline-light btn-sm rounded-pill me-1">🗄️ BD</a>
 <a href="/calendar" class="btn btn-light btn-sm rounded-pill me-1">📅 Calendario</a>
 <a href="/logout" class="btn btn-outline-light btn-sm rounded-pill">Salir</a></div></div></nav>
 
 <div class="container mt-4">
-
 {% with messages = get_flashed_messages(with_categories=true) %}{% if messages %}{% for cat, msg in messages %}
 <div class="alert alert-{{cat}} alert-dismissible fade show">{{msg}}<button class="btn-close" data-bs-dismiss="alert"></button></div>
 {% endfor %}{% endif %}{% endwith %}

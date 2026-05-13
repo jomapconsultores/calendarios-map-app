@@ -1,0 +1,57 @@
+<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"><title>Base de Datos - calendarios-map</title>
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+<style>body{background:#f8f9fc;font-family:'Segoe UI',sans-serif}.navbar{background:linear-gradient(135deg,#4e73df,#224abe)!important}.card{border-radius:12px;border:none;box-shadow:0 .15rem 1.75rem rgba(0,0,0,.05)}.section-title{font-size:14px;font-weight:700;margin-bottom:10px;color:#4e73df}.table-sm{font-size:12px}.badge-sm{font-size:10px}</style></head>
+<body>
+<nav class="navbar navbar-dark"><div class="container-fluid">
+<a class="navbar-brand" href="/dashboard">🗓️ calendarios-map</a>
+<div><span class="text-white me-3 small">{{current_user.full_name}}</span>
+<a href="/admin/users" class="btn btn-outline-light btn-sm rounded-pill me-1">👥 Usuarios</a>
+<a href="/calendar" class="btn btn-light btn-sm rounded-pill me-1">📅 Calendario</a>
+<a href="/logout" class="btn btn-outline-light btn-sm rounded-pill">Salir</a></div></div></nav>
+
+<div class="container-fluid mt-4">
+<h4>🗄️ Base de Datos</h4>
+
+<div class="row">
+<div class="col-md-6">
+<div class="card mb-3"><div class="card-body">
+<div class="section-title">👥 Usuarios ({{users|length}})</div>
+<table class="table table-sm"><thead><tr><th>Nombre</th><th>Email</th><th>Rol</th></tr></thead><tbody>
+{%for u in users%}<tr><td>{{u.full_name}}</td><td>{{u.email}}</td><td><span class="badge bg-{{'danger' if u.role=='admin' else 'info'}}">{{u.role}}</span></td></tr>{%endfor%}
+</tbody></table></div></div></div>
+
+<div class="col-md-6">
+<div class="card mb-3"><div class="card-body">
+<div class="section-title">🏙️ Ciudades ({{ciudades|length}})</div>
+<table class="table table-sm"><thead><tr><th>Ciudad</th><th>Fecha</th></tr></thead><tbody>
+{%for c in ciudades%}<tr><td>{{c.name}}</td><td>{{c.created_at[:10] if c.created_at else ''}}</td></tr>{%endfor%}
+</tbody></table></div></div></div>
+
+<div class="col-md-6">
+<div class="card mb-3"><div class="card-body">
+<div class="section-title">📝 Títulos ({{titles|length}})</div>
+<table class="table table-sm"><thead><tr><th>Título</th></tr></thead><tbody>
+{%for t in titles%}<tr><td>{{t.title}}</td></tr>{%endfor%}
+</tbody></table></div></div></div>
+
+<div class="col-md-6">
+<div class="card mb-3"><div class="card-body">
+<div class="section-title">👤 Encargados ({{encargados|length}})</div>
+<table class="table table-sm"><thead><tr><th>Nombre</th></tr></thead><tbody>
+{%for e in encargados%}<tr><td>{{e.name}}</td></tr>{%endfor%}
+</tbody></table></div></div></div>
+
+<div class="col-md-6">
+<div class="card mb-3"><div class="card-body">
+<div class="section-title">🧑‍💼 Clientes ({{clients|length}})</div>
+<table class="table table-sm"><thead><tr><th>Nombre</th><th>Email</th></tr></thead><tbody>
+{%for c in clients%}<tr><td>{{c.name}}</td><td>{{c.email or ''}}</td></tr>{%endfor%}
+</tbody></table></div></div></div>
+
+<div class="col-md-6">
+<div class="card mb-3"><div class="card-body">
+<div class="section-title">📅 Citas ({{appointments|length}})</div>
+<table class="table table-sm"><thead><tr><th>Título</th><th>Calendario</th><th>Dirección</th><th>Ciudad</th><th>Estado</th></tr></thead><tbody>
+{%for a in appointments%}<tr><td>{{a.title}}</td><td>{{a.calendar_id}}</td><td>{{a.direccion or ''}}</td><td>{{a.ciudad or ''}}</td><td><span class="badge bg-{{'success' if a.status=='confirmed' else 'warning' if a.status=='pending' else 'danger'}}">{{a.status}}</span></td></tr>{%endfor%}
+</tbody></table></div></div></div>
+</div></div></body></html>

@@ -26,7 +26,7 @@ class SupabaseAPI:
     def __init__(self, url, key):
         self.url = url; self.headers = {'apikey': key, 'Authorization': f'Bearer {key}', 'Content-Type': 'application/json'}
     def get(self, table, filters=None):
-        q = f'{self.url}/rest/v1/{table}?select=*&order=name.asc'
+        q = f'{self.url}/rest/v1/{table}?select=*'
         if filters:
             q = f'{self.url}/rest/v1/{table}?select=*'
             for k, v in filters.items(): q += f'&{k}=eq.{v}'
@@ -183,6 +183,8 @@ def create_app():
         save_google_creds(app, flow.credentials)
         flash('✅ Google Calendar conectado!', 'success'); return redirect('/dashboard')
 
+    # ============= ADMIN =============
+
     @app.route('/admin/users')
     @login_required
     def admin_users():
@@ -206,6 +208,20 @@ def create_app():
                 item['calendars'] = [c for c in all_cals if c['calendar_id'] in cal_ids]
                 pending.append(item)
         return render_template('admin_users.html', users=users, calendarios=all_cals, pending=pending, pending_all=pending_all)
+
+    @app.route('/admin/database')
+    @login_required
+    def admin_database():
+        if not is_admin(): return redirect('/dashboard')
+        users = app.supabase.get('users')
+        ciudades = app.supabase.get('ciudades')
+        titles = app.supabase.get('appointment_titles')
+        encargados = app.supabase.get('encargados')
+        clients = app.supabase.get('clients')
+        appointments = app.supabase.get('appointments')
+        all_cals = app.supabase.get('calendar_config')
+        return render_template('admin_database.html', users=users, ciudades=ciudades, titles=titles,
+            encargados=encargados, clients=clients, appointments=appointments, calendarios=all_cals)
 
     @app.route('/admin/user/update/<uid>', methods=['POST'])
     @login_required
@@ -260,6 +276,8 @@ def create_app():
         for p in app.supabase.get('calendar_permissions', {'user_id': uid, 'status': 'pending'}):
             app.supabase.update('calendar_permissions', p['id'], {'status': 'rejected'})
         return {'success': True}
+
+    # ============= CALENDARIO =============
 
     @app.route('/calendar')
     @login_required
@@ -336,7 +354,7 @@ def create_app():
                 existing = app.supabase.get('ciudades', {'name': ciudad})
                 if not existing:
                     app.supabase.insert('ciudades', {'name': ciudad})
-                    print(f"✅ Nueva ciudad guardada: {ciudad}")
+                    print(f"✅ Nueva ciudad: {ciudad}")
             
             if title and not app.supabase.get('appointment_titles', {'title': title}):
                 app.supabase.insert('appointment_titles', {'title': title})
@@ -419,8 +437,7 @@ def create_app():
                      'reminders': {'useDefault': False, 'overrides': [
                          {'method': 'email', 'minutes': 1440}, {'method': 'popup', 'minutes': 30}]}}
             
-            if location:
-                event['location'] = location
+            if location: event['location'] = location
             
             created = service.events().insert(calendarId='primary', body=event, sendUpdates='all').execute()
             app.supabase.update('appointments', aid, {'status': 'confirmed', 'google_event_id': created.get('id')})
