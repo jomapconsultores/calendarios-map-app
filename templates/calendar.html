@@ -55,7 +55,7 @@
 <div class="col-md-10"><div class="card shadow-sm border-0 rounded-3"><div class="card-body p-2"><div id="calendar"></div></div></div></div>
 </div></div>
 
-<!-- MODAL -->
+<!-- MODAL NUEVA/EDITAR CITA -->
 <div class="modal fade" id="myModal" tabindex="-1"><div class="modal-dialog modal-lg"><div class="modal-content border-0 shadow">
 <div class="modal-header text-white" style="background:linear-gradient(135deg,#4e73df,#224abe)"><h5 id="modalTitle">📝 Nueva Cita</h5><button class="btn-close btn-close-white" data-bs-dismiss="modal"></button></div>
 <div class="modal-body">
@@ -81,8 +81,12 @@
 </select>
 <input id="fCustomDuration" class="form-control mt-1 not-upper" type="number" placeholder="Minutos (mín 15)" min="15" step="15" style="display:none">
 </div></div>
-<div class="row mb-2"><div class="col-md-6"><label class="form-label">TIPO</label><select id="fType" class="form-select" onchange="toggleLink()"><option value="presencial">Presencial</option><option value="virtual">Virtual</option></select></div>
-<div class="col-md-6" id="divLink" style="display:none"><label class="form-label">🔗 Link</label><input id="fLink" class="form-control not-upper" placeholder="https://meet.google.com/..."></div></div>
+<div class="row mb-2"><div class="col-md-6"><label class="form-label">TIPO</label><select id="fType" class="form-select" onchange="toggleType()"><option value="presencial">Presencial</option><option value="virtual">Virtual</option></select></div>
+<div class="col-md-6" id="divLink" style="display:none"><label class="form-label">🔗 Link reunión</label><input id="fLink" class="form-control not-upper" placeholder="https://meet.google.com/..."></div></div>
+<div id="divPresencial" class="row mb-2">
+<div class="col-md-6"><label class="form-label">DIRECCIÓN</label><input id="fDireccion" class="form-control not-upper" placeholder="Dirección del evento..."></div>
+<div class="col-md-6"><label class="form-label">CIUDAD</label><input id="fCiudad" class="form-control" list="ciudadesList" value="CUENCA" placeholder="Ciudad..." autocomplete="off"><datalist id="ciudadesList"></datalist></div>
+</div>
 <hr><div class="section-label">📧 NOTIFICACIONES</div>
 <div class="row mb-2"><div class="col-md-6 position-relative"><label class="form-label">Cliente</label><input id="fClient" class="form-control" placeholder="Buscar cliente..." autocomplete="off"><div class="sug-box" id="sugClient"></div></div>
 <div class="col-md-6"><label class="form-label">Email cliente</label><input id="fEmail" type="email" class="form-control not-upper" placeholder="Se autocompleta"></div></div>
@@ -92,7 +96,7 @@
 <div class="modal-footer border-0"><button class="btn btn-outline-danger rounded-pill" id="btnDelete" style="display:none" onclick="deleteAppt()">🗑️ Eliminar</button><button class="btn btn-light" data-bs-dismiss="modal">Cancelar</button><button id="btnSend" class="btn btn-primary rounded-pill" onclick="saveBooking()">✅ GUARDAR</button></div>
 </div></div></div>
 
-<!-- MODAL CLIENTE -->
+<!-- MODAL NUEVO CLIENTE -->
 <div class="modal fade" id="clientModal" tabindex="-1"><div class="modal-dialog modal-sm"><div class="modal-content border-0 shadow">
 <div class="modal-header bg-info text-white"><h6>➕ Nuevo Cliente</h6><button class="btn-close btn-close-white" data-bs-dismiss="modal"></button></div>
 <div class="modal-body">
@@ -125,12 +129,23 @@ document.addEventListener('DOMContentLoaded',function(){
  setupAutocomplete('fEncargado','sugEncargado','/calendar/api/encargados',DEFAULTS_E);
  setupClientAC();
  loadPending();
+ loadCiudades();
 });
 
-function toggleLink(){document.getElementById('divLink').style.display=document.getElementById('fType').value==='virtual'?'block':'none';}
+function toggleType(){
+ document.getElementById('divLink').style.display=document.getElementById('fType').value==='virtual'?'block':'none';
+ document.getElementById('divPresencial').style.display=document.getElementById('fType').value==='presencial'?'flex':'none';
+}
 function checkCustomDuration(){var c=document.getElementById('fCustomDuration');c.style.display=document.getElementById('fDuration').value==='custom'?'block':'none';if(c.style.display==='block')c.focus();}
 function addNotify(){var d=document.createElement('div');d.className='notify-row';d.innerHTML='<input class="form-control not-upper notify-email" placeholder="email@ejemplo.com"><button onclick="removeNotify(this)">×</button>';document.getElementById('notifyList').appendChild(d);}
 function removeNotify(b){b.parentElement.remove();}
+
+function loadCiudades(){
+ fetch('/calendar/api/ciudades').then(r=>r.json()).then(data=>{
+  var dl=document.getElementById('ciudadesList');
+  if(dl)dl.innerHTML=data.map(c=>'<option value="'+c+'">').join('');
+ });
+}
 
 function setupAutocomplete(inpId,sugId,url,defs){
  let input=document.getElementById(inpId),sug=document.getElementById(sugId),opts=[...defs];
@@ -177,7 +192,10 @@ function openModal(calId){
  editId=null;document.getElementById('fEditId').value='';
  document.getElementById('modalTitle').textContent='📝 Nueva Cita';
  document.getElementById('btnDelete').style.display='none';
- clearForm();document.getElementById('fCalendar').value=calId||'';modal.show();
+ clearForm();
+ if(calId)document.getElementById('fCalendar').value=calId;
+ loadCiudades();
+ modal.show();
 }
 function quickBook(calId){openModal(calId);}
 
@@ -189,13 +207,24 @@ function editAppt(info){
  document.getElementById('fTitle').value=p.title||'';document.getElementById('fCalendar').value=p.calendar_id||'';
  document.getElementById('fEncargado').value=p.encargado||'';document.getElementById('fTema').value=p.tema||'';
  document.getElementById('fClient').value=p.client_name||'';document.getElementById('fEmail').value=p.client_email||'';
- document.getElementById('fNotes').value=p.notes||'';document.getElementById('fLink').value=p.meeting_link||'';
- document.getElementById('fType').value=p.meeting_link?'virtual':'presencial';
- document.getElementById('divLink').style.display=p.meeting_link?'block':'none';
+ document.getElementById('fNotes').value=p.notes||'';
+ document.getElementById('fDireccion').value=p.direccion||'';
+ document.getElementById('fCiudad').value=p.ciudad||'CUENCA';
+ document.getElementById('fLink').value=p.meeting_link||'';
+ if(p.meeting_link){
+  document.getElementById('fType').value='virtual';
+  document.getElementById('divLink').style.display='block';
+  document.getElementById('divPresencial').style.display='none';
+ } else {
+  document.getElementById('fType').value='presencial';
+  document.getElementById('divLink').style.display='none';
+  document.getElementById('divPresencial').style.display='flex';
+ }
  let dt=new Date(info.event.start);
  document.getElementById('fDate').value=dt.toISOString().split('T')[0];
  document.getElementById('fTime').value=dt.toTimeString().slice(0,5);
  document.getElementById('notifyList').innerHTML='<div class="notify-row"><input class="form-control not-upper notify-email" placeholder="email@ejemplo.com"><button onclick="removeNotify(this)">×</button></div>';
+ loadCiudades();
  modal.show();
 }
 
@@ -205,8 +234,10 @@ function clearForm(){
  document.getElementById('fEmail').value='';document.getElementById('fNotes').value='';
  document.getElementById('fDate').value='';document.getElementById('fTime').value='';
  document.getElementById('fLink').value='';document.getElementById('fType').value='presencial';
- document.getElementById('divLink').style.display='none';document.getElementById('fDuration').value='30';
- document.getElementById('fCustomDuration').style.display='none';document.getElementById('fCustomDuration').value='';
+ document.getElementById('divLink').style.display='none';document.getElementById('divPresencial').style.display='flex';
+ document.getElementById('fDuration').value='30';document.getElementById('fCustomDuration').style.display='none';
+ document.getElementById('fCustomDuration').value='';document.getElementById('fDireccion').value='';
+ document.getElementById('fCiudad').value='CUENCA';
  document.getElementById('notifyList').innerHTML='<div class="notify-row"><input class="form-control not-upper notify-email" placeholder="email@ejemplo.com"><button onclick="removeNotify(this)">×</button></div>';
  document.querySelectorAll('.sug-box').forEach(b=>b.style.display='none');
 }
@@ -220,7 +251,10 @@ function saveBooking(){
  let clientName=document.getElementById('fClient').value.trim().toUpperCase();
  let clientEmail=document.getElementById('fEmail').value.trim();
  let date=document.getElementById('fDate').value,time=document.getElementById('fTime').value;
+ let tipo=document.getElementById('fType').value;
  let link=document.getElementById('fLink').value.trim();
+ let direccion=document.getElementById('fDireccion').value.trim();
+ let ciudad=document.getElementById('fCiudad').value.trim().toUpperCase();
  if(!title||!calId||!encargado||!tema||!date||!time){alert('❌ Completa campos *');btn.disabled=false;btn.textContent='✅ GUARDAR';return}
  if(editId){fetch('/calendar/api/delete/'+editId,{method:'POST'});}
  let durSel=document.getElementById('fDuration').value;
@@ -229,8 +263,9 @@ function saveBooking(){
  form.append('title',title);form.append('calendar_id',calId);form.append('encargado',encargado);
  form.append('tema',tema);form.append('client_name',clientName);form.append('client_email',clientEmail);
  form.append('date',date);form.append('time',time);form.append('duration',dur);
- form.append('notes',document.getElementById('fNotes').value.trim());
+ form.append('type',tipo);form.append('direccion',direccion);form.append('ciudad',ciudad);
  if(link)form.append('meeting_link',link);
+ form.append('notes',document.getElementById('fNotes').value.trim());
  document.querySelectorAll('.notify-email').forEach(i=>{let e=i.value.trim();if(e)form.append('notificar',e)});
  fetch('/calendar/api/book',{method:'POST',body:form})
  .then(r=>r.json()).then(d=>{btn.disabled=false;btn.textContent='✅ GUARDAR';

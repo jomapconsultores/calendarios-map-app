@@ -298,39 +298,53 @@ def create_app():
     def api_clients(): return [{'name': c['name'], 'email': c.get('email', '')} for c in app.supabase.get('clients')]
 
     @app.route('/calendar/api/book', methods=['POST'])
-    @login_required
-    def api_book():
-        try:
-            date = request.form.get('date'); time = request.form.get('time')
-            dur_sel = request.form.get('duration', '30')
-            dur = int(request.form.get('custom_duration', dur_sel))
-            start = f"{date}T{time}:00"; end = (datetime.fromisoformat(start) + timedelta(minutes=dur)).isoformat()
-            title = request.form.get('title', '').strip().upper()
-            cal_id = request.form.get('calendar_id', 'personal')
-            encargado = request.form.get('encargado', '').strip().upper()
-            tema = request.form.get('tema', '').strip()
-            client_name = request.form.get('client_name', '').strip().upper()
-            client_email = request.form.get('client_email', '').strip()
-            notificar = request.form.getlist('notificar')
-            if not title or not cal_id or not encargado or not tema:
-                return {'success': False, 'error': 'Faltan campos'}
-            if title and not app.supabase.get('appointment_titles', {'title': title}):
-                app.supabase.insert('appointment_titles', {'title': title})
-            if encargado and not app.supabase.get('encargados', {'name': encargado}):
-                app.supabase.insert('encargados', {'name': encargado})
-            if tema and not app.supabase.get('temas', {'description': tema}):
-                app.supabase.insert('temas', {'description': tema})
-            if client_name and not app.supabase.get('clients', {'name': client_name}):
-                app.supabase.insert('clients', {'name': client_name, 'email': client_email, 'created_by': current_user.id})
-            result = app.supabase.insert('appointments', {
-                'title': title, 'calendar_id': cal_id, 'encargado': encargado, 'tema': tema,
-                'client_name': client_name, 'client_email': client_email,
-                'start_time': start, 'end_time': end, 'status': 'pending',
-                'notes': request.form.get('notes', ''),
-                'invitados': ','.join(notificar) if notificar else '',
-                'created_by': current_user.id})
-            return {'success': True, 'id': result[0]['id']} if result else {'success': False, 'error': 'Error BD'}
-        except Exception as e: return {'success': False, 'error': str(e)}
+@login_required
+def api_book():
+    try:
+        date = request.form.get('date'); time = request.form.get('time')
+        dur_sel = request.form.get('duration', '30')
+        dur = int(request.form.get('custom_duration', dur_sel))
+        start = f"{date}T{time}:00"; end = (datetime.fromisoformat(start) + timedelta(minutes=dur)).isoformat()
+        title = request.form.get('title', '').strip().upper()
+        cal_id = request.form.get('calendar_id', 'personal')
+        encargado = request.form.get('encargado', '').strip().upper()
+        tema = request.form.get('tema', '').strip()
+        client_name = request.form.get('client_name', '').strip().upper()
+        client_email = request.form.get('client_email', '').strip()
+        notificar = request.form.getlist('notificar')
+        tipo = request.form.get('type', 'presencial')
+        direccion = request.form.get('direccion', '').strip()
+        ciudad = request.form.get('ciudad', 'Cuenca').strip().upper()
+        link = request.form.get('meeting_link', '').strip()
+        
+        if not title or not cal_id or not encargado or not tema:
+            return {'success': False, 'error': 'Faltan campos'}
+        
+        # Guardar ciudad si es nueva
+        if ciudad and not app.supabase.get('ciudades', {'name': ciudad}):
+            app.supabase.insert('ciudades', {'name': ciudad})
+        
+        if title and not app.supabase.get('appointment_titles', {'title': title}):
+            app.supabase.insert('appointment_titles', {'title': title})
+        if encargado and not app.supabase.get('encargados', {'name': encargado}):
+            app.supabase.insert('encargados', {'name': encargado})
+        if tema and not app.supabase.get('temas', {'description': tema}):
+            app.supabase.insert('temas', {'description': tema})
+        if client_name and not app.supabase.get('clients', {'name': client_name}):
+            app.supabase.insert('clients', {'name': client_name, 'email': client_email, 'created_by': current_user.id})
+        
+        result = app.supabase.insert('appointments', {
+            'title': title, 'calendar_id': cal_id, 'encargado': encargado, 'tema': tema,
+            'client_name': client_name, 'client_email': client_email,
+            'start_time': start, 'end_time': end, 'status': 'pending',
+            'notes': request.form.get('notes', ''),
+            'invitados': ','.join(notificar) if notificar else '',
+            'direccion': direccion if tipo == 'presencial' else link,
+            'ciudad': ciudad,
+            'meeting_link': link if tipo == 'virtual' else '',
+            'created_by': current_user.id})
+        return {'success': True, 'id': result[0]['id']} if result else {'success': False, 'error': 'Error BD'}
+    except Exception as e: return {'success': False, 'error': str(e)}
 
     @app.route('/calendar/api/pending')
     @login_required
