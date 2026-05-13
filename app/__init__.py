@@ -26,8 +26,9 @@ class SupabaseAPI:
     def __init__(self, url, key):
         self.url = url; self.headers = {'apikey': key, 'Authorization': f'Bearer {key}', 'Content-Type': 'application/json'}
     def get(self, table, filters=None):
-        q = f'{self.url}/rest/v1/{table}?select=*'
+        q = f'{self.url}/rest/v1/{table}?select=*&order=name.asc'
         if filters:
+            q = f'{self.url}/rest/v1/{table}?select=*'
             for k, v in filters.items(): q += f'&{k}=eq.{v}'
         r = requests.get(q, headers=self.headers)
         return r.json() if r.status_code == 200 else []
@@ -283,6 +284,7 @@ def create_app():
                  'client_email': e.get('client_email', ''), 'status': e.get('status', 'pending'),
                  'calendar_id': e.get('calendar_id', ''), 'notes': e.get('notes', ''),
                  'direccion': e.get('direccion', ''), 'ciudad': e.get('ciudad', 'Cuenca'),
+                 'meeting_link': e.get('meeting_link', ''),
                  'google_event_id': e.get('google_event_id', ''), 'id': e['id']}} for e in events]
 
     @app.route('/calendar/api/titles')
@@ -303,7 +305,9 @@ def create_app():
 
     @app.route('/calendar/api/ciudades')
     @login_required
-    def api_ciudades(): return [c['name'] for c in app.supabase.get('ciudades')]
+    def api_ciudades():
+        ciudades = app.supabase.get('ciudades')
+        return [c['name'] for c in ciudades]
 
     @app.route('/calendar/api/book', methods=['POST'])
     @login_required
@@ -328,8 +332,11 @@ def create_app():
                 return {'success': False, 'error': 'Faltan campos'}
             
             # Guardar ciudad si es nueva
-            if ciudad and not app.supabase.get('ciudades', {'name': ciudad}):
-                app.supabase.insert('ciudades', {'name': ciudad})
+            if ciudad:
+                existing = app.supabase.get('ciudades', {'name': ciudad})
+                if not existing:
+                    app.supabase.insert('ciudades', {'name': ciudad})
+                    print(f"✅ Nueva ciudad guardada: {ciudad}")
             
             if title and not app.supabase.get('appointment_titles', {'title': title}):
                 app.supabase.insert('appointment_titles', {'title': title})
@@ -340,10 +347,8 @@ def create_app():
             if client_name and not app.supabase.get('clients', {'name': client_name}):
                 app.supabase.insert('clients', {'name': client_name, 'email': client_email, 'created_by': current_user.id})
             
-            # Usar formato simple sin timezone para evitar errores
             start_str = f"{date}T{time}:00-05:00"
-            from datetime import datetime as dt
-            start_dt = dt.fromisoformat(start_str)
+            start_dt = datetime.fromisoformat(start_str)
             end_dt = start_dt + timedelta(minutes=dur)
             
             data = {
@@ -395,11 +400,17 @@ def create_app():
                     inv = inv.strip()
                     if inv and inv not in [a['email'] for a in attendees]: attendees.append({'email': inv})
             if not attendees: attendees.append({'email': 'mposligua0000@gmail.com'})
+            
             desc = f"Titulo: {apt['title']}\nEncargado: {apt.get('encargado','')}\nTema: {apt.get('tema','')}"
             if apt.get('client_name'): desc += f"\nCliente: {apt['client_name']}"
-            if apt.get('direccion'): desc += f"\nDirección: {apt['direccion']}"
-            if apt.get('ciudad'): desc += f"\nCiudad: {apt['ciudad']}"
             if apt.get('notes'): desc += f"\nNotas: {apt['notes']}"
+            
+            location = ''
+            if apt.get('direccion'):
+                location = apt['direccion']
+                if apt.get('ciudad'): location += f", {apt['ciudad']}"
+                desc += f"\n📍 Ubicación: {location}"
+            
             event = {'summary': f"{apt['title']} - {apt.get('encargado','')}",
                      'description': desc,
                      'start': {'dateTime': apt['start_time'], 'timeZone': 'America/Guayaquil'},
@@ -407,6 +418,10 @@ def create_app():
                      'attendees': attendees,
                      'reminders': {'useDefault': False, 'overrides': [
                          {'method': 'email', 'minutes': 1440}, {'method': 'popup', 'minutes': 30}]}}
+            
+            if location:
+                event['location'] = location
+            
             created = service.events().insert(calendarId='primary', body=event, sendUpdates='all').execute()
             app.supabase.update('appointments', aid, {'status': 'confirmed', 'google_event_id': created.get('id')})
             return {'success': True, 'message': f'✅ Google: {len(attendees)} invitados'}
