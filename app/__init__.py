@@ -183,8 +183,6 @@ def create_app():
         save_google_creds(app, flow.credentials)
         flash('✅ Google Calendar conectado!', 'success'); return redirect('/dashboard')
 
-    # ============= ADMIN =============
-
     @app.route('/admin/users')
     @login_required
     def admin_users():
@@ -222,6 +220,31 @@ def create_app():
         all_cals = app.supabase.get('calendar_config')
         return render_template('admin_database.html', users=users, ciudades=ciudades, titles=titles,
             encargados=encargados, clients=clients, appointments=appointments, calendarios=all_cals)
+
+    @app.route('/admin/database/update', methods=['POST'])
+    @login_required
+    def admin_db_update():
+        if not is_admin(): return {'success': False}
+        table = request.form.get('table')
+        record_id = request.form.get('id')
+        data = {}
+        for key in request.form:
+            if key not in ['table', 'id']:
+                data[key] = request.form.get(key)
+        if data:
+            app.supabase.update(table, record_id, data)
+            flash('✅ Registro actualizado', 'success')
+        return redirect('/admin/database')
+
+    @app.route('/admin/database/delete', methods=['POST'])
+    @login_required
+    def admin_db_delete():
+        if not is_admin(): return {'success': False}
+        table = request.form.get('table')
+        record_id = request.form.get('id')
+        app.supabase.delete(table, record_id)
+        flash('🗑️ Registro eliminado', 'success')
+        return redirect('/admin/database')
 
     @app.route('/admin/user/update/<uid>', methods=['POST'])
     @login_required
@@ -276,8 +299,6 @@ def create_app():
         for p in app.supabase.get('calendar_permissions', {'user_id': uid, 'status': 'pending'}):
             app.supabase.update('calendar_permissions', p['id'], {'status': 'rejected'})
         return {'success': True}
-
-    # ============= CALENDARIO =============
 
     @app.route('/calendar')
     @login_required
@@ -349,12 +370,12 @@ def create_app():
             if not title or not cal_id or not encargado or not tema:
                 return {'success': False, 'error': 'Faltan campos'}
             
-            # Guardar ciudad si es nueva
+            # GUARDAR CIUDAD SI ES NUEVA
             if ciudad:
                 existing = app.supabase.get('ciudades', {'name': ciudad})
                 if not existing:
                     app.supabase.insert('ciudades', {'name': ciudad})
-                    print(f"✅ Nueva ciudad: {ciudad}")
+                    print(f"✅ Nueva ciudad guardada: {ciudad}")
             
             if title and not app.supabase.get('appointment_titles', {'title': title}):
                 app.supabase.insert('appointment_titles', {'title': title})
@@ -376,7 +397,7 @@ def create_app():
                 'status': 'pending',
                 'notes': request.form.get('notes', ''),
                 'invitados': ','.join(notificar) if notificar else '',
-                'direccion': direccion if tipo == 'presencial' else '',
+                'direccion': direccion,
                 'ciudad': ciudad,
                 'meeting_link': link if tipo == 'virtual' else '',
                 'created_by': current_user.id
@@ -426,7 +447,7 @@ def create_app():
             location = ''
             if apt.get('direccion'):
                 location = apt['direccion']
-                if apt.get('ciudad'): location += f", {apt['ciudad']}"
+                if apt.get('ciudad'): location += f", {apt['ciudad']}, Ecuador"
                 desc += f"\n📍 Ubicación: {location}"
             
             event = {'summary': f"{apt['title']} - {apt.get('encargado','')}",
