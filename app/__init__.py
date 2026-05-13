@@ -7,10 +7,12 @@ from google_auth_oauthlib.flow import Flow
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from datetime import datetime, timedelta
-import os, requests, traceback
+import os, requests, traceback, pytz
 
 load_dotenv()
 os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
+
+TIMEZONE = pytz.timezone('America/Guayaquil')
 
 login_manager = LoginManager()
 
@@ -64,6 +66,16 @@ def get_user_calendars(app, uid):
 
 def is_admin():
     return current_user.is_authenticated and current_user.role == 'admin'
+
+def to_iso_z(dt_str):
+    """Convierte fecha/hora local Ecuador a ISO 8601 con Z"""
+    try:
+        local_dt = datetime.fromisoformat(dt_str)
+        local_dt = TIMEZONE.localize(local_dt)
+        utc_dt = local_dt.astimezone(pytz.UTC)
+        return utc_dt.isoformat()
+    except:
+        return dt_str
 
 def create_app():
     app = Flask(__name__, template_folder='../templates', static_folder='../static')
@@ -134,7 +146,7 @@ def create_app():
             if result:
                 for cal_id in cals:
                     app.supabase.insert('calendar_permissions', {'user_id': result[0]['id'], 'calendar_id': cal_id, 'status': 'pending'})
-                flash('✅ Solicitud enviada. Espera aprobación del administrador.', 'success')
+                flash('✅ Solicitud enviada. Espera aprobación.', 'success')
                 return redirect('/login')
             flash('Error al registrar', 'danger')
         return render_template('register.html', calendarios=app.supabase.get('calendar_config'))
@@ -279,6 +291,7 @@ def create_app():
                  'tema': e.get('tema', ''), 'client_name': e.get('client_name', ''),
                  'client_email': e.get('client_email', ''), 'status': e.get('status', 'pending'),
                  'calendar_id': e.get('calendar_id', ''), 'notes': e.get('notes', ''),
+                 'direccion': e.get('direccion', ''), 'ciudad': e.get('ciudad', 'Cuenca'),
                  'google_event_id': e.get('google_event_id', ''), 'id': e['id']}} for e in events]
 
     @app.route('/calendar/api/titles')
@@ -297,54 +310,56 @@ def create_app():
     @login_required
     def api_clients(): return [{'name': c['name'], 'email': c.get('email', '')} for c in app.supabase.get('clients')]
 
+    @app.route('/calendar/api/ciudades')
+    @login_required
+    def api_ciudades(): return [c['name'] for c in app.supabase.get('ciudades')]
+
     @app.route('/calendar/api/book', methods=['POST'])
-@login_required
-def api_book():
-    try:
-        date = request.form.get('date'); time = request.form.get('time')
-        dur_sel = request.form.get('duration', '30')
-        dur = int(request.form.get('custom_duration', dur_sel))
-        start = f"{date}T{time}:00"; end = (datetime.fromisoformat(start) + timedelta(minutes=dur)).isoformat()
-        title = request.form.get('title', '').strip().upper()
-        cal_id = request.form.get('calendar_id', 'personal')
-        encargado = request.form.get('encargado', '').strip().upper()
-        tema = request.form.get('tema', '').strip()
-        client_name = request.form.get('client_name', '').strip().upper()
-        client_email = request.form.get('client_email', '').strip()
-        notificar = request.form.getlist('notificar')
-        tipo = request.form.get('type', 'presencial')
-        direccion = request.form.get('direccion', '').strip()
-        ciudad = request.form.get('ciudad', 'Cuenca').strip().upper()
-        link = request.form.get('meeting_link', '').strip()
-        
-        if not title or not cal_id or not encargado or not tema:
-            return {'success': False, 'error': 'Faltan campos'}
-        
-        # Guardar ciudad si es nueva
-        if ciudad and not app.supabase.get('ciudades', {'name': ciudad}):
-            app.supabase.insert('ciudades', {'name': ciudad})
-        
-        if title and not app.supabase.get('appointment_titles', {'title': title}):
-            app.supabase.insert('appointment_titles', {'title': title})
-        if encargado and not app.supabase.get('encargados', {'name': encargado}):
-            app.supabase.insert('encargados', {'name': encargado})
-        if tema and not app.supabase.get('temas', {'description': tema}):
-            app.supabase.insert('temas', {'description': tema})
-        if client_name and not app.supabase.get('clients', {'name': client_name}):
-            app.supabase.insert('clients', {'name': client_name, 'email': client_email, 'created_by': current_user.id})
-        
-        result = app.supabase.insert('appointments', {
-            'title': title, 'calendar_id': cal_id, 'encargado': encargado, 'tema': tema,
-            'client_name': client_name, 'client_email': client_email,
-            'start_time': start, 'end_time': end, 'status': 'pending',
-            'notes': request.form.get('notes', ''),
-            'invitados': ','.join(notificar) if notificar else '',
-            'direccion': direccion if tipo == 'presencial' else link,
-            'ciudad': ciudad,
-            'meeting_link': link if tipo == 'virtual' else '',
-            'created_by': current_user.id})
-        return {'success': True, 'id': result[0]['id']} if result else {'success': False, 'error': 'Error BD'}
-    except Exception as e: return {'success': False, 'error': str(e)}
+    @login_required
+    def api_book():
+        try:
+            date = request.form.get('date'); time = request.form.get('time')
+            dur_sel = request.form.get('duration', '30')
+            dur = int(request.form.get('custom_duration', dur_sel))
+            # Crear datetime en zona Ecuador
+            local_dt = TIMEZONE.localize(datetime.fromisoformat(f"{date}T{time}:00"))
+            start = local_dt.isoformat()
+            end = (local_dt + timedelta(minutes=dur)).isoformat()
+            title = request.form.get('title', '').strip().upper()
+            cal_id = request.form.get('calendar_id', 'personal')
+            encargado = request.form.get('encargado', '').strip().upper()
+            tema = request.form.get('tema', '').strip()
+            client_name = request.form.get('client_name', '').strip().upper()
+            client_email = request.form.get('client_email', '').strip()
+            notificar = request.form.getlist('notificar')
+            tipo = request.form.get('type', 'presencial')
+            direccion = request.form.get('direccion', '').strip()
+            ciudad = request.form.get('ciudad', 'Cuenca').strip().upper()
+            link = request.form.get('meeting_link', '').strip()
+            if not title or not cal_id or not encargado or not tema:
+                return {'success': False, 'error': 'Faltan campos'}
+            if ciudad and not app.supabase.get('ciudades', {'name': ciudad}):
+                app.supabase.insert('ciudades', {'name': ciudad})
+            if title and not app.supabase.get('appointment_titles', {'title': title}):
+                app.supabase.insert('appointment_titles', {'title': title})
+            if encargado and not app.supabase.get('encargados', {'name': encargado}):
+                app.supabase.insert('encargados', {'name': encargado})
+            if tema and not app.supabase.get('temas', {'description': tema}):
+                app.supabase.insert('temas', {'description': tema})
+            if client_name and not app.supabase.get('clients', {'name': client_name}):
+                app.supabase.insert('clients', {'name': client_name, 'email': client_email, 'created_by': current_user.id})
+            result = app.supabase.insert('appointments', {
+                'title': title, 'calendar_id': cal_id, 'encargado': encargado, 'tema': tema,
+                'client_name': client_name, 'client_email': client_email,
+                'start_time': start, 'end_time': end, 'status': 'pending',
+                'notes': request.form.get('notes', ''),
+                'invitados': ','.join(notificar) if notificar else '',
+                'direccion': direccion if tipo == 'presencial' else link,
+                'ciudad': ciudad,
+                'meeting_link': link if tipo == 'virtual' else '',
+                'created_by': current_user.id})
+            return {'success': True, 'id': result[0]['id']} if result else {'success': False, 'error': 'Error BD'}
+        except Exception as e: return {'success': False, 'error': str(e)}
 
     @app.route('/calendar/api/pending')
     @login_required
@@ -377,11 +392,17 @@ def api_book():
                     inv = inv.strip()
                     if inv and inv not in [a['email'] for a in attendees]: attendees.append({'email': inv})
             if not attendees: attendees.append({'email': 'mposligua0000@gmail.com'})
+            desc = f"Titulo: {apt['title']}\nEncargado: {apt.get('encargado','')}\nTema: {apt.get('tema','')}"
+            if apt.get('client_name'): desc += f"\nCliente: {apt['client_name']}"
+            if apt.get('direccion'): desc += f"\nDirección: {apt['direccion']}"
+            if apt.get('ciudad'): desc += f"\nCiudad: {apt['ciudad']}"
+            if apt.get('notes'): desc += f"\nNotas: {apt['notes']}"
             event = {'summary': f"{apt['title']} - {apt.get('encargado','')}",
-                     'description': f"Titulo: {apt['title']}\nEncargado: {apt.get('encargado','')}\nTema: {apt.get('tema','')}",
+                     'description': desc,
                      'start': {'dateTime': apt['start_time'], 'timeZone': 'America/Guayaquil'},
                      'end': {'dateTime': apt['end_time'], 'timeZone': 'America/Guayaquil'},
-                     'attendees': attendees, 'reminders': {'useDefault': False, 'overrides': [
+                     'attendees': attendees,
+                     'reminders': {'useDefault': False, 'overrides': [
                          {'method': 'email', 'minutes': 1440}, {'method': 'popup', 'minutes': 30}]}}
             created = service.events().insert(calendarId='primary', body=event, sendUpdates='all').execute()
             app.supabase.update('appointments', aid, {'status': 'confirmed', 'google_event_id': created.get('id')})
