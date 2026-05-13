@@ -448,7 +448,17 @@ def create_app():
                      'attendees': attendees,
                      'reminders': {'useDefault': False, 'overrides': [{'method': 'email', 'minutes': 1440}, {'method': 'popup', 'minutes': 30}]}}
             if location: event['location'] = location
-            created = service.events().insert(calendarId='primary', body=event, sendUpdates='all').execute()
+            
+            # VERIFICAR SI YA EXISTE
+            existing = service.events().list(
+                calendarId='primary', timeMin=apt['start_time'],
+                timeMax=apt['end_time'], q=apt['title'], maxResults=1).execute()
+            
+            if existing.get('items'):
+                created = existing['items'][0]
+            else:
+                created = service.events().insert(calendarId='primary', body=event, sendUpdates='all').execute()
+            
             app.supabase.update('appointments', aid, {'status': 'confirmed', 'google_event_id': created.get('id')})
             return {'success': True, 'message': f'✅ Google: {len(attendees)} invitados'}
         except Exception as e: return {'success': False, 'error': str(e)}
@@ -474,11 +484,18 @@ def create_app():
         if not is_admin(): return {'success': False, 'error': 'Solo admin'}
         creds = get_google_creds(app)
         if not creds: return {'success': False, 'error': 'Google no conectado'}
-        synced = 0; errors = 0
+        synced = 0; errors = 0; skipped = 0
         for apt in app.supabase.get('appointments'):
             if apt.get('status') == 'confirmed' and not apt.get('google_event_id'):
                 try:
                     service = build('calendar', 'v3', credentials=creds)
+                    existing = service.events().list(
+                        calendarId='primary', timeMin=apt['start_time'],
+                        timeMax=apt['end_time'], q=apt['title'], maxResults=1).execute()
+                    if existing.get('items'):
+                        app.supabase.update('appointments', apt['id'], {'google_event_id': existing['items'][0]['id']})
+                        skipped += 1
+                        continue
                     cal_map = {c['calendar_id']: c['email'] for c in app.supabase.get('calendar_config') if c.get('email')}
                     attendees = []
                     cal_email = cal_map.get(apt.get('calendar_id'))
@@ -506,7 +523,7 @@ def create_app():
                 except Exception as e:
                     errors += 1
                     print(f"Error sync {apt['id']}: {e}")
-        return {'success': True, 'synced': synced, 'errors': errors}
+        return {'success': True, 'synced': synced, 'skipped': skipped, 'errors': errors}
 
     @app.route('/health')
     def health(): return {'status': 'ok'}
