@@ -72,20 +72,19 @@
 <div class="col-md-4"><label class="form-label">HORA *</label><input id="fTime" type="time" class="form-control not-upper" required></div>
 <div class="col-md-4"><label class="form-label">DURACIÓN</label>
 <select id="fDuration" class="form-select" onchange="checkCustomDuration()">
-    <option value="30">30 minutos</option>
-    <option value="60">1 hora</option>
-    <option value="90">1.5 horas</option>
-    <option value="120">2 horas</option>
-    <option value="180">3 horas</option>
-    <option value="custom">✨ Otro tiempo...</option>
+    <option value="30">30 minutos</option><option value="60">1 hora</option>
+    <option value="90">1.5 horas</option><option value="120">2 horas</option>
+    <option value="180">3 horas</option><option value="custom">✨ Otro tiempo...</option>
 </select>
 <input id="fCustomDuration" class="form-control mt-1 not-upper" type="number" placeholder="Minutos (mín 15)" min="15" step="15" style="display:none">
 </div></div>
 <div class="row mb-2"><div class="col-md-6"><label class="form-label">TIPO</label><select id="fType" class="form-select" onchange="toggleType()"><option value="presencial">Presencial</option><option value="virtual">Virtual</option></select></div>
 <div class="col-md-6" id="divLink" style="display:none"><label class="form-label">🔗 Link reunión</label><input id="fLink" class="form-control not-upper" placeholder="https://meet.google.com/..."></div></div>
 <div id="divPresencial" class="row mb-2">
-<div class="col-md-6"><label class="form-label">DIRECCIÓN</label><input id="fDireccion" class="form-control not-upper" placeholder="Dirección del evento..."></div>
+<div class="col-md-6"><label class="form-label">LUGAR (ej: CSC, Oficina, Casa)</label><input id="fLugar" class="form-control" placeholder="Nombre del lugar..."></div>
 <div class="col-md-6"><label class="form-label">CIUDAD</label><input id="fCiudad" class="form-control" list="ciudadesList" value="CUENCA" placeholder="Ciudad..." autocomplete="off"><datalist id="ciudadesList"></datalist></div>
+<div class="col-md-8 mt-2"><label class="form-label">DIRECCIÓN</label><input id="fDireccion" class="form-control not-upper" placeholder="Dirección completa (ej: Av. Solano 1-23 y Remigio Crespo)..."></div>
+<div class="col-md-4 mt-2"><label class="form-label">📍 MAPA (Google Maps)</label><input id="fMapa" class="form-control not-upper" placeholder="Link Google Maps..."></div>
 </div>
 <hr><div class="section-label">📧 NOTIFICACIONES</div>
 <div class="row mb-2"><div class="col-md-6 position-relative"><label class="form-label">Cliente</label><input id="fClient" class="form-control" placeholder="Buscar cliente..." autocomplete="off"><div class="sug-box" id="sugClient"></div></div>
@@ -208,7 +207,9 @@ function editAppt(info){
  document.getElementById('fEncargado').value=p.encargado||'';document.getElementById('fTema').value=p.tema||'';
  document.getElementById('fClient').value=p.client_name||'';document.getElementById('fEmail').value=p.client_email||'';
  document.getElementById('fNotes').value=p.notes||'';
+ document.getElementById('fLugar').value=p.lugar||'';
  document.getElementById('fDireccion').value=p.direccion||'';
+ document.getElementById('fMapa').value=p.mapa||'';
  document.getElementById('fCiudad').value=p.ciudad||'CUENCA';
  document.getElementById('fLink').value=p.meeting_link||'';
  if(p.meeting_link){
@@ -236,7 +237,8 @@ function clearForm(){
  document.getElementById('fLink').value='';document.getElementById('fType').value='presencial';
  document.getElementById('divLink').style.display='none';document.getElementById('divPresencial').style.display='flex';
  document.getElementById('fDuration').value='30';document.getElementById('fCustomDuration').style.display='none';
- document.getElementById('fCustomDuration').value='';document.getElementById('fDireccion').value='';
+ document.getElementById('fCustomDuration').value='';document.getElementById('fLugar').value='';
+ document.getElementById('fDireccion').value='';document.getElementById('fMapa').value='';
  document.getElementById('fCiudad').value='CUENCA';
  document.getElementById('notifyList').innerHTML='<div class="notify-row"><input class="form-control not-upper notify-email" placeholder="email@ejemplo.com"><button onclick="removeNotify(this)">×</button></div>';
  document.querySelectorAll('.sug-box').forEach(b=>b.style.display='none');
@@ -253,7 +255,9 @@ function saveBooking(){
  let date=document.getElementById('fDate').value,time=document.getElementById('fTime').value;
  let tipo=document.getElementById('fType').value;
  let link=document.getElementById('fLink').value.trim();
+ let lugar=document.getElementById('fLugar').value.trim().toUpperCase();
  let direccion=document.getElementById('fDireccion').value.trim();
+ let mapa=document.getElementById('fMapa').value.trim();
  let ciudad=document.getElementById('fCiudad').value.trim().toUpperCase();
  if(!title||!calId||!encargado||!tema||!date||!time){alert('❌ Completa campos *');btn.disabled=false;btn.textContent='✅ GUARDAR';return}
  if(editId){fetch('/calendar/api/delete/'+editId,{method:'POST'});}
@@ -263,7 +267,8 @@ function saveBooking(){
  form.append('title',title);form.append('calendar_id',calId);form.append('encargado',encargado);
  form.append('tema',tema);form.append('client_name',clientName);form.append('client_email',clientEmail);
  form.append('date',date);form.append('time',time);form.append('duration',dur);
- form.append('type',tipo);form.append('direccion',direccion);form.append('ciudad',ciudad);
+ form.append('type',tipo);form.append('lugar',lugar);form.append('direccion',direccion);
+ form.append('mapa',mapa);form.append('ciudad',ciudad);
  if(link)form.append('meeting_link',link);
  form.append('notes',document.getElementById('fNotes').value.trim());
  document.querySelectorAll('.notify-email').forEach(i=>{let e=i.value.trim();if(e)form.append('notificar',e)});

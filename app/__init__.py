@@ -183,6 +183,8 @@ def create_app():
         save_google_creds(app, flow.credentials)
         flash('✅ Google Calendar conectado!', 'success'); return redirect('/dashboard')
 
+    # ============= ADMIN =============
+
     @app.route('/admin/users')
     @login_required
     def admin_users():
@@ -300,6 +302,8 @@ def create_app():
             app.supabase.update('calendar_permissions', p['id'], {'status': 'rejected'})
         return {'success': True}
 
+    # ============= CALENDARIO =============
+
     @app.route('/calendar')
     @login_required
     def calendar():
@@ -322,7 +326,8 @@ def create_app():
                  'tema': e.get('tema', ''), 'client_name': e.get('client_name', ''),
                  'client_email': e.get('client_email', ''), 'status': e.get('status', 'pending'),
                  'calendar_id': e.get('calendar_id', ''), 'notes': e.get('notes', ''),
-                 'direccion': e.get('direccion', ''), 'ciudad': e.get('ciudad', 'Cuenca'),
+                 'lugar': e.get('lugar', ''), 'direccion': e.get('direccion', ''),
+                 'mapa': e.get('mapa', ''), 'ciudad': e.get('ciudad', 'Cuenca'),
                  'meeting_link': e.get('meeting_link', ''),
                  'google_event_id': e.get('google_event_id', ''), 'id': e['id']}} for e in events]
 
@@ -363,19 +368,20 @@ def create_app():
             client_email = request.form.get('client_email', '').strip()
             notificar = request.form.getlist('notificar')
             tipo = request.form.get('type', 'presencial')
+            lugar = request.form.get('lugar', '').strip().upper()
             direccion = request.form.get('direccion', '').strip()
+            mapa = request.form.get('mapa', '').strip()
             ciudad = request.form.get('ciudad', 'Cuenca').strip().upper()
             link = request.form.get('meeting_link', '').strip()
             
             if not title or not cal_id or not encargado or not tema:
                 return {'success': False, 'error': 'Faltan campos'}
             
-            # GUARDAR CIUDAD SI ES NUEVA
+            # Guardar ciudad si es nueva
             if ciudad:
                 existing = app.supabase.get('ciudades', {'name': ciudad})
                 if not existing:
                     app.supabase.insert('ciudades', {'name': ciudad})
-                    print(f"✅ Nueva ciudad guardada: {ciudad}")
             
             if title and not app.supabase.get('appointment_titles', {'title': title}):
                 app.supabase.insert('appointment_titles', {'title': title})
@@ -397,8 +403,7 @@ def create_app():
                 'status': 'pending',
                 'notes': request.form.get('notes', ''),
                 'invitados': ','.join(notificar) if notificar else '',
-                'direccion': direccion,
-                'ciudad': ciudad,
+                'lugar': lugar, 'direccion': direccion, 'mapa': mapa, 'ciudad': ciudad,
                 'meeting_link': link if tipo == 'virtual' else '',
                 'created_by': current_user.id
             }
@@ -442,13 +447,17 @@ def create_app():
             
             desc = f"Titulo: {apt['title']}\nEncargado: {apt.get('encargado','')}\nTema: {apt.get('tema','')}"
             if apt.get('client_name'): desc += f"\nCliente: {apt['client_name']}"
+            if apt.get('lugar'): desc += f"\nLugar: {apt['lugar']}"
+            if apt.get('direccion'): desc += f"\nDireccion: {apt['direccion']}"
+            if apt.get('ciudad'): desc += f"\nCiudad: {apt['ciudad']}"
+            if apt.get('mapa'): desc += f"\n📍 Mapa: {apt['mapa']}"
             if apt.get('notes'): desc += f"\nNotas: {apt['notes']}"
             
             location = ''
             if apt.get('direccion'):
                 location = apt['direccion']
                 if apt.get('ciudad'): location += f", {apt['ciudad']}, Ecuador"
-                desc += f"\n📍 Ubicación: {location}"
+                if apt.get('lugar'): location = f"{apt['lugar']}, {location}"
             
             event = {'summary': f"{apt['title']} - {apt.get('encargado','')}",
                      'description': desc,
