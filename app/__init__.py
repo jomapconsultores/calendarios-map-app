@@ -183,8 +183,6 @@ def create_app():
         save_google_creds(app, flow.credentials)
         flash('✅ Google Calendar conectado!', 'success'); return redirect('/dashboard')
 
-    # ============= ADMIN =============
-
     @app.route('/admin/users')
     @login_required
     def admin_users():
@@ -213,38 +211,30 @@ def create_app():
     @login_required
     def admin_database():
         if not is_admin(): return redirect('/dashboard')
-        users = app.supabase.get('users')
-        ciudades = app.supabase.get('ciudades')
-        titles = app.supabase.get('appointment_titles')
-        encargados = app.supabase.get('encargados')
-        clients = app.supabase.get('clients')
-        appointments = app.supabase.get('appointments')
-        all_cals = app.supabase.get('calendar_config')
-        return render_template('admin_database.html', users=users, ciudades=ciudades, titles=titles,
-            encargados=encargados, clients=clients, appointments=appointments, calendarios=all_cals)
+        return render_template('admin_database.html',
+            users=app.supabase.get('users'),
+            ciudades=app.supabase.get('ciudades'),
+            titles=app.supabase.get('appointment_titles'),
+            encargados=app.supabase.get('encargados'),
+            clients=app.supabase.get('clients'),
+            appointments=app.supabase.get('appointments'),
+            calendarios=app.supabase.get('calendar_config'))
 
     @app.route('/admin/database/update', methods=['POST'])
     @login_required
     def admin_db_update():
         if not is_admin(): return {'success': False}
-        table = request.form.get('table')
-        record_id = request.form.get('id')
-        data = {}
-        for key in request.form:
-            if key not in ['table', 'id']:
-                data[key] = request.form.get(key)
-        if data:
-            app.supabase.update(table, record_id, data)
-            flash('✅ Registro actualizado', 'success')
+        table = request.form.get('table'); record_id = request.form.get('id')
+        data = {k: v for k, v in request.form.items() if k not in ['table', 'id']}
+        if data: app.supabase.update(table, record_id, data)
+        flash('✅ Registro actualizado', 'success')
         return redirect('/admin/database')
 
     @app.route('/admin/database/delete', methods=['POST'])
     @login_required
     def admin_db_delete():
         if not is_admin(): return {'success': False}
-        table = request.form.get('table')
-        record_id = request.form.get('id')
-        app.supabase.delete(table, record_id)
+        app.supabase.delete(request.form.get('table'), request.form.get('id'))
         flash('🗑️ Registro eliminado', 'success')
         return redirect('/admin/database')
 
@@ -302,8 +292,6 @@ def create_app():
             app.supabase.update('calendar_permissions', p['id'], {'status': 'rejected'})
         return {'success': True}
 
-    # ============= CALENDARIO =============
-
     @app.route('/calendar')
     @login_required
     def calendar():
@@ -349,71 +337,57 @@ def create_app():
 
     @app.route('/calendar/api/ciudades')
     @login_required
-    def api_ciudades():
-        ciudades = app.supabase.get('ciudades')
-        return [c['name'] for c in ciudades]
+    def api_ciudades(): return [c['name'] for c in app.supabase.get('ciudades')]
 
-@app.route('/calendar/api/book', methods=['POST'])
-@login_required
-def api_book():
-    try:
-        date = request.form.get('date'); time = request.form.get('time')
-        dur_sel = request.form.get('duration', '30')
-        dur = int(request.form.get('custom_duration', dur_sel))
-        title = request.form.get('title', '').strip().upper()
-        cal_id = request.form.get('calendar_id', 'personal')
-        encargado = request.form.get('encargado', '').strip().upper()
-        tema = request.form.get('tema', '').strip()
-        client_name = request.form.get('client_name', '').strip().upper()
-        client_email = request.form.get('client_email', '').strip()
-        notificar = request.form.getlist('notificar')
-        tipo = request.form.get('type', 'presencial')
-        lugar = request.form.get('lugar', '').strip().upper()
-        direccion = request.form.get('direccion', '').strip()
-        mapa = request.form.get('mapa', '').strip()
-        ciudad = request.form.get('ciudad', 'Cuenca').strip().upper()
-        link = request.form.get('meeting_link', '').strip()
-        
-        if not title or not cal_id or not encargado or not tema:
-            return {'success': False, 'error': 'Faltan campos'}
-        
-        # Guardar ciudad si es nueva
-        if ciudad:
-            existing = app.supabase.get('ciudades', {'name': ciudad})
-            if not existing:
-                app.supabase.insert('ciudades', {'name': ciudad})
-        
-        if title and not app.supabase.get('appointment_titles', {'title': title}):
-            app.supabase.insert('appointment_titles', {'title': title})
-        if encargado and not app.supabase.get('encargados', {'name': encargado}):
-            app.supabase.insert('encargados', {'name': encargado})
-        if tema and not app.supabase.get('temas', {'description': tema}):
-            app.supabase.insert('temas', {'description': tema})
-        if client_name and not app.supabase.get('clients', {'name': client_name}):
-            app.supabase.insert('clients', {'name': client_name, 'email': client_email, 'created_by': current_user.id})
-        
-        # Crear fecha local Ecuador y convertir a UTC
-        local_dt = TIMEZONE.localize(datetime.strptime(f"{date} {time}:00", "%Y-%m-%d %H:%M:%S"))
-        utc_dt = local_dt.astimezone(pytz.UTC)
-        start_dt = utc_dt
-        end_dt = start_dt + timedelta(minutes=dur)
-        
-        data = {
-            'title': title, 'calendar_id': cal_id, 'encargado': encargado, 'tema': tema,
-            'client_name': client_name, 'client_email': client_email,
-            'start_time': start_dt.isoformat(), 'end_time': end_dt.isoformat(),
-            'status': 'pending',
-            'notes': request.form.get('notes', ''),
-            'invitados': ','.join(notificar) if notificar else '',
-            'lugar': lugar, 'direccion': direccion, 'mapa': mapa, 'ciudad': ciudad,
-            'meeting_link': link if tipo == 'virtual' else '',
-            'created_by': current_user.id
-        }
-        result = app.supabase.insert('appointments', data)
-        return {'success': True, 'id': result[0]['id']} if result else {'success': False, 'error': 'Error BD'}
-    except Exception as e:
-        traceback.print_exc()
-        return {'success': False, 'error': str(e)}
+    @app.route('/calendar/api/book', methods=['POST'])
+    @login_required
+    def api_book():
+        try:
+            date = request.form.get('date'); time = request.form.get('time')
+            dur_sel = request.form.get('duration', '30')
+            dur = int(request.form.get('custom_duration', dur_sel))
+            title = request.form.get('title', '').strip().upper()
+            cal_id = request.form.get('calendar_id', 'personal')
+            encargado = request.form.get('encargado', '').strip().upper()
+            tema = request.form.get('tema', '').strip()
+            client_name = request.form.get('client_name', '').strip().upper()
+            client_email = request.form.get('client_email', '').strip()
+            notificar = request.form.getlist('notificar')
+            tipo = request.form.get('type', 'presencial')
+            lugar = request.form.get('lugar', '').strip().upper()
+            direccion = request.form.get('direccion', '').strip()
+            mapa = request.form.get('mapa', '').strip()
+            ciudad = request.form.get('ciudad', 'Cuenca').strip().upper()
+            link = request.form.get('meeting_link', '').strip()
+            if not title or not cal_id or not encargado or not tema:
+                return {'success': False, 'error': 'Faltan campos'}
+            if ciudad:
+                if not app.supabase.get('ciudades', {'name': ciudad}):
+                    app.supabase.insert('ciudades', {'name': ciudad})
+            if title and not app.supabase.get('appointment_titles', {'title': title}):
+                app.supabase.insert('appointment_titles', {'title': title})
+            if encargado and not app.supabase.get('encargados', {'name': encargado}):
+                app.supabase.insert('encargados', {'name': encargado})
+            if tema and not app.supabase.get('temas', {'description': tema}):
+                app.supabase.insert('temas', {'description': tema})
+            if client_name and not app.supabase.get('clients', {'name': client_name}):
+                app.supabase.insert('clients', {'name': client_name, 'email': client_email, 'created_by': current_user.id})
+            local_dt = TIMEZONE.localize(datetime.strptime(f"{date} {time}:00", "%Y-%m-%d %H:%M:%S"))
+            utc_dt = local_dt.astimezone(pytz.UTC)
+            start_dt = utc_dt; end_dt = start_dt + timedelta(minutes=dur)
+            result = app.supabase.insert('appointments', {
+                'title': title, 'calendar_id': cal_id, 'encargado': encargado, 'tema': tema,
+                'client_name': client_name, 'client_email': client_email,
+                'start_time': start_dt.isoformat(), 'end_time': end_dt.isoformat(),
+                'status': 'pending', 'notes': request.form.get('notes', ''),
+                'invitados': ','.join(notificar) if notificar else '',
+                'lugar': lugar, 'direccion': direccion, 'mapa': mapa, 'ciudad': ciudad,
+                'meeting_link': link if tipo == 'virtual' else '',
+                'created_by': current_user.id})
+            return {'success': True, 'id': result[0]['id']} if result else {'success': False, 'error': 'Error BD'}
+        except Exception as e:
+            traceback.print_exc()
+            return {'success': False, 'error': str(e)}
 
     @app.route('/calendar/api/pending')
     @login_required
@@ -446,7 +420,6 @@ def api_book():
                     inv = inv.strip()
                     if inv and inv not in [a['email'] for a in attendees]: attendees.append({'email': inv})
             if not attendees: attendees.append({'email': 'mposligua0000@gmail.com'})
-            
             desc = f"Titulo: {apt['title']}\nEncargado: {apt.get('encargado','')}\nTema: {apt.get('tema','')}"
             if apt.get('client_name'): desc += f"\nCliente: {apt['client_name']}"
             if apt.get('lugar'): desc += f"\nLugar: {apt['lugar']}"
@@ -454,23 +427,17 @@ def api_book():
             if apt.get('ciudad'): desc += f"\nCiudad: {apt['ciudad']}"
             if apt.get('mapa'): desc += f"\n📍 Mapa: {apt['mapa']}"
             if apt.get('notes'): desc += f"\nNotas: {apt['notes']}"
-            
             location = ''
             if apt.get('direccion'):
                 location = apt['direccion']
                 if apt.get('ciudad'): location += f", {apt['ciudad']}, Ecuador"
                 if apt.get('lugar'): location = f"{apt['lugar']}, {location}"
-            
-            event = {'summary': f"{apt['title']} - {apt.get('encargado','')}",
-                     'description': desc,
+            event = {'summary': f"{apt['title']} - {apt.get('encargado','')}", 'description': desc,
                      'start': {'dateTime': apt['start_time'], 'timeZone': 'America/Guayaquil'},
                      'end': {'dateTime': apt['end_time'], 'timeZone': 'America/Guayaquil'},
                      'attendees': attendees,
-                     'reminders': {'useDefault': False, 'overrides': [
-                         {'method': 'email', 'minutes': 1440}, {'method': 'popup', 'minutes': 30}]}}
-            
+                     'reminders': {'useDefault': False, 'overrides': [{'method': 'email', 'minutes': 1440}, {'method': 'popup', 'minutes': 30}]}}
             if location: event['location'] = location
-            
             created = service.events().insert(calendarId='primary', body=event, sendUpdates='all').execute()
             app.supabase.update('appointments', aid, {'status': 'confirmed', 'google_event_id': created.get('id')})
             return {'success': True, 'message': f'✅ Google: {len(attendees)} invitados'}
