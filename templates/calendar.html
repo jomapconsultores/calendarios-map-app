@@ -39,6 +39,7 @@
 <a href="/profile" class="btn btn-outline-light btn-sm rounded-pill">👤 Perfil</a>
 {%if not google_connected%}<a href="/auth/google" class="btn btn-light btn-sm rounded-pill">🔗 Google</a>{%else%}<span class="badge bg-success rounded-pill">✅ Google</span>{%endif%}
 <a href="/dashboard" class="btn btn-outline-light btn-sm rounded-pill">📊 Panel</a>
+<button class="btn btn-outline-warning btn-sm rounded-pill me-1" onclick="syncCalendar()" title="Sincronizar con Google">🔄 Sync</button>
 <a href="/logout" class="btn btn-outline-light btn-sm rounded-pill">Salir</a>
 </div></div></nav>
 
@@ -282,6 +283,16 @@ function deleteAppt(){if(!editId)return;if(!confirm('¿Eliminar?'))return;fetch(
 function loadPending(){fetch('/calendar/api/pending').then(r=>r.json()).then(d=>{let h='';if(!d.length)h='<p class="text-success small">✅ Sin pendientes</p>';else d.forEach(i=>{h+=`<div class="pend-item"><strong>${i.title}</strong><br><small>👤 ${i.encargado||''} | ${i.date} ${i.time}</small><br><button class="btn btn-success btn-sm mt-1" onclick="apr('${i.id}')">✓</button> <button class="btn btn-danger btn-sm mt-1" onclick="rej('${i.id}')">✕</button></div>`});document.getElementById('pendingList').innerHTML=h;});}
 function apr(id){if(confirm('¿Aprobar?')){fetch('/calendar/api/approve/'+id,{method:'POST'}).then(r=>r.json()).then(d=>{alert(d.message||'OK');cal.refetchEvents();loadPending()});}}
 function rej(id){if(confirm('¿Rechazar?')){fetch('/calendar/api/reject/'+id,{method:'POST'}).then(r=>r.json()).then(d=>{alert('Rechazada');cal.refetchEvents();loadPending()});}}
+function syncCalendar(){
+    if(!confirm('¿Sincronizar citas confirmadas con Google Calendar?'))return;
+    fetch('/calendar/api/sync',{method:'POST'}).then(r=>r.json()).then(d=>{
+        if(d.success)alert('✅ Sincronizadas: '+d.synced+' | Errores: '+(d.errors||0));
+        else alert('❌ '+d.error);
+    });
+}
+</script>   ← Este es el </script> que cierra todo
+</body>
+</html>
 </script>
 </body>
 </html>

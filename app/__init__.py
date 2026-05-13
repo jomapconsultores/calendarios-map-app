@@ -461,4 +461,66 @@ def create_app():
     @app.route('/health')
     def health(): return {'status': 'ok'}
 
+@app.route('/calendar/api/sync', methods=['POST'])
+@login_required
+def api_sync():
+    """Sincronizar manualmente citas confirmadas con Google Calendar"""
+    if not is_admin(): return {'success': False, 'error': 'Solo admin'}
+    creds = get_google_creds(app)
+    if not creds: return {'success': False, 'error': 'Google no conectado'}
+    
+    synced = 0
+    errors = 0
+    appointments = app.supabase.get('appointments')
+    
+    for apt in appointments:
+        if apt.get('status') == 'confirmed' and not apt.get('google_event_id'):
+            try:
+                service = build('calendar', 'v3', credentials=creds)
+                cal_map = {c['calendar_id']: c['email'] for c in app.supabase.get('calendar_config') if c.get('email')}
+                attendees = []
+                cal_email = cal_map.get(apt.get('calendar_id'))
+                if cal_email: attendees.append({'email': cal_email})
+                if apt.get('invitados'):
+                    for inv in apt['invitados'].split(','):
+                        inv = inv.strip()
+                        if inv and inv not in [a['email'] for a in attendees]: attendees.append({'email': inv})
+                if not attendees: attendees.append({'email': 'mposligua0000@gmail.com'})
+                
+                location = ''
+                if apt.get('direccion'):
+                    location = apt['direccion']
+                    if apt.get('ciudad'): location += f", {apt['ciudad']}, Ecuador"
+                    if apt.get('lugar'): location = f"{apt['lugar']}, {location}"
+                
+                event = {
+                    'summary': f"{apt['title']} - {apt.get('encargado','')}",
+                    'description': f"Titulo: {apt['title']}\nEncargado: {apt.get('encargado','')}\nTema: {apt.get('tema','')}",
+                    'start': {'dateTime': apt['start_time'], 'timeZone': 'America/Guayaquil'},
+                    'end': {'dateTime': apt['end_time'], 'timeZone': 'America/Guayaquil'},
+                    'attendees': attendees,
+                    'reminders': {'useDefault': False, 'overrides': [{'method': 'email', 'minutes': 1440}, {'method': 'popup', 'minutes': 30}]}
+                }
+                if location: event['location'] = location
+                
+                created = service.events().insert(calendarId='primary', body=event, sendUpdates='all').execute()
+                app.supabase.update('appointments', apt['id'], {'google_event_id': created.get('id')})
+                synced += 1
+            except Exception as e:
+                errors += 1
+                print(f"Error sync {apt['id']}: {e}")
+    
+    return {'success': True, 'synced': synced, 'errors': errors}
+
+@app.route('/admin/database/insert', methods=['POST'])
+@login_required
+def admin_db_insert():
+    if not is_admin(): return {'success': False}
+    table = request.form.get('table')
+    data = {k: v for k, v in request.form.items() if k not in ['table']}
+    if data:
+        app.supabase.insert(table, data)
+        flash('✅ Registro creado', 'success')
+    return redirect('/admin/database')
+
     return app

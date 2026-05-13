@@ -11,6 +11,36 @@
 
 <div class="container-fluid mt-4"><h4>🗄️ Base de Datos (Admin)</h4>
 
+<div class="card mb-3"><div class="card-body">
+<button class="btn btn-success btn-sm rounded-pill" onclick="document.getElementById('insertForm').style.display='block'">➕ Nuevo Registro</button>
+<div id="insertForm" style="display:none" class="mt-2">
+<form method="POST" action="/admin/database/insert" class="row">
+<div class="col-md-3"><select name="table" class="form-select form-select-sm" onchange="showFields(this.value)" required>
+<option value="">Seleccionar tabla...</option>
+<option value="ciudades">Ciudad</option>
+<option value="appointment_titles">Título</option>
+<option value="encargados">Encargado</option>
+<option value="clients">Cliente</option>
+<option value="users">Usuario</option>
+<option value="appointments">Cita</option>
+</select></div>
+<div class="col-md-6" id="insertFields"></div>
+<div class="col-md-3"><button class="btn btn-primary btn-sm">💾 Guardar</button></div>
+</form></div></div></div>
+
+<script>
+function showFields(table){
+    let html='';
+    if(table==='ciudades') html='<input name="name" class="form-control form-control-sm" placeholder="Nombre ciudad" required>';
+    else if(table==='appointment_titles') html='<input name="title" class="form-control form-control-sm" placeholder="Título" required>';
+    else if(table==='encargados') html='<input name="name" class="form-control form-control-sm" placeholder="Nombre encargado" required>';
+    else if(table==='clients') html='<input name="name" class="form-control form-control-sm mb-1" placeholder="Nombre" required><input name="email" class="form-control form-control-sm" placeholder="Email">';
+    else if(table==='users') html='<input name="full_name" class="form-control form-control-sm mb-1" placeholder="Nombre" required><input name="email" type="email" class="form-control form-control-sm mb-1" placeholder="Email" required><input name="password_hash" class="form-control form-control-sm" placeholder="Contraseña (hash)">';
+    else if(table==='appointments') html='<input name="title" class="form-control form-control-sm mb-1" placeholder="Título" required><input name="calendar_id" class="form-control form-control-sm mb-1" placeholder="Calendario ID" required><input name="start_time" class="form-control form-control-sm mb-1" placeholder="Inicio (ISO)" required><input name="end_time" class="form-control form-control-sm" placeholder="Fin (ISO)" required>';
+    document.getElementById('insertFields').innerHTML=html;
+}
+</script>
+
 <div class="row">
 <div class="col-md-6"><div class="card mb-3"><div class="card-body">
 <div class="section-title">🏙️ Ciudades ({{ciudades|length}})</div>
