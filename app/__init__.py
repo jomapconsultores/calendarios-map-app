@@ -392,9 +392,12 @@ def create_app():
             if client_name and not app.supabase.get('clients', {'name': client_name}):
                 app.supabase.insert('clients', {'name': client_name, 'email': client_email, 'created_by': current_user.id})
             
-            start_str = f"{date}T{time}:00-05:00"
-            start_dt = datetime.fromisoformat(start_str)
-            end_dt = start_dt + timedelta(minutes=dur)
+            # Crear fecha local Ecuador
+local_dt = TIMEZONE.localize(datetime.strptime(f"{date} {time}:00", "%Y-%m-%d %H:%M:%S"))
+# Convertir a UTC para guardar
+utc_dt = local_dt.astimezone(pytz.UTC)
+start_dt = utc_dt
+end_dt = start_dt + timedelta(minutes=dur)
             
             data = {
                 'title': title, 'calendar_id': cal_id, 'encargado': encargado, 'tema': tema,
