@@ -222,9 +222,16 @@ function editAppt(info){
   document.getElementById('divLink').style.display='none';
   document.getElementById('divPresencial').style.display='flex';
  }
- let dt=new Date(info.event.start);
- document.getElementById('fDate').value=dt.toISOString().split('T')[0];
- document.getElementById('fTime').value=dt.toTimeString().slice(0,5);
+ // CORRECCIÓN: Manejar fechas de forma segura
+ try {
+  let dt=info.event.start;
+  document.getElementById('fDate').value=dt.toISOString().split('T')[0];
+  document.getElementById('fTime').value=dt.toTimeString().slice(0,5);
+ } catch(e) {
+  console.log('Error fecha:', e);
+  document.getElementById('fDate').value='';
+  document.getElementById('fTime').value='';
+ }
  document.getElementById('notifyList').innerHTML='<div class="notify-row"><input class="form-control not-upper notify-email" placeholder="email@ejemplo.com"><button onclick="removeNotify(this)">×</button></div>';
  loadCiudades();
  modal.show();
