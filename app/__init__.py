@@ -423,8 +423,10 @@ def create_app():
         apt = apts[0]; creds = get_google_creds(app)
         if not creds:
             app.supabase.update('appointments', aid, {'status': 'confirmed'})
+            print(f"✅ Cita {aid} actualizada a confirmed")
             return {'success': True, 'message': 'Aprobada'}
         try:
+            print(f"🔄 Aprobando cita: {aid}")
             service = build('calendar', 'v3', credentials=creds)
             cal_map = {c['calendar_id']: c['email'] for c in app.supabase.get('calendar_config') if c.get('email')}
             attendees = []; cal_email = cal_map.get(apt.get('calendar_id'))

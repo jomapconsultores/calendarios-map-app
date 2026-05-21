@@ -39,7 +39,7 @@
 <a href="/profile" class="btn btn-outline-light btn-sm rounded-pill">👤 Perfil</a>
 {%if not google_connected%}<a href="/auth/google" class="btn btn-light btn-sm rounded-pill">🔗 Google</a>{%else%}<span class="badge bg-success rounded-pill">✅ Google</span>{%endif%}
 <a href="/dashboard" class="btn btn-outline-light btn-sm rounded-pill">📊 Panel</a>
-<button class="btn btn-outline-warning btn-sm rounded-pill me-1" onclick="syncCalendar()" title="Sincronizar con Google">🔄 Sync</button>
+<button class="btn btn-outline-warning btn-sm rounded-pill me-1" onclick="syncCalendar()" title="Sincronizar">🔄 Sync</button>
 <a href="/logout" class="btn btn-outline-light btn-sm rounded-pill">Salir</a>
 </div></div></nav>
 
@@ -56,7 +56,6 @@
 <div class="col-md-10"><div class="card shadow-sm border-0 rounded-3"><div class="card-body p-2"><div id="calendar"></div></div></div></div>
 </div></div>
 
-<!-- MODAL NUEVA/EDITAR CITA -->
 <div class="modal fade" id="myModal" tabindex="-1"><div class="modal-dialog modal-lg"><div class="modal-content border-0 shadow">
 <div class="modal-header text-white" style="background:linear-gradient(135deg,#4e73df,#224abe)"><h5 id="modalTitle">📝 Nueva Cita</h5><button class="btn-close btn-close-white" data-bs-dismiss="modal"></button></div>
 <div class="modal-body">
@@ -84,7 +83,7 @@
 <div id="divPresencial" class="row mb-2">
 <div class="col-md-6"><label class="form-label">LUGAR (ej: CSC, Oficina, Casa)</label><input id="fLugar" class="form-control" placeholder="Nombre del lugar..."></div>
 <div class="col-md-6"><label class="form-label">CIUDAD</label><input id="fCiudad" class="form-control" list="ciudadesList" value="CUENCA" placeholder="Ciudad..." autocomplete="off"><datalist id="ciudadesList"></datalist></div>
-<div class="col-md-8 mt-2"><label class="form-label">DIRECCIÓN</label><input id="fDireccion" class="form-control not-upper" placeholder="Dirección completa (ej: Av. Solano 1-23 y Remigio Crespo)..."></div>
+<div class="col-md-8 mt-2"><label class="form-label">DIRECCIÓN</label><input id="fDireccion" class="form-control not-upper" placeholder="Dirección completa..."></div>
 <div class="col-md-4 mt-2"><label class="form-label">📍 MAPA (Google Maps)</label><input id="fMapa" class="form-control not-upper" placeholder="Link Google Maps..."></div>
 </div>
 <hr><div class="section-label">📧 NOTIFICACIONES</div>
@@ -96,7 +95,6 @@
 <div class="modal-footer border-0"><button class="btn btn-outline-danger rounded-pill" id="btnDelete" style="display:none" onclick="deleteAppt()">🗑️ Eliminar</button><button class="btn btn-light" data-bs-dismiss="modal">Cancelar</button><button id="btnSend" class="btn btn-primary rounded-pill" onclick="saveBooking()">✅ GUARDAR</button></div>
 </div></div></div>
 
-<!-- MODAL NUEVO CLIENTE -->
 <div class="modal fade" id="clientModal" tabindex="-1"><div class="modal-dialog modal-sm"><div class="modal-content border-0 shadow">
 <div class="modal-header bg-info text-white"><h6>➕ Nuevo Cliente</h6><button class="btn-close btn-close-white" data-bs-dismiss="modal"></button></div>
 <div class="modal-body">
@@ -132,20 +130,11 @@ document.addEventListener('DOMContentLoaded',function(){
  loadCiudades();
 });
 
-function toggleType(){
- document.getElementById('divLink').style.display=document.getElementById('fType').value==='virtual'?'block':'none';
- document.getElementById('divPresencial').style.display=document.getElementById('fType').value==='presencial'?'flex':'none';
-}
+function toggleType(){document.getElementById('divLink').style.display=document.getElementById('fType').value==='virtual'?'block':'none';document.getElementById('divPresencial').style.display=document.getElementById('fType').value==='presencial'?'flex':'none';}
 function checkCustomDuration(){var c=document.getElementById('fCustomDuration');c.style.display=document.getElementById('fDuration').value==='custom'?'block':'none';if(c.style.display==='block')c.focus();}
 function addNotify(){var d=document.createElement('div');d.className='notify-row';d.innerHTML='<input class="form-control not-upper notify-email" placeholder="email@ejemplo.com"><button onclick="removeNotify(this)">×</button>';document.getElementById('notifyList').appendChild(d);}
 function removeNotify(b){b.parentElement.remove();}
-
-function loadCiudades(){
- fetch('/calendar/api/ciudades').then(r=>r.json()).then(data=>{
-  var dl=document.getElementById('ciudadesList');
-  if(dl)dl.innerHTML=data.map(c=>'<option value="'+c+'">').join('');
- });
-}
+function loadCiudades(){fetch('/calendar/api/ciudades').then(r=>r.json()).then(data=>{var dl=document.getElementById('ciudadesList');if(dl)dl.innerHTML=data.map(c=>'<option value="'+c+'">').join('');});}
 
 function setupAutocomplete(inpId,sugId,url,defs){
  let input=document.getElementById(inpId),sug=document.getElementById(sugId),opts=[...defs];
@@ -179,24 +168,8 @@ function setupClientAC(){
  input.addEventListener('blur',()=>setTimeout(()=>sug.style.display='none',200));
 }
 
-function saveClient(){
- let n=document.getElementById('ncName').value.trim().toUpperCase();
- if(!n){alert('Nombre obligatorio');return}
- document.getElementById('fClient').value=n;
- document.getElementById('fEmail').value=document.getElementById('ncEmail').value.trim();
- clientsData.push({name:n,email:document.getElementById('ncEmail').value.trim()});
- clientModal.hide();
-}
-
-function openModal(calId){
- editId=null;document.getElementById('fEditId').value='';
- document.getElementById('modalTitle').textContent='📝 Nueva Cita';
- document.getElementById('btnDelete').style.display='none';
- clearForm();
- if(calId)document.getElementById('fCalendar').value=calId;
- loadCiudades();
- modal.show();
-}
+function saveClient(){let n=document.getElementById('ncName').value.trim().toUpperCase();if(!n){alert('Nombre obligatorio');return};document.getElementById('fClient').value=n;document.getElementById('fEmail').value=document.getElementById('ncEmail').value.trim();clientsData.push({name:n,email:document.getElementById('ncEmail').value.trim()});clientModal.hide();}
+function openModal(calId){editId=null;document.getElementById('fEditId').value='';document.getElementById('modalTitle').textContent='📝 Nueva Cita';document.getElementById('btnDelete').style.display='none';clearForm();if(calId)document.getElementById('fCalendar').value=calId;loadCiudades();modal.show();}
 function quickBook(calId){openModal(calId);}
 
 function editAppt(info){
@@ -213,28 +186,11 @@ function editAppt(info){
  document.getElementById('fMapa').value=p.mapa||'';
  document.getElementById('fCiudad').value=p.ciudad||'CUENCA';
  document.getElementById('fLink').value=p.meeting_link||'';
- if(p.meeting_link){
-  document.getElementById('fType').value='virtual';
-  document.getElementById('divLink').style.display='block';
-  document.getElementById('divPresencial').style.display='none';
- } else {
-  document.getElementById('fType').value='presencial';
-  document.getElementById('divLink').style.display='none';
-  document.getElementById('divPresencial').style.display='flex';
- }
- // CORRECCIÓN: Manejar fechas de forma segura
- try {
-  let dt=info.event.start;
-  document.getElementById('fDate').value=dt.toISOString().split('T')[0];
-  document.getElementById('fTime').value=dt.toTimeString().slice(0,5);
- } catch(e) {
-  console.log('Error fecha:', e);
-  document.getElementById('fDate').value='';
-  document.getElementById('fTime').value='';
- }
+ if(p.meeting_link){document.getElementById('fType').value='virtual';document.getElementById('divLink').style.display='block';document.getElementById('divPresencial').style.display='none';}
+ else{document.getElementById('fType').value='presencial';document.getElementById('divLink').style.display='none';document.getElementById('divPresencial').style.display='flex';}
+ try{let dt=info.event.start;document.getElementById('fDate').value=dt.toISOString().split('T')[0];document.getElementById('fTime').value=dt.toTimeString().slice(0,5);}catch(e){document.getElementById('fDate').value='';document.getElementById('fTime').value='';}
  document.getElementById('notifyList').innerHTML='<div class="notify-row"><input class="form-control not-upper notify-email" placeholder="email@ejemplo.com"><button onclick="removeNotify(this)">×</button></div>';
- loadCiudades();
- modal.show();
+ loadCiudades();modal.show();
 }
 
 function clearForm(){
@@ -288,33 +244,24 @@ function saveBooking(){
 
 function deleteAppt(){if(!editId)return;if(!confirm('¿Eliminar?'))return;fetch('/calendar/api/delete/'+editId,{method:'POST'}).then(r=>r.json()).then(d=>{alert('🗑️ Eliminada');modal.hide();cal.refetchEvents();loadPending();});}
 function loadPending(){fetch('/calendar/api/pending').then(r=>r.json()).then(d=>{let h='';if(!d.length)h='<p class="text-success small">✅ Sin pendientes</p>';else d.forEach(i=>{h+=`<div class="pend-item"><strong>${i.title}</strong><br><small>👤 ${i.encargado||''} | ${i.date} ${i.time}</small><br><button class="btn btn-success btn-sm mt-1" onclick="apr('${i.id}')">✓</button> <button class="btn btn-danger btn-sm mt-1" onclick="rej('${i.id}')">✕</button></div>`});document.getElementById('pendingList').innerHTML=h;});}
+
 function apr(id){
-    if(confirm('¿Aprobar?')){
-        fetch('/calendar/api/approve/'+id,{method:'POST'})
-        .then(r=>r.json())
-        .then(d=>{
-            alert(d.message||'OK');
+    console.log('Aprobando:', id);
+    if(confirm('¿Aprobar y crear en Google Calendar?')){
+        fetch('/calendar/api/approve/'+id, {method:'POST'})
+        .then(function(r){ console.log('Status:', r.status); return r.json(); })
+        .then(function(d){
+            console.log('Respuesta:', d);
+            alert(d.message || d.error || 'OK');
             cal.refetchEvents();
             loadPending();
-            // Forzar recarga si no se actualiza
-            setTimeout(function(){ cal.render(); }, 500);
         })
-        .catch(function(e){
-            alert('Error: '+e);
-        });
+        .catch(function(e){ console.error('Error:', e); alert('Error: ' + e.message); });
     }
 }
+
 function rej(id){if(confirm('¿Rechazar?')){fetch('/calendar/api/reject/'+id,{method:'POST'}).then(r=>r.json()).then(d=>{alert('Rechazada');cal.refetchEvents();loadPending()});}}
-function syncCalendar(){
-    if(!confirm('¿Sincronizar citas confirmadas con Google Calendar?'))return;
-    fetch('/calendar/api/sync',{method:'POST'}).then(r=>r.json()).then(d=>{
-        if(d.success)alert('✅ Sincronizadas: '+d.synced+' | Errores: '+(d.errors||0));
-        else alert('❌ '+d.error);
-    });
-}
-</script>   ← Este es el </script> que cierra todo
-</body>
-</html>
+function syncCalendar(){if(!confirm('¿Sincronizar?'))return;fetch('/calendar/api/sync',{method:'POST'}).then(r=>r.json()).then(d=>{if(d.success)alert('✅ Sync: '+d.synced+' | Saltados: '+(d.skipped||0)+' | Errores: '+(d.errors||0));else alert('❌ '+d.error);});}
 </script>
 </body>
 </html>
