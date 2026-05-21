@@ -36,7 +36,6 @@ class SupabaseAPI:
         h = self.headers.copy(); h['Prefer'] = 'return=representation'
         r = requests.post(f'{self.url}/rest/v1/{table}', headers=h, json=data)
         if r.status_code in [200, 201]: return r.json() if isinstance(r.json(), list) else [r.json()]
-        print(f"INSERT ERROR {r.status_code}: {r.text}")
         return None
     def update(self, table, id_val, data, id_col='id'):
         r = requests.patch(f'{self.url}/rest/v1/{table}?{id_col}=eq.{id_val}', headers=self.headers, json=data)
@@ -72,6 +71,7 @@ def is_admin():
 def create_app():
     app = Flask(__name__, template_folder='../templates', static_folder='../static')
     app.config.from_object(Config)
+    app.config['SECRET_KEY'] = app.config['SECRET_KEY'] or 'calendarios-map-secret-key-2024'
     try:
         app.supabase = SupabaseAPI(app.config['SUPABASE_URL'], app.config['SUPABASE_KEY'])
         print("✅ Supabase OK")
@@ -174,10 +174,14 @@ def create_app():
     @app.route('/auth/google/callback')
     @login_required
     def google_callback():
+        state = session.get('state')
+        if not state:
+            flash('Sesión expirada. Intenta de nuevo.', 'warning')
+            return redirect('/dashboard')
         flow = Flow.from_client_config({'web': {
             'client_id': app.config['GOOGLE_CLIENT_ID'], 'client_secret': app.config['GOOGLE_CLIENT_SECRET'],
             'auth_uri': 'https://accounts.google.com/o/oauth2/auth', 'token_uri': 'https://oauth2.googleapis.com/token',
-            'redirect_uris': [app.config['GOOGLE_REDIRECT_URI']]}}, scopes=['https://www.googleapis.com/auth/calendar'], state=session['state'])
+            'redirect_uris': [app.config['GOOGLE_REDIRECT_URI']]}}, scopes=['https://www.googleapis.com/auth/calendar'], state=state)
         flow.redirect_uri = app.config['GOOGLE_REDIRECT_URI']
         flow.fetch_token(authorization_response=request.url)
         save_google_creds(app, flow.credentials)
@@ -448,17 +452,9 @@ def create_app():
                      'attendees': attendees,
                      'reminders': {'useDefault': False, 'overrides': [{'method': 'email', 'minutes': 1440}, {'method': 'popup', 'minutes': 30}]}}
             if location: event['location'] = location
-            
-            # VERIFICAR SI YA EXISTE
-            existing = service.events().list(
-                calendarId='primary', timeMin=apt['start_time'],
-                timeMax=apt['end_time'], q=apt['title'], maxResults=1).execute()
-            
-            if existing.get('items'):
-                created = existing['items'][0]
-            else:
-                created = service.events().insert(calendarId='primary', body=event, sendUpdates='all').execute()
-            
+            existing = service.events().list(calendarId='primary', timeMin=apt['start_time'], timeMax=apt['end_time'], q=apt['title'], maxResults=1).execute()
+            if existing.get('items'): created = existing['items'][0]
+            else: created = service.events().insert(calendarId='primary', body=event, sendUpdates='all').execute()
             app.supabase.update('appointments', aid, {'status': 'confirmed', 'google_event_id': created.get('id')})
             return {'success': True, 'message': f'✅ Google: {len(attendees)} invitados'}
         except Exception as e: return {'success': False, 'error': str(e)}
@@ -489,13 +485,10 @@ def create_app():
             if apt.get('status') == 'confirmed' and not apt.get('google_event_id'):
                 try:
                     service = build('calendar', 'v3', credentials=creds)
-                    existing = service.events().list(
-                        calendarId='primary', timeMin=apt['start_time'],
-                        timeMax=apt['end_time'], q=apt['title'], maxResults=1).execute()
+                    existing = service.events().list(calendarId='primary', timeMin=apt['start_time'], timeMax=apt['end_time'], q=apt['title'], maxResults=1).execute()
                     if existing.get('items'):
                         app.supabase.update('appointments', apt['id'], {'google_event_id': existing['items'][0]['id']})
-                        skipped += 1
-                        continue
+                        skipped += 1; continue
                     cal_map = {c['calendar_id']: c['email'] for c in app.supabase.get('calendar_config') if c.get('email')}
                     attendees = []
                     cal_email = cal_map.get(apt.get('calendar_id'))
