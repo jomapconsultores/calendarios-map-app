@@ -1,0 +1,400 @@
+/* ============================================
+   CALENDARIOS-MAP - Diseño Profesional
+   Creado por Marco Antonio Posligua San Martín
+   ============================================ */
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+:root {
+    --primary: #4f46e5;
+    --primary-dark: #3730a3;
+    --success: #10b981;
+    --warning: #f59e0b;
+    --danger: #ef4444;
+    --info: #3b82f6;
+    --dark: #1e293b;
+    --gray: #64748b;
+    --light: #f1f5f9;
+    --white: #ffffff;
+    --shadow: 0 1px 3px rgba(0,0,0,.08), 0 1px 2px rgba(0,0,0,.06);
+    --shadow-md: 0 4px 6px rgba(0,0,0,.07), 0 2px 4px rgba(0,0,0,.06);
+    --shadow-lg: 0 10px 15px rgba(0,0,0,.1), 0 4px 6px rgba(0,0,0,.05);
+    --radius: 12px;
+    --radius-sm: 8px;
+    --transition: all .2s ease;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+    font-family: 'Inter', 'Segoe UI', sans-serif;
+    background: #f8fafc;
+    color: var(--dark);
+    line-height: 1.6;
+    min-height: 100vh;
+}
+
+/* ============ NAVBAR ============ */
+.navbar {
+    background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%) !important;
+    box-shadow: var(--shadow-md);
+    padding: 12px 0;
+}
+
+.navbar-brand {
+    font-weight: 700;
+    font-size: 1.4rem;
+    letter-spacing: -0.5px;
+}
+
+.navbar .btn {
+    font-weight: 500;
+    font-size: 0.8rem;
+    padding: 6px 14px;
+    transition: var(--transition);
+}
+
+.navbar .btn:hover {
+    transform: translateY(-1px);
+    box-shadow: var(--shadow);
+}
+
+.navbar .badge {
+    font-size: 0.7rem;
+    padding: 5px 10px;
+}
+
+/* ============ CARDS ============ */
+.card {
+    background: var(--white);
+    border-radius: var(--radius);
+    border: none;
+    box-shadow: var(--shadow);
+    transition: var(--transition);
+    overflow: hidden;
+}
+
+.card:hover {
+    box-shadow: var(--shadow-md);
+}
+
+.card-header {
+    background: var(--white);
+    border-bottom: 1px solid #e2e8f0;
+    font-weight: 600;
+    padding: 16px 20px;
+}
+
+.card-body {
+    padding: 20px;
+}
+
+/* ============ SIDEBAR CALENDARIOS ============ */
+.cal-box {
+    background: var(--white);
+    border-radius: var(--radius-sm);
+    padding: 12px 14px;
+    margin-bottom: 8px;
+    cursor: pointer;
+    transition: var(--transition);
+    border-left: 4px solid;
+    font-size: 0.85rem;
+    font-weight: 600;
+    box-shadow: var(--shadow);
+}
+
+.cal-box:hover {
+    transform: translateX(4px);
+    box-shadow: var(--shadow-md);
+}
+
+.cal-box .cal-email {
+    font-weight: 400;
+    color: var(--gray);
+    font-size: 0.7rem;
+}
+
+/* ============ BOTONES ============ */
+.btn {
+    font-weight: 500;
+    border-radius: 20px;
+    padding: 8px 18px;
+    transition: var(--transition);
+    font-size: 0.85rem;
+}
+
+.btn:hover {
+    transform: translateY(-1px);
+    box-shadow: var(--shadow);
+}
+
+.btn-primary {
+    background: var(--primary);
+    border-color: var(--primary);
+}
+
+.btn-primary:hover {
+    background: var(--primary-dark);
+    border-color: var(--primary-dark);
+}
+
+.btn-success { background: var(--success); border-color: var(--success); }
+.btn-warning { background: var(--warning); border-color: var(--warning); color: #000; }
+.btn-danger { background: var(--danger); border-color: var(--danger); }
+
+.btn-go {
+    background: linear-gradient(135deg, #4f46e5, #7c3aed);
+    color: white;
+    border-radius: 25px;
+    font-weight: 600;
+    padding: 10px 20px;
+    border: none;
+    width: 100%;
+    font-size: 0.85rem;
+    box-shadow: var(--shadow);
+    transition: var(--transition);
+}
+
+.btn-go:hover {
+    box-shadow: var(--shadow-lg);
+    transform: translateY(-2px);
+}
+
+.btn-xs {
+    padding: 3px 8px;
+    font-size: 0.7rem;
+    border-radius: 12px;
+}
+
+/* ============ PENDIENTES ============ */
+.pend-item {
+    background: var(--white);
+    border-radius: var(--radius-sm);
+    padding: 10px 12px;
+    margin-bottom: 6px;
+    border-left: 3px solid var(--warning);
+    font-size: 0.8rem;
+    box-shadow: var(--shadow);
+    transition: var(--transition);
+}
+
+.pend-item:hover {
+    box-shadow: var(--shadow-md);
+}
+
+/* ============ FORMULARIOS ============ */
+.form-label {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--gray);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 4px;
+}
+
+.form-control, .form-select {
+    border-radius: var(--radius-sm);
+    border: 1px solid #e2e8f0;
+    font-size: 0.85rem;
+    padding: 10px 14px;
+    transition: var(--transition);
+    background: var(--white);
+}
+
+.form-control:focus, .form-select:focus {
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px rgba(79,70,229,.15);
+    outline: none;
+}
+
+.not-upper {
+    text-transform: none !important;
+}
+
+/* ============ MODAL ============ */
+.modal-content {
+    border-radius: var(--radius);
+    border: none;
+    box-shadow: var(--shadow-lg);
+}
+
+.modal-header {
+    background: linear-gradient(135deg, #4f46e5, #7c3aed);
+    color: white;
+    border-radius: var(--radius) var(--radius) 0 0;
+    padding: 16px 20px;
+}
+
+.modal-header .btn-close {
+    filter: brightness(0) invert(1);
+}
+
+.modal-body {
+    padding: 24px;
+}
+
+.modal-footer {
+    border-top: 1px solid #e2e8f0;
+    padding: 16px 20px;
+}
+
+/* ============ SUGERENCIAS ============ */
+.sug-box {
+    background: var(--white);
+    border: 1px solid #e2e8f0;
+    border-radius: 0 0 var(--radius-sm) var(--radius-sm);
+    max-height: 160px;
+    overflow-y: auto;
+    box-shadow: var(--shadow-md);
+    z-index: 9999;
+}
+
+.sug-item {
+    padding: 8px 14px;
+    cursor: pointer;
+    font-size: 0.85rem;
+    transition: background .15s;
+}
+
+.sug-item:hover {
+    background: #eef2ff;
+}
+
+/* ============ NOTIFICACIONES ============ */
+.notify-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 6px;
+}
+
+.notify-row button {
+    background: none;
+    border: none;
+    color: var(--danger);
+    cursor: pointer;
+    font-size: 1.2rem;
+    font-weight: bold;
+}
+
+/* ============ SECCIONES ============ */
+.section-label {
+    font-size: 0.7rem;
+    font-weight: 700;
+    color: var(--gray);
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    margin: 16px 0 8px;
+}
+
+/* ============ FULLCALENDAR ============ */
+.fc {
+    font-family: 'Inter', sans-serif;
+}
+
+.fc-toolbar-title {
+    font-weight: 700;
+    font-size: 1.1rem !important;
+}
+
+.fc-button {
+    border-radius: 20px !important;
+    font-weight: 500 !important;
+    font-size: 0.8rem !important;
+    padding: 6px 14px !important;
+    transition: var(--transition) !important;
+}
+
+.fc-button-primary {
+    background: var(--primary) !important;
+    border-color: var(--primary) !important;
+}
+
+.fc-button-primary:hover {
+    background: var(--primary-dark) !important;
+}
+
+.fc-event {
+    border-radius: 6px !important;
+    font-size: 0.75rem !important;
+    font-weight: 500 !important;
+    padding: 3px 6px !important;
+    border: none !important;
+}
+
+/* ============ TASKS ============ */
+.task-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 16px;
+    background: var(--white);
+    border-radius: var(--radius-sm);
+    margin-bottom: 8px;
+    box-shadow: var(--shadow);
+    transition: var(--transition);
+}
+
+.task-item:hover {
+    box-shadow: var(--shadow-md);
+}
+
+.task-item.completed {
+    opacity: 0.5;
+    text-decoration: line-through;
+    background: #f1f5f9;
+}
+
+.list-card {
+    cursor: pointer;
+    border-radius: var(--radius-sm);
+    padding: 16px;
+    margin-bottom: 8px;
+    transition: var(--transition);
+    background: var(--white);
+    box-shadow: var(--shadow);
+}
+
+.list-card:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-md);
+}
+
+.list-card.active {
+    border: 2px solid var(--primary);
+    background: #eef2ff;
+}
+
+/* ============ FOOTER ============ */
+.f-credit {
+    text-align: center;
+    padding: 16px;
+    font-size: 0.75rem;
+    color: var(--gray);
+    background: var(--white);
+    border-top: 1px solid #e2e8f0;
+    margin-top: 40px;
+}
+
+/* ============ ANIMACIONES ============ */
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+.card, .cal-box, .pend-item, .solicitud {
+    animation: fadeIn .3s ease;
+}
+
+/* ============ SCROLLBAR ============ */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+
+/* ============ RESPONSIVE ============ */
+@media (max-width: 768px) {
+    .navbar-brand { font-size: 1.1rem; }
+    .modal-dialog { margin: 10px; }
+    .cal-box { font-size: 0.75rem; }
+}
