@@ -49,15 +49,41 @@ def get_google_creds(app):
         tokens = app.supabase.get('google_tokens', {'email': 'mposligua0000@gmail.com'})
         if tokens:
             t = tokens[0]
-            return Credentials(token=t.get('token'), refresh_token=t.get('refresh_token'),
-                token_uri='https://oauth2.googleapis.com/token', client_id=app.config['GOOGLE_CLIENT_ID'],
-                client_secret=app.config['GOOGLE_CLIENT_SECRET'], scopes=['https://www.googleapis.com/auth/calendar'])
-    except: pass
+            creds = Credentials(
+                token=t.get('token'),
+                refresh_token=t.get('refresh_token'),
+                token_uri='https://oauth2.googleapis.com/token',
+                client_id=app.config['GOOGLE_CLIENT_ID'],
+                client_secret=app.config['GOOGLE_CLIENT_SECRET'],
+                scopes=['https://www.googleapis.com/auth/calendar', 'https://www.googleapis.com/auth/tasks']
+            )
+            # Refrescar token automáticamente si expiró
+            if creds.expired and creds.refresh_token:
+                try:
+                    from google.auth.transport.requests import Request
+                    creds.refresh(Request())
+                    # Guardar nuevo token
+                    app.supabase.update('google_tokens', t['id'], {
+                        'token': creds.token,
+                        'refresh_token': creds.refresh_token
+                    })
+                    print("✅ Token Google refrescado automáticamente")
+                except Exception as e:
+                    print(f"⚠️ No se pudo refrescar token: {e}")
+            return creds
+    except Exception as e:
+        print(f"Error credenciales: {e}")
     return None
 
 def save_google_creds(app, creds):
     app.supabase.delete('google_tokens', 'mposligua0000@gmail.com', 'email')
-    app.supabase.insert('google_tokens', {'email': 'mposligua0000@gmail.com', 'token': creds.token, 'refresh_token': creds.refresh_token})
+    result = app.supabase.insert('google_tokens', {
+        'email': 'mposligua0000@gmail.com',
+        'token': creds.token,
+        'refresh_token': creds.refresh_token
+    })
+    if result:
+        print("✅ Credenciales Google guardadas")
 
 def get_user_calendars(app, uid):
     perms = app.supabase.get('calendar_permissions', {'user_id': uid, 'status': 'approved'})
