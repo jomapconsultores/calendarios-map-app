@@ -5,9 +5,12 @@ from config.config import Config
 from dotenv import load_dotenv
 from google_auth_oauthlib.flow import Flow
 from google.oauth2.credentials import Credentials
+import google.auth.exceptions
 from googleapiclient.discovery import build
 from datetime import datetime, timedelta
 import os, requests, traceback, pytz
+
+GOOGLE_SCOPES = ['https://www.googleapis.com/auth/calendar']
 
 load_dotenv()
 os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
@@ -47,41 +50,67 @@ class SupabaseAPI:
 def get_google_creds(app):
     try:
         tokens = app.supabase.get('google_tokens', {'email': 'mposligua0000@gmail.com'})
-        if tokens:
-            t = tokens[0]
-            creds = Credentials(
-                token=t.get('token'),
-                refresh_token=t.get('refresh_token'),
-                token_uri='https://oauth2.googleapis.com/token',
-                client_id=app.config['GOOGLE_CLIENT_ID'],
-                client_secret=app.config['GOOGLE_CLIENT_SECRET'],
-                scopes=['https://www.googleapis.com/auth/calendar', 'https://www.googleapis.com/auth/tasks']
-            )
-            # Refrescar token automáticamente si expiró
-            if creds.expired and creds.refresh_token:
-                try:
-                    from google.auth.transport.requests import Request
-                    creds.refresh(Request())
-                    # Guardar nuevo token
-                    app.supabase.update('google_tokens', t['id'], {
-                        'token': creds.token,
-                        'refresh_token': creds.refresh_token
-                    })
-                    print("✅ Token Google refrescado automáticamente")
-                except Exception as e:
+        if not tokens:
+            return None
+        t = tokens[0]
+        expiry = None
+        if t.get('token_expiry'):
+            try:
+                expiry = datetime.fromisoformat(t['token_expiry'].replace('Z', '+00:00'))
+            except Exception:
+                pass
+        creds = Credentials(
+            token=t.get('token'),
+            refresh_token=t.get('refresh_token'),
+            token_uri='https://oauth2.googleapis.com/token',
+            client_id=app.config['GOOGLE_CLIENT_ID'],
+            client_secret=app.config['GOOGLE_CLIENT_SECRET'],
+            scopes=GOOGLE_SCOPES,
+            expiry=expiry
+        )
+        if creds.expired and creds.refresh_token:
+            try:
+                from google.auth.transport.requests import Request
+                creds.refresh(Request())
+                _save_token_fields(app, t['id'], creds)
+                print("✅ Token Google refrescado automáticamente")
+            except google.auth.exceptions.RefreshError as e:
+                err = str(e)
+                if 'invalid_grant' in err or 'Token has been expired or revoked' in err:
+                    print(f"❌ Token Google revocado - requiere re-autorización en /auth/google")
+                else:
                     print(f"⚠️ No se pudo refrescar token: {e}")
-            return creds
+                return None
+            except Exception as e:
+                print(f"⚠️ Error refrescando token: {e}")
+        return creds
     except Exception as e:
         print(f"Error credenciales: {e}")
     return None
 
+def _save_token_fields(app, token_id, creds):
+    data = {'token': creds.token, 'refresh_token': creds.refresh_token}
+    if creds.expiry:
+        data['token_expiry'] = creds.expiry.isoformat()
+    result = app.supabase.update('google_tokens', token_id, data)
+    if not result and creds.expiry:
+        # Columna token_expiry no existe aún, guardar sin ella
+        app.supabase.update('google_tokens', token_id, {'token': creds.token, 'refresh_token': creds.refresh_token})
+
 def save_google_creds(app, creds):
     app.supabase.delete('google_tokens', 'mposligua0000@gmail.com', 'email')
-    result = app.supabase.insert('google_tokens', {
+    data = {
         'email': 'mposligua0000@gmail.com',
         'token': creds.token,
         'refresh_token': creds.refresh_token
-    })
+    }
+    if creds.expiry:
+        data['token_expiry'] = creds.expiry.isoformat()
+    result = app.supabase.insert('google_tokens', data)
+    if not result and creds.expiry:
+        # Columna token_expiry no existe aún, guardar sin ella
+        del data['token_expiry']
+        result = app.supabase.insert('google_tokens', data)
     if result:
         print("✅ Credenciales Google guardadas")
 
@@ -192,7 +221,7 @@ def create_app():
         flow = Flow.from_client_config({'web': {
             'client_id': app.config['GOOGLE_CLIENT_ID'], 'client_secret': app.config['GOOGLE_CLIENT_SECRET'],
             'auth_uri': 'https://accounts.google.com/o/oauth2/auth', 'token_uri': 'https://oauth2.googleapis.com/token',
-            'redirect_uris': [app.config['GOOGLE_REDIRECT_URI']]}}, scopes=['https://www.googleapis.com/auth/calendar'])
+            'redirect_uris': [app.config['GOOGLE_REDIRECT_URI']]}}, scopes=GOOGLE_SCOPES)
         flow.redirect_uri = app.config['GOOGLE_REDIRECT_URI']
         auth_url, state = flow.authorization_url(access_type='offline', prompt='consent')
         session['state'] = state; return redirect(auth_url)
@@ -207,7 +236,7 @@ def create_app():
         flow = Flow.from_client_config({'web': {
             'client_id': app.config['GOOGLE_CLIENT_ID'], 'client_secret': app.config['GOOGLE_CLIENT_SECRET'],
             'auth_uri': 'https://accounts.google.com/o/oauth2/auth', 'token_uri': 'https://oauth2.googleapis.com/token',
-            'redirect_uris': [app.config['GOOGLE_REDIRECT_URI']]}}, scopes=['https://www.googleapis.com/auth/calendar'], state=state)
+            'redirect_uris': [app.config['GOOGLE_REDIRECT_URI']]}}, scopes=GOOGLE_SCOPES, state=state)
         flow.redirect_uri = app.config['GOOGLE_REDIRECT_URI']
         flow.fetch_token(authorization_response=request.url)
         save_google_creds(app, flow.credentials)
@@ -548,5 +577,22 @@ def create_app():
 
     @app.route('/health')
     def health(): return {'status': 'ok'}
+
+    @app.route('/api/google-status')
+    @login_required
+    def google_status():
+        if not is_admin(): return {'connected': False, 'error': 'No autorizado'}
+        tokens = app.supabase.get('google_tokens', {'email': 'mposligua0000@gmail.com'})
+        if not tokens:
+            return {'connected': False, 'message': 'No hay token guardado. Ve a /auth/google para autorizar.'}
+        t = tokens[0]
+        has_refresh = bool(t.get('refresh_token'))
+        expiry_str = t.get('token_expiry')
+        expiry_info = expiry_str if expiry_str else 'no guardado'
+        creds = get_google_creds(app)
+        if creds:
+            return {'connected': True, 'email': t['email'], 'expiry': expiry_info, 'has_refresh_token': has_refresh}
+        return {'connected': False, 'email': t['email'], 'has_refresh_token': has_refresh,
+                'message': 'Token inválido o revocado. Ve a /auth/google para re-autorizar.'}
 
     return app
