@@ -142,6 +142,16 @@ def create_app():
             if u: return User(u[0])
         return None
 
+    @app.context_processor
+    def inject_layout_globals():
+        connected = False
+        try:
+            if current_user.is_authenticated and app.supabase:
+                connected = bool(app.supabase.get('google_tokens', {'email': 'mposligua0000@gmail.com'}))
+        except Exception:
+            pass
+        return {'google_connected_global': connected}
+
     @app.route('/')
     def home():
         return redirect('/dashboard') if current_user.is_authenticated else render_template('index.html')

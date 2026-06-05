@@ -1,43 +1,92 @@
-<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"><title>Panel - calendarios-map</title>
-<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-<link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}"></head>
-<body>
-<nav class="navbar navbar-dark"><div class="container-fluid">
-<a class="navbar-brand" href="/dashboard">🗓️ calendarios-map</a>
-<div><span class="text-white me-3 small">{{current_user.full_name}}</span>
-{%if current_user.role=='admin'%}
-<a href="/admin/users" class="btn btn-outline-light btn-sm rounded-pill me-1">👥 Usuarios</a>
-<a href="/admin/database" class="btn btn-outline-light btn-sm rounded-pill me-1">🗄️ BD</a>
-{%endif%}
-<a href="/calendar" class="btn btn-light btn-sm rounded-pill me-1">📅 Calendario</a>
-<a href="/logout" class="btn btn-outline-light btn-sm rounded-pill">Salir</a></div></div></nav>
+{% extends "base.html" %}
+{% block title %}Panel - calendarios-map{% endblock %}
+{% block page_title %}Panel principal{% endblock %}
+{% block page_sub %}<p class="page-sub">Bienvenido, {{ current_user.full_name }}</p>{% endblock %}
 
-<div class="container mt-4">
+{% block content %}
+
 {% if current_user.role == 'admin' and pending %}
-<h5>⏳ Solicitudes Pendientes <span class="badge bg-warning text-dark">{{pending|length}}</span></h5>
+<h5 class="section-heading">⏳ Solicitudes pendientes <span class="badge bg-warning text-dark">{{pending|length}}</span></h5>
 {% for p in pending %}
-<div class="solicitud"><div class="d-flex justify-content-between align-items-start mb-2">
-<div><strong>{{p.user_name}}</strong><br><small class="text-muted">{{p.user_email}}</small></div><span class="badge-pendiente">Pendiente</span></div>
-<div class="mb-2"><small class="text-muted fw-bold">Solicita acceso a:</small></div>
-{% for cal in p.calendars %}
-<div class="cal-row"><span><span class="dot" style="background:{{cal.color}}"></span>{{cal.name}} <small class="text-muted">{{cal.email}}</small></span>
-<span>
-{% for pp in pending_all %}{% if pp.user_id == p.user_id and pp.calendar_id == cal.calendar_id %}
-<button class="btn btn-success btn-sm rounded-pill" onclick="appOne('{{pp.id}}')">✓</button>
-<button class="btn btn-outline-danger btn-sm rounded-pill" onclick="rejOne('{{pp.id}}')">✕</button>
-{% endif %}{% endfor %}
-</span></div>{% endfor %}
-<div class="mt-2"><button class="btn btn-success btn-sm rounded-pill" onclick="appAll('{{p.user_id}}')">✅ Todo</button>
-<button class="btn btn-danger btn-sm rounded-pill" onclick="rejAll('{{p.user_id}}')">❌ Todo</button></div></div>{% endfor %}{% endif %}
+<div class="solicitud card mb-3"><div class="card-body">
+  <div class="d-flex justify-content-between align-items-start mb-2">
+    <div><strong>{{p.user_name}}</strong><br><small class="text-muted">{{p.user_email}}</small></div>
+    <span class="badge-pendiente badge bg-warning text-dark">Pendiente</span>
+  </div>
+  <div class="mb-2"><small class="text-muted fw-bold">Solicita acceso a:</small></div>
+  {% for cal in p.calendars %}
+  <div class="cal-row d-flex justify-content-between align-items-center mb-1">
+    <span><span class="dot" style="background:{{cal.color}}"></span>{{cal.name}} <small class="text-muted">{{cal.email}}</small></span>
+    <span>
+      {% for pp in pending_all %}{% if pp.user_id == p.user_id and pp.calendar_id == cal.calendar_id %}
+      <button class="btn btn-success btn-sm rounded-pill" onclick="appOne('{{pp.id}}')">✓</button>
+      <button class="btn btn-outline-danger btn-sm rounded-pill" onclick="rejOne('{{pp.id}}')">✕</button>
+      {% endif %}{% endfor %}
+    </span>
+  </div>{% endfor %}
+  <div class="mt-2">
+    <button class="btn btn-success btn-sm rounded-pill" onclick="appAll('{{p.user_id}}')">✅ Aprobar todo</button>
+    <button class="btn btn-danger btn-sm rounded-pill" onclick="rejAll('{{p.user_id}}')">❌ Rechazar todo</button>
+  </div>
+</div></div>{% endfor %}
+{% endif %}
 
 {% if current_user.role != 'admin' and calendarios|length == 0 %}
-<div class="alert alert-warning text-center"><h5>⏳ Acceso Pendiente</h5><p>El administrador revisará tu solicitud.</p></div>{%endif%}
+<div class="alert alert-warning text-center"><h5>⏳ Acceso pendiente</h5><p class="mb-0">El administrador revisará tu solicitud de acceso.</p></div>
+{% endif %}
 
-<div class="row mt-4"><div class="col-md-6"><div class="card p-4 text-center"><h3>📅</h3><h5>Mis Calendarios</h5><p class="text-muted">{{calendarios|length}} activos</p><a href="/calendar" class="btn btn-primary rounded-pill">Ir al Calendario</a></div></div>
-<div class="col-md-6"><div class="card p-4 text-center"><h3>🔗</h3><h5>Google Calendar</h5><p>{%if google_connected%}✅ Conectado{%else%}❌ No{%endif%}</p>{%if not google_connected%}<a href="/auth/google" class="btn btn-primary rounded-pill">Conectar</a>{%endif%}</div></div></div></div>
+<div class="row g-3 mt-1">
+  <div class="col-md-6 col-xl-4">
+    <a href="/calendar" class="module-card">
+      <div class="m-icon">📅</div>
+      <h6>Mis calendarios</h6>
+      <p class="m-sub mb-2">{{calendarios|length}} calendario(s) activo(s)</p>
+      <span class="btn btn-primary btn-sm rounded-pill">Ir al calendario →</span>
+    </a>
+  </div>
+  <div class="col-md-6 col-xl-4">
+    <a href="{{ '/auth/google' if not google_connected else '#' }}" class="module-card" {% if google_connected %}onclick="return false" style="cursor:default"{% endif %}>
+      <div class="m-icon" style="background:#dcfce7">🔗</div>
+      <h6>Google Calendar</h6>
+      <p class="m-sub mb-2">{% if google_connected %}✅ Conectado y sincronizando{% else %}❌ Aún no conectado{% endif %}</p>
+      {% if not google_connected %}<span class="btn btn-primary btn-sm rounded-pill">Conectar →</span>{% endif %}
+    </a>
+  </div>
+  {% if current_user.role == 'admin' %}
+  <div class="col-md-6 col-xl-4">
+    <a href="/admin/users" class="module-card">
+      <div class="m-icon" style="background:#fef3c7">👥</div>
+      <h6>Usuarios</h6>
+      <p class="m-sub mb-2">Gestiona accesos y solicitudes</p>
+      <span class="btn btn-primary btn-sm rounded-pill">Administrar →</span>
+    </a>
+  </div>
+  <div class="col-md-6 col-xl-4">
+    <a href="/admin/database" class="module-card">
+      <div class="m-icon" style="background:#e0e7ff">🗄️</div>
+      <h6>Base de datos</h6>
+      <p class="m-sub mb-2">Ciudades, títulos, encargados, clientes…</p>
+      <span class="btn btn-primary btn-sm rounded-pill">Abrir →</span>
+    </a>
+  </div>
+  {% endif %}
+  <div class="col-md-6 col-xl-4">
+    <a href="/profile" class="module-card">
+      <div class="m-icon" style="background:#ffe4e6">👤</div>
+      <h6>Mi perfil</h6>
+      <p class="m-sub mb-2">Actualiza tus datos y contraseña</p>
+      <span class="btn btn-primary btn-sm rounded-pill">Editar →</span>
+    </a>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
 <script>
 function appOne(pid){fetch('/admin/approve-one/'+pid,{method:'POST'}).then(r=>r.json()).then(d=>{if(d.success)location.reload()})}
 function rejOne(pid){fetch('/admin/reject-one/'+pid,{method:'POST'}).then(r=>r.json()).then(d=>{if(d.success)location.reload()})}
 function appAll(uid){fetch('/admin/approve-all/'+uid,{method:'POST'}).then(r=>r.json()).then(d=>{if(d.success)location.reload()})}
 function rejAll(uid){fetch('/admin/reject-all/'+uid,{method:'POST'}).then(r=>r.json()).then(d=>{if(d.success)location.reload()})}
-</script></body></html>
+</script>
+{% endblock %}

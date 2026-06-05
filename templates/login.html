@@ -3,44 +3,42 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Login - calendarios-map</title>
+    <title>Iniciar sesión - calendarios-map</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <style>
+      .auth-wrap{min-height:100vh;display:grid;place-items:center;padding:24px;
+        background:linear-gradient(135deg,#4f46e5 0%,#7c3aed 100%);}
+      .auth-card{width:100%;max-width:410px;}
+      .auth-logo{width:60px;height:60px;border-radius:16px;display:grid;place-items:center;
+        font-size:1.8rem;margin:0 auto 14px;background:linear-gradient(135deg,#4f46e5,#7c3aed);
+        box-shadow:0 8px 20px rgba(79,70,229,.4);}
+    </style>
 </head>
-<body class="bg-light">
-    <div class="container mt-5">
-        <div class="row justify-content-center">
-            <div class="col-md-4">
-                <div class="card shadow">
-                    <div class="card-body">
-                        <h3 class="text-center mb-4">🗓️ calendarios-map</h3>
-                        
-                        {% with messages = get_flashed_messages(with_categories=true) %}
-                            {% if messages %}
-                                {% for category, message in messages %}
-                                    <div class="alert alert-{{ category }}">{{ message }}</div>
-                                {% endfor %}
-                            {% endif %}
-                        {% endwith %}
-                        
-                        <form method="POST">
-                            <div class="mb-3">
-                                <label>Email</label>
-                                <input type="email" name="email" class="form-control" required>
-                            </div>
-                            <div class="mb-3">
-                                <label>Contraseña</label>
-                                <input type="password" name="password" class="form-control" required>
-                            </div>
-                            <button type="submit" class="btn btn-primary w-100">Iniciar Sesión</button>
-                        </form>
-                        
-                        <div class="text-center mt-3">
-                            <a href="/register">¿No tienes cuenta? Regístrate</a>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
+<body>
+  <div class="auth-wrap">
+    <div class="auth-card">
+      <div class="card"><div class="card-body p-4 p-md-5">
+        <div class="auth-logo">🗓️</div>
+        <h4 class="text-center fw-bold mb-1">calendarios-map</h4>
+        <p class="text-center text-muted small mb-4">Inicia sesión para continuar</p>
+
+        {% with messages = get_flashed_messages(with_categories=true) %}
+          {% if messages %}{% for category, message in messages %}
+          <div class="alert alert-{{ category }}">{{ message }}</div>
+          {% endfor %}{% endif %}
+        {% endwith %}
+
+        <form method="POST">
+          <div class="mb-3"><label class="form-label">Email</label><input type="email" name="email" class="form-control" required></div>
+          <div class="mb-3"><label class="form-label">Contraseña</label><input type="password" name="password" class="form-control" required></div>
+          <button type="submit" class="btn btn-primary w-100 rounded-pill">Iniciar sesión</button>
+        </form>
+
+        <div class="text-center mt-3"><a href="/register" class="small">¿No tienes cuenta? Regístrate</a></div>
+      </div></div>
+      <p class="text-center text-white-50 small mt-3 mb-0">© 2026 · Marco Antonio Posligua San Martín</p>
     </div>
+  </div>
 </body>
 </html>

@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{% block title %}calendarios-map{% endblock %}</title>
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+{% block head %}{% endblock %}
+</head>
+<body>
+{% set path = request.path %}
+{% set is_adm = current_user.role == 'admin' %}
+<div class="app-shell">
+
+  <!-- ============ MENÚ LATERAL IZQUIERDO ============ -->
+  <aside class="sidebar" id="sidebar">
+    <a href="/dashboard" class="sidebar-brand">
+      <span class="logo">🗓️</span> calendarios-map
+    </a>
+
+    <nav class="sidebar-nav">
+      <div class="nav-section">Principal</div>
+
+      <a href="/dashboard" class="nav-link {{ 'active' if path == '/dashboard' }}">
+        <span class="nav-icon">📊</span> Panel
+      </a>
+
+      <div class="nav-group {{ 'open' if path.startswith('/calendar') }}">
+        <a href="/calendar" class="nav-link {{ 'active' if path == '/calendar' }}" data-toggle-group>
+          <span class="nav-icon">📅</span> Calendario
+          <span class="nav-caret">▶</span>
+        </a>
+        <ul class="nav-sub">
+          <li><a href="/calendar">Agenda mensual</a></li>
+          <li><a href="/calendar?action=new">Nueva cita</a></li>
+          <li><a href="/calendar?action=pending">Pendientes</a></li>
+        </ul>
+      </div>
+
+      <a href="/profile" class="nav-link {{ 'active' if path == '/profile' }}">
+        <span class="nav-icon">👤</span> Mi perfil
+      </a>
+
+      {% if is_adm %}
+      <div class="nav-section">Administración</div>
+
+      <div class="nav-group {{ 'open' if path.startswith('/admin/users') }}">
+        <a href="/admin/users" class="nav-link {{ 'active' if path == '/admin/users' }}" data-toggle-group>
+          <span class="nav-icon">👥</span> Usuarios
+          <span class="nav-caret">▶</span>
+        </a>
+        <ul class="nav-sub">
+          <li><a href="/admin/users#registrados">Registrados</a></li>
+          <li><a href="/admin/users#pending">Solicitudes</a></li>
+        </ul>
+      </div>
+
+      <div class="nav-group {{ 'open' if path.startswith('/admin/database') }}">
+        <a href="/admin/database" class="nav-link {{ 'active' if path == '/admin/database' }}" data-toggle-group>
+          <span class="nav-icon">🗄️</span> Base de datos
+          <span class="nav-caret">▶</span>
+        </a>
+        <ul class="nav-sub">
+          <li><a href="/admin/database#sec-ciudades">Ciudades</a></li>
+          <li><a href="/admin/database#sec-titles">Títulos</a></li>
+          <li><a href="/admin/database#sec-encargados">Encargados</a></li>
+          <li><a href="/admin/database#sec-clients">Clientes</a></li>
+          <li><a href="/admin/database#sec-appointments">Citas</a></li>
+          <li><a href="/admin/database#sec-users">Usuarios</a></li>
+        </ul>
+      </div>
+      {% endif %}
+
+      <div class="nav-section">Integraciones</div>
+      {% if google_connected_global %}
+      <a class="nav-link" style="cursor:default">
+        <span class="nav-icon">🔗</span> Google Calendar
+        <span class="nav-pill" style="background:#dcfce7;color:#166534">Conectado</span>
+      </a>
+      {% else %}
+      <a href="/auth/google" class="nav-link">
+        <span class="nav-icon">🔗</span> Google Calendar
+        <span class="nav-pill" style="background:#fee2e2;color:#991b1b">Conectar</span>
+      </a>
+      {% endif %}
+    </nav>
+
+    <div class="sidebar-foot">
+      <div class="avatar">{{ current_user.full_name[:2]|upper if current_user.full_name else '?' }}</div>
+      <div class="who">
+        <div class="name">{{ current_user.full_name }}</div>
+        <div class="role">{{ 'Administrador' if is_adm else 'Staff' }}</div>
+      </div>
+      <a href="/logout" class="logout" title="Cerrar sesión">⎋</a>
+    </div>
+  </aside>
+
+  <div class="sidebar-backdrop" id="sidebarBackdrop"></div>
+
+  <!-- ============ COLUMNA PRINCIPAL ============ -->
+  <div class="app-main">
+    <header class="topbar">
+      <button class="menu-toggle" id="menuToggle" aria-label="Menú">☰</button>
+      <div>
+        <h1 class="page-title">{% block page_title %}{% endblock %}</h1>
+        {% block page_sub %}{% endblock %}
+      </div>
+      <div class="topbar-actions">
+        {% block topbar_actions %}
+        {% if google_connected_global %}
+        <span class="status-pill on">✅ Google</span>
+        {% else %}
+        <a href="/auth/google" class="status-pill off">🔗 Conectar Google</a>
+        {% endif %}
+        {% endblock %}
+      </div>
+    </header>
+
+    <main class="content">
+      {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}{% for cat, msg in messages %}
+        <div class="alert alert-{{cat}} alert-dismissible fade show">{{msg}}<button class="btn-close" data-bs-dismiss="alert"></button></div>
+        {% endfor %}{% endif %}
+      {% endwith %}
+
+      {% block content %}{% endblock %}
+    </main>
+
+    <div class="f-credit">Creado por <strong>Marco Antonio Posligua San Martín</strong> · calendarios-map © 2026</div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+// Toggle submenús
+document.querySelectorAll('[data-toggle-group]').forEach(function(el){
+  el.addEventListener('click', function(e){
+    var group = el.closest('.nav-group');
+    // permitir navegar con el texto, pero alternar al pulsar el caret
+    if (e.target.classList.contains('nav-caret')) {
+      e.preventDefault();
+      group.classList.toggle('open');
+    }
+  });
+});
+// Sidebar móvil
+(function(){
+  var sb = document.getElementById('sidebar');
+  var bd = document.getElementById('sidebarBackdrop');
+  var bt = document.getElementById('menuToggle');
+  function open(){ sb.classList.add('show'); bd.classList.add('show'); }
+  function close(){ sb.classList.remove('show'); bd.classList.remove('show'); }
+  if (bt) bt.addEventListener('click', open);
+  if (bd) bd.addEventListener('click', close);
+})();
+</script>
+{% block scripts %}{% endblock %}
+</body>
+</html>
