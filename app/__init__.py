@@ -11,6 +11,13 @@ from datetime import datetime, timedelta
 import os, requests, traceback, pytz
 
 GOOGLE_SCOPES = ['https://www.googleapis.com/auth/calendar']
+GOOGLE_ACCOUNT_EMAIL = 'mposligua0000@gmail.com'
+
+
+def _is_invalid_grant(err):
+    """Detecta si el error de Google es por refresh token revocado/expirado."""
+    s = str(err).lower()
+    return 'invalid_grant' in s or 'expired or revoked' in s or 'token has been expired' in s
 
 load_dotenv()
 os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
@@ -49,7 +56,7 @@ class SupabaseAPI:
 
 def get_google_creds(app):
     try:
-        tokens = app.supabase.get('google_tokens', {'email': 'mposligua0000@gmail.com'})
+        tokens = app.supabase.get('google_tokens', {'email': GOOGLE_ACCOUNT_EMAIL})
         if not tokens:
             return None
         t = tokens[0]
@@ -68,21 +75,33 @@ def get_google_creds(app):
             scopes=GOOGLE_SCOPES,
             expiry=expiry
         )
-        if creds.expired and creds.refresh_token:
+        if not creds.refresh_token:
+            print("⚠️ No hay refresh_token guardado - re-autoriza en /auth/google")
+            return None
+        # Refresca de forma proactiva: si está vencido, sin fecha de expiración guardada,
+        # o a punto de vencer (margen de 5 min) para no usar un token que muera a mitad de operación.
+        needs_refresh = (expiry is None) or creds.expired
+        if not needs_refresh and expiry is not None:
+            try:
+                if expiry <= datetime.now(expiry.tzinfo) + timedelta(minutes=5):
+                    needs_refresh = True
+            except Exception:
+                needs_refresh = True
+        if needs_refresh:
             try:
                 from google.auth.transport.requests import Request
                 creds.refresh(Request())
                 _save_token_fields(app, t['id'], creds)
                 print("✅ Token Google refrescado automáticamente")
             except google.auth.exceptions.RefreshError as e:
-                err = str(e)
-                if 'invalid_grant' in err or 'Token has been expired or revoked' in err:
-                    print(f"❌ Token Google revocado - requiere re-autorización en /auth/google")
+                if _is_invalid_grant(e):
+                    print("❌ Token Google revocado/expirado - re-autoriza en /auth/google")
                 else:
                     print(f"⚠️ No se pudo refrescar token: {e}")
                 return None
             except Exception as e:
                 print(f"⚠️ Error refrescando token: {e}")
+                return None
         return creds
     except Exception as e:
         print(f"Error credenciales: {e}")
@@ -98,11 +117,17 @@ def _save_token_fields(app, token_id, creds):
         app.supabase.update('google_tokens', token_id, {'token': creds.token, 'refresh_token': creds.refresh_token})
 
 def save_google_creds(app, creds):
-    app.supabase.delete('google_tokens', 'mposligua0000@gmail.com', 'email')
+    # Conserva el refresh_token anterior si Google no devolvió uno nuevo en esta reconexión
+    refresh_token = creds.refresh_token
+    if not refresh_token:
+        prev = app.supabase.get('google_tokens', {'email': GOOGLE_ACCOUNT_EMAIL})
+        if prev and prev[0].get('refresh_token'):
+            refresh_token = prev[0]['refresh_token']
+    app.supabase.delete('google_tokens', GOOGLE_ACCOUNT_EMAIL, 'email')
     data = {
-        'email': 'mposligua0000@gmail.com',
+        'email': GOOGLE_ACCOUNT_EMAIL,
         'token': creds.token,
-        'refresh_token': creds.refresh_token
+        'refresh_token': refresh_token
     }
     if creds.expiry:
         data['token_expiry'] = creds.expiry.isoformat()
@@ -119,6 +144,10 @@ def get_user_calendars(app, uid):
     cal_ids = [p['calendar_id'] for p in perms]
     if not cal_ids: return []
     return [c for c in app.supabase.get('calendar_config') if c['calendar_id'] in cal_ids]
+
+def user_has_calendar_access(app, uid, calendar_id):
+    ucal = [c['calendar_id'] for c in get_user_calendars(app, uid)]
+    return calendar_id in ucal
 
 def is_admin():
     return current_user.is_authenticated and current_user.role == 'admin'
@@ -145,12 +174,20 @@ def create_app():
     @app.context_processor
     def inject_layout_globals():
         connected = False
+        needs_reauth = False
         try:
             if current_user.is_authenticated and app.supabase:
-                connected = bool(app.supabase.get('google_tokens', {'email': 'mposligua0000@gmail.com'}))
+                tokens = app.supabase.get('google_tokens', {'email': GOOGLE_ACCOUNT_EMAIL})
+                if tokens:
+                    # Solo el admin paga la validación real (intenta refrescar si hace falta).
+                    if current_user.role == 'admin':
+                        connected = get_google_creds(app) is not None
+                        needs_reauth = not connected
+                    else:
+                        connected = True
         except Exception:
             pass
-        return {'google_connected_global': connected}
+        return {'google_connected_global': connected, 'google_needs_reauth': needs_reauth}
 
     @app.route('/')
     def home():
@@ -440,6 +477,8 @@ def create_app():
             link = request.form.get('meeting_link', '').strip()
             if not title or not cal_id or not encargado or not tema:
                 return {'success': False, 'error': 'Faltan campos'}
+            if not is_admin() and not user_has_calendar_access(app, current_user.id, cal_id):
+                return {'success': False, 'error': 'Sin autorización para este calendario'}
             if ciudad:
                 if not app.supabase.get('ciudades', {'name': ciudad}):
                     app.supabase.insert('ciudades', {'name': ciudad})
@@ -485,7 +524,10 @@ def create_app():
     def api_approve(aid):
         apts = app.supabase.get('appointments', {'id': aid})
         if not apts: return {'success': False}
-        apt = apts[0]; creds = get_google_creds(app)
+        apt = apts[0]
+        if not is_admin() and not user_has_calendar_access(app, current_user.id, apt.get('calendar_id')):
+            return {'success': False, 'error': 'Sin autorización'}
+        creds = get_google_creds(app)
         if not creds:
             app.supabase.update('appointments', aid, {'status': 'confirmed'})
             print(f"✅ Cita {aid} actualizada a confirmed")
@@ -524,22 +566,42 @@ def create_app():
             else: created = service.events().insert(calendarId='primary', body=event, sendUpdates='all').execute()
             app.supabase.update('appointments', aid, {'status': 'confirmed', 'google_event_id': created.get('id')})
             return {'success': True, 'message': f'✅ Google: {len(attendees)} invitados'}
-        except Exception as e: return {'success': False, 'error': str(e)}
+        except google.auth.exceptions.RefreshError as e:
+            # Token revocado/expirado a mitad de operación: confirmamos igual y pedimos reconexión.
+            app.supabase.update('appointments', aid, {'status': 'confirmed'})
+            print("❌ Token Google revocado durante aprobación - re-autoriza en /auth/google")
+            return {'success': True, 'message': 'Cita aprobada. Reconecta Google en /auth/google para sincronizar.'}
+        except Exception as e:
+            if _is_invalid_grant(e):
+                app.supabase.update('appointments', aid, {'status': 'confirmed'})
+                return {'success': True, 'message': 'Cita aprobada. Reconecta Google en /auth/google para sincronizar.'}
+            return {'success': False, 'error': str(e)}
 
     @app.route('/calendar/api/reject/<aid>', methods=['POST'])
     @login_required
-    def api_reject(aid): app.supabase.update('appointments', aid, {'status': 'cancelled'}); return {'success': True}
+    def api_reject(aid):
+        apts = app.supabase.get('appointments', {'id': aid})
+        if not apts: return {'success': False}
+        if not is_admin() and not user_has_calendar_access(app, current_user.id, apts[0].get('calendar_id')):
+            return {'success': False, 'error': 'Sin autorización'}
+        app.supabase.update('appointments', aid, {'status': 'cancelled'})
+        return {'success': True}
 
     @app.route('/calendar/api/delete/<aid>', methods=['POST'])
     @login_required
     def api_delete(aid):
         apts = app.supabase.get('appointments', {'id': aid})
-        if apts and apts[0].get('google_event_id'):
+        if not apts: return {'success': False}
+        apt = apts[0]
+        if not is_admin() and not user_has_calendar_access(app, current_user.id, apt.get('calendar_id')):
+            return {'success': False, 'error': 'Sin autorización'}
+        if apt.get('google_event_id'):
             creds = get_google_creds(app)
             if creds:
-                try: build('calendar', 'v3', credentials=creds).events().delete(calendarId='primary', eventId=apts[0]['google_event_id']).execute()
+                try: build('calendar', 'v3', credentials=creds).events().delete(calendarId='primary', eventId=apt['google_event_id']).execute()
                 except: pass
-        app.supabase.delete('appointments', aid); return {'success': True}
+        app.supabase.delete('appointments', aid)
+        return {'success': True}
 
     @app.route('/calendar/api/sync', methods=['POST'])
     @login_required
@@ -580,7 +642,14 @@ def create_app():
                     created = service.events().insert(calendarId='primary', body=event, sendUpdates='all').execute()
                     app.supabase.update('appointments', apt['id'], {'google_event_id': created.get('id')})
                     synced += 1
+                except google.auth.exceptions.RefreshError:
+                    print("❌ Token Google revocado durante sync - re-autoriza en /auth/google")
+                    return {'success': False, 'synced': synced, 'skipped': skipped, 'errors': errors,
+                            'error': 'Google se desconectó. Reconecta en /auth/google y vuelve a sincronizar.'}
                 except Exception as e:
+                    if _is_invalid_grant(e):
+                        return {'success': False, 'synced': synced, 'skipped': skipped, 'errors': errors,
+                                'error': 'Google se desconectó. Reconecta en /auth/google y vuelve a sincronizar.'}
                     errors += 1
                     print(f"Error sync {apt['id']}: {e}")
         return {'success': True, 'synced': synced, 'skipped': skipped, 'errors': errors}
