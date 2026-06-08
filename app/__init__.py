@@ -1,6 +1,7 @@
 from flask import Flask, render_template, request, redirect, url_for, flash, session
 from flask_login import LoginManager, login_user, logout_user, login_required, current_user, UserMixin
 from werkzeug.security import generate_password_hash, check_password_hash
+from werkzeug.middleware.proxy_fix import ProxyFix
 from config.config import Config
 from dotenv import load_dotenv
 from google_auth_oauthlib.flow import Flow
@@ -156,6 +157,8 @@ def create_app():
     app = Flask(__name__, template_folder='../templates', static_folder='../static')
     app.config.from_object(Config)
     app.config['SECRET_KEY'] = app.config['SECRET_KEY'] or 'calendarios-map-secret-key-2024'
+    # Detrás del proxy de Render: respeta X-Forwarded-Proto/Host para generar URLs https correctas (OAuth)
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
     try:
         app.supabase = SupabaseAPI(app.config['SUPABASE_URL'], app.config['SUPABASE_KEY'])
         print("✅ Supabase OK")
