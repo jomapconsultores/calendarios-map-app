@@ -8,7 +8,7 @@ from google_auth_oauthlib.flow import Flow
 from google.oauth2.credentials import Credentials
 import google.auth.exceptions
 from googleapiclient.discovery import build
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import os, requests, traceback, pytz
 
 GOOGLE_SCOPES = ['https://www.googleapis.com/auth/calendar']
@@ -65,8 +65,12 @@ def get_google_creds(app):
         if t.get('token_expiry'):
             try:
                 expiry = datetime.fromisoformat(t['token_expiry'].replace('Z', '+00:00'))
+                # google-auth compara la expiración con utcnow() naive; si viene con
+                # zona horaria hay que convertirla a UTC naive o creds.expired revienta.
+                if expiry.tzinfo is not None:
+                    expiry = expiry.astimezone(timezone.utc).replace(tzinfo=None)
             except Exception:
-                pass
+                expiry = None
         creds = Credentials(
             token=t.get('token'),
             refresh_token=t.get('refresh_token'),
@@ -84,7 +88,7 @@ def get_google_creds(app):
         needs_refresh = (expiry is None) or creds.expired
         if not needs_refresh and expiry is not None:
             try:
-                if expiry <= datetime.now(expiry.tzinfo) + timedelta(minutes=5):
+                if expiry <= datetime.utcnow() + timedelta(minutes=5):
                     needs_refresh = True
             except Exception:
                 needs_refresh = True
