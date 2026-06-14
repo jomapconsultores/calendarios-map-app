@@ -4,7 +4,8 @@ services:
     env: python
     region: oregon
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn run:app
+    startCommand: gunicorn run:app --workers 2 --threads 2 --timeout 120 --keep-alive 5 --log-level warning
+    healthCheckPath: /health
     envVars:
       - key: FLASK_ENV
         value: production

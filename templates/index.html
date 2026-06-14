@@ -1,47 +1,563 @@
 <!DOCTYPE html>
 <html lang="es">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>calendarios-map</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CalendarioMAP – Gestión profesional de calendarios</title>
+  <meta name="description" content="Sistema de agendamiento profesional con múltiples calendarios, eventos recurrentes, sincronización Google Calendar y control de accesos por usuario.">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🗓️</text></svg>">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --ink: #0f172a;
+      --ink2: #1e293b;
+      --gray: #64748b;
+      --lgray: #94a3b8;
+      --border: #e2e8f0;
+      --bg: #f8fafc;
+      --white: #ffffff;
+      --primary: #4f46e5;
+      --primary-d: #3730a3;
+      --accent: #7c3aed;
+      --success: #10b981;
+      --warning: #f59e0b;
+      --radius: 16px;
+      --radius-sm: 10px;
+      --shadow: 0 1px 3px rgba(0,0,0,.08), 0 1px 2px rgba(0,0,0,.06);
+      --shadow-lg: 0 20px 60px rgba(0,0,0,.12), 0 8px 20px rgba(0,0,0,.08);
+    }
+    body { font-family: 'Inter', sans-serif; color: var(--ink); background: var(--white); line-height: 1.6; overflow-x: hidden; }
+
+    /* ====== NAV ====== */
+    .lp-nav {
+      position: sticky; top: 0; z-index: 100;
+      background: rgba(255,255,255,.92);
+      backdrop-filter: blur(20px);
+      border-bottom: 1px solid rgba(226,232,240,.8);
+      padding: 0;
+    }
+    .lp-nav-inner { max-width: 1200px; margin: 0 auto; padding: 14px 24px; display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+    .lp-brand { display: flex; align-items: center; gap: 10px; text-decoration: none; }
+    .lp-logo-box { width: 38px; height: 38px; background: linear-gradient(135deg, var(--primary), var(--accent)); border-radius: 10px; display: grid; place-items: center; font-size: 1.2rem; box-shadow: 0 4px 12px rgba(79,70,229,.35); }
+    .lp-brand-name { font-weight: 800; font-size: 1.15rem; color: var(--ink); letter-spacing: -.4px; }
+    .lp-brand-name span { color: var(--primary); }
+    .lp-nav-links { display: flex; align-items: center; gap: 8px; }
+    .lp-btn-ghost { padding: 8px 18px; border-radius: 25px; font-weight: 600; font-size: .85rem; color: var(--gray); text-decoration: none; border: 1px solid var(--border); transition: all .15s; }
+    .lp-btn-ghost:hover { color: var(--primary); border-color: var(--primary); background: #eef2ff; }
+    .lp-btn-fill { padding: 9px 22px; border-radius: 25px; font-weight: 700; font-size: .85rem; background: var(--primary); color: #fff; text-decoration: none; transition: all .2s; box-shadow: 0 4px 14px rgba(79,70,229,.35); }
+    .lp-btn-fill:hover { background: var(--primary-d); color: #fff; transform: translateY(-1px); box-shadow: 0 6px 20px rgba(79,70,229,.45); }
+
+    /* ====== HERO ====== */
+    .lp-hero {
+      min-height: 90vh;
+      background: linear-gradient(135deg, #0f0c29 0%, #1a1654 40%, #302b63 70%, #24243e 100%);
+      position: relative; overflow: hidden;
+      display: flex; align-items: center;
+    }
+    .lp-hero::before {
+      content: '';
+      position: absolute; inset: 0;
+      background: radial-gradient(ellipse 80% 60% at 70% 50%, rgba(124,58,237,.25) 0%, transparent 60%),
+                  radial-gradient(ellipse 60% 80% at 20% 80%, rgba(79,70,229,.2) 0%, transparent 60%);
+      pointer-events: none;
+    }
+    /* Animated dots grid */
+    .lp-hero::after {
+      content: '';
+      position: absolute; inset: 0;
+      background-image: radial-gradient(rgba(255,255,255,.07) 1px, transparent 1px);
+      background-size: 32px 32px;
+      pointer-events: none;
+    }
+    .lp-hero-inner { max-width: 1200px; margin: 0 auto; padding: 80px 24px; position: relative; z-index: 1; width: 100%; display: grid; grid-template-columns: 1fr 1fr; gap: 60px; align-items: center; }
+    @media (max-width: 900px) { .lp-hero-inner { grid-template-columns: 1fr; text-align: center; } .lp-hero-right { display: none; } }
+
+    .lp-hero-badge {
+      display: inline-flex; align-items: center; gap: 8px;
+      background: rgba(255,255,255,.1); border: 1px solid rgba(255,255,255,.2);
+      color: rgba(255,255,255,.9); font-size: .78rem; font-weight: 600;
+      padding: 6px 14px; border-radius: 999px; margin-bottom: 24px;
+      backdrop-filter: blur(10px);
+    }
+    .lp-badge-dot { width: 7px; height: 7px; background: var(--success); border-radius: 50%; animation: pulse 2s infinite; }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .4; } }
+
+    .lp-h1 {
+      font-size: clamp(2.2rem, 5vw, 3.6rem); font-weight: 900;
+      color: #fff; line-height: 1.12; letter-spacing: -1.5px;
+      margin-bottom: 20px;
+    }
+    .lp-h1 .hl {
+      background: linear-gradient(135deg, #a78bfa, #60a5fa);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    .lp-hero-sub { color: rgba(255,255,255,.65); font-size: 1.05rem; line-height: 1.7; max-width: 500px; margin-bottom: 36px; }
+    .lp-hero-cta { display: flex; flex-wrap: wrap; gap: 12px; }
+    .lp-cta-primary {
+      padding: 14px 28px; border-radius: 30px; font-weight: 700; font-size: .95rem;
+      background: linear-gradient(135deg, var(--primary), var(--accent));
+      color: #fff; text-decoration: none;
+      box-shadow: 0 8px 30px rgba(79,70,229,.5);
+      transition: all .2s;
+    }
+    .lp-cta-primary:hover { transform: translateY(-2px); box-shadow: 0 12px 40px rgba(79,70,229,.6); color: #fff; }
+    .lp-cta-ghost { padding: 13px 28px; border-radius: 30px; font-weight: 600; font-size: .95rem; border: 1px solid rgba(255,255,255,.3); color: rgba(255,255,255,.85); text-decoration: none; transition: all .2s; }
+    .lp-cta-ghost:hover { background: rgba(255,255,255,.1); color: #fff; }
+
+    .lp-trust { display: flex; flex-wrap: wrap; gap: 20px; margin-top: 28px; }
+    .lp-trust-item { display: flex; align-items: center; gap: 7px; color: rgba(255,255,255,.55); font-size: .82rem; }
+    .lp-trust-item::before { content: '✓'; color: var(--success); font-weight: 700; }
+
+    /* ====== MOCKUP ====== */
+    .lp-hero-right { display: flex; justify-content: flex-end; position: relative; }
+    .lp-mockup-wrap { position: relative; }
+    .lp-mock {
+      background: rgba(255,255,255,.06);
+      backdrop-filter: blur(20px);
+      border: 1px solid rgba(255,255,255,.12);
+      border-radius: 20px;
+      overflow: hidden;
+      width: 340px;
+      box-shadow: 0 30px 80px rgba(0,0,0,.4);
+      animation: float 4s ease-in-out infinite;
+    }
+    @keyframes float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-10px); } }
+    .lp-mock-header { background: rgba(255,255,255,.08); padding: 14px 16px; display: flex; align-items: center; gap: 10px; border-bottom: 1px solid rgba(255,255,255,.08); }
+    .lp-mock-dots { display: flex; gap: 6px; }
+    .lp-mock-dots span { width: 10px; height: 10px; border-radius: 50%; }
+    .lp-mock-dots span:nth-child(1) { background: #ef4444; }
+    .lp-mock-dots span:nth-child(2) { background: #f59e0b; }
+    .lp-mock-dots span:nth-child(3) { background: #10b981; }
+    .lp-mock-title { color: rgba(255,255,255,.8); font-size: .8rem; font-weight: 600; }
+    .lp-mock-body { padding: 16px; }
+    .lp-mock-cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 3px; margin-bottom: 14px; }
+    .lp-mock-day { text-align: center; font-size: .65rem; padding: 5px 2px; border-radius: 6px; color: rgba(255,255,255,.5); }
+    .lp-mock-day.head { font-weight: 700; color: rgba(255,255,255,.35); font-size: .6rem; }
+    .lp-mock-day.today { background: var(--primary); color: #fff; font-weight: 700; }
+    .lp-mock-day.ev { background: rgba(79,70,229,.3); color: rgba(255,255,255,.85); }
+    .lp-mock-day.ev2 { background: rgba(124,58,237,.35); color: rgba(255,255,255,.85); }
+    .lp-mock-events { display: flex; flex-direction: column; gap: 7px; }
+    .lp-mock-ev { border-radius: 8px; padding: 8px 10px; font-size: .73rem; font-weight: 500; }
+    .lp-mock-ev.blue { background: rgba(59,130,246,.25); color: #93c5fd; border-left: 3px solid #3b82f6; }
+    .lp-mock-ev.green { background: rgba(16,185,129,.2); color: #6ee7b7; border-left: 3px solid #10b981; }
+    .lp-mock-ev.yellow { background: rgba(245,158,11,.2); color: #fcd34d; border-left: 3px solid #f59e0b; }
+
+    .lp-float1, .lp-float2 {
+      position: absolute;
+      background: rgba(255,255,255,.08);
+      backdrop-filter: blur(16px);
+      border: 1px solid rgba(255,255,255,.15);
+      border-radius: 12px;
+      padding: 10px 14px;
+      display: flex; align-items: center; gap: 10px;
+      font-size: .78rem; color: rgba(255,255,255,.9);
+      box-shadow: 0 8px 30px rgba(0,0,0,.25);
+      white-space: nowrap;
+    }
+    .lp-float1 { bottom: -16px; left: -60px; animation: float 4s ease-in-out infinite 1s; }
+    .lp-float2 { top: 10px; right: -50px; animation: float 4s ease-in-out infinite .5s; }
+    .lp-float-icon { width: 32px; height: 32px; background: rgba(16,185,129,.25); border-radius: 8px; display: grid; place-items: center; font-size: 1.1rem; }
+
+    /* ====== STATS ====== */
+    .lp-stats { background: var(--ink2); padding: 40px 0; }
+    .lp-stats-inner { max-width: 1200px; margin: 0 auto; padding: 0 24px; display: grid; grid-template-columns: repeat(4, 1fr); gap: 0; }
+    @media (max-width: 768px) { .lp-stats-inner { grid-template-columns: repeat(2, 1fr); } }
+    .lp-stat { text-align: center; padding: 24px 16px; border-right: 1px solid rgba(255,255,255,.08); }
+    .lp-stat:last-child { border-right: none; }
+    .lp-stat-num { font-size: 2.2rem; font-weight: 900; color: #fff; letter-spacing: -1px; }
+    .lp-stat-num .hl { color: #a78bfa; }
+    .lp-stat-label { color: var(--lgray); font-size: .82rem; margin-top: 4px; }
+
+    /* ====== FEATURES ====== */
+    .lp-features { padding: 96px 0; background: var(--bg); }
+    .lp-section-inner { max-width: 1200px; margin: 0 auto; padding: 0 24px; }
+    .lp-section-badge {
+      display: inline-block; background: #eef2ff; color: var(--primary);
+      font-size: .73rem; font-weight: 700; text-transform: uppercase; letter-spacing: 1.5px;
+      padding: 5px 14px; border-radius: 999px; margin-bottom: 14px;
+    }
+    .lp-h2 { font-size: clamp(1.8rem, 4vw, 2.6rem); font-weight: 800; color: var(--ink); letter-spacing: -.6px; line-height: 1.2; margin-bottom: 12px; }
+    .lp-section-sub { color: var(--gray); font-size: 1rem; max-width: 540px; margin: 0 auto 48px; }
+    .lp-feat-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; }
+    @media (max-width: 768px) { .lp-feat-grid { grid-template-columns: 1fr; } }
+    @media (min-width: 600px) and (max-width: 900px) { .lp-feat-grid { grid-template-columns: repeat(2, 1fr); } }
+
+    .lp-feat {
+      background: var(--white); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 28px;
+      transition: all .2s; position: relative; overflow: hidden;
+    }
+    .lp-feat:hover { transform: translateY(-4px); box-shadow: var(--shadow-lg); border-color: transparent; }
+    .lp-feat.featured { border-color: var(--primary); background: linear-gradient(135deg, #eef2ff, #f5f3ff); }
+    .lp-feat.featured::before { content: 'Nuevo'; position: absolute; top: 16px; right: 16px; background: var(--primary); color: #fff; font-size: .65rem; font-weight: 700; padding: 3px 10px; border-radius: 999px; text-transform: uppercase; letter-spacing: .5px; }
+    .lp-feat-icon { width: 52px; height: 52px; border-radius: 14px; display: grid; place-items: center; font-size: 1.5rem; margin-bottom: 18px; }
+    .lp-feat-title { font-size: 1rem; font-weight: 700; color: var(--ink); margin-bottom: 8px; }
+    .lp-feat-body { color: var(--gray); font-size: .88rem; line-height: 1.65; }
+
+    /* ====== HOW ====== */
+    .lp-how { padding: 96px 0; background: var(--white); }
+    .lp-steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 40px; margin-top: 56px; position: relative; }
+    @media (max-width: 768px) { .lp-steps { grid-template-columns: 1fr; gap: 32px; } }
+    .lp-steps::before {
+      content: '';
+      position: absolute;
+      top: 28px; left: calc(16.6% + 24px); right: calc(16.6% + 24px);
+      height: 2px;
+      background: linear-gradient(90deg, var(--primary), var(--accent));
+      z-index: 0;
+    }
+    @media (max-width: 768px) { .lp-steps::before { display: none; } }
+    .lp-step { text-align: center; position: relative; z-index: 1; }
+    .lp-step-num {
+      width: 56px; height: 56px;
+      background: linear-gradient(135deg, var(--primary), var(--accent));
+      color: #fff; font-weight: 900; font-size: 1.1rem;
+      border-radius: 50%; display: grid; place-items: center;
+      margin: 0 auto 20px;
+      box-shadow: 0 8px 24px rgba(79,70,229,.4);
+    }
+    .lp-step-title { font-size: 1rem; font-weight: 700; color: var(--ink); margin-bottom: 8px; }
+    .lp-step-body { color: var(--gray); font-size: .88rem; line-height: 1.65; }
+
+    /* ====== SECURITY ====== */
+    .lp-security { padding: 80px 0; background: #f0f4ff; }
+    .lp-sec-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 48px; align-items: center; }
+    @media (max-width: 768px) { .lp-sec-grid { grid-template-columns: 1fr; } }
+    .lp-sec-list { list-style: none; padding: 0; margin-top: 28px; display: flex; flex-direction: column; gap: 14px; }
+    .lp-sec-list li { display: flex; gap: 14px; align-items: flex-start; }
+    .lp-sec-icon { width: 36px; height: 36px; border-radius: 10px; background: var(--primary); color: #fff; display: grid; place-items: center; font-size: 1rem; flex-shrink: 0; }
+    .lp-sec-text strong { display: block; font-size: .9rem; font-weight: 700; color: var(--ink); }
+    .lp-sec-text span { font-size: .82rem; color: var(--gray); }
+    .lp-sec-visual {
+      background: linear-gradient(135deg, #1e1b4b, #312e81);
+      border-radius: 20px; padding: 32px;
+      box-shadow: 0 20px 60px rgba(30,27,75,.4);
+    }
+    .lp-sec-visual-title { color: rgba(255,255,255,.5); font-size: .7rem; font-weight: 700; text-transform: uppercase; letter-spacing: 1.5px; margin-bottom: 16px; }
+    .lp-permission-row {
+      display: flex; align-items: center; justify-content: space-between;
+      background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.08);
+      border-radius: 10px; padding: 10px 14px; margin-bottom: 8px;
+    }
+    .lp-perm-user { display: flex; align-items: center; gap: 10px; }
+    .lp-perm-avatar { width: 30px; height: 30px; border-radius: 50%; background: rgba(79,70,229,.4); color: #a5b4fc; font-size: .7rem; font-weight: 700; display: grid; place-items: center; }
+    .lp-perm-name { color: rgba(255,255,255,.75); font-size: .8rem; font-weight: 500; }
+    .lp-perm-badge { font-size: .68rem; font-weight: 700; padding: 3px 10px; border-radius: 999px; }
+    .approved { background: rgba(16,185,129,.2); color: #6ee7b7; }
+    .pending-b { background: rgba(245,158,11,.2); color: #fcd34d; }
+    .denied { background: rgba(239,68,68,.2); color: #fca5a5; }
+
+    /* ====== CTA ====== */
+    .lp-cta-section {
+      padding: 96px 0;
+      background: linear-gradient(135deg, #1e1b4b 0%, #312e81 50%, #4c1d95 100%);
+      text-align: center; position: relative; overflow: hidden;
+    }
+    .lp-cta-section::before {
+      content: '';
+      position: absolute; inset: 0;
+      background: radial-gradient(ellipse 70% 100% at 50% 120%, rgba(124,58,237,.35), transparent);
+    }
+    .lp-cta-section .lp-section-inner { position: relative; z-index: 1; }
+    .lp-cta-title { font-size: clamp(1.8rem, 4vw, 2.8rem); font-weight: 900; color: #fff; letter-spacing: -.8px; margin-bottom: 14px; }
+    .lp-cta-sub { color: rgba(255,255,255,.6); font-size: 1rem; margin-bottom: 36px; }
+    .lp-cta-btns { display: flex; justify-content: center; flex-wrap: wrap; gap: 14px; }
+    .lp-cta-btn-primary {
+      padding: 15px 34px; border-radius: 30px; font-weight: 700; font-size: 1rem;
+      background: #fff; color: var(--primary); text-decoration: none;
+      box-shadow: 0 8px 30px rgba(0,0,0,.3);
+      transition: all .2s;
+    }
+    .lp-cta-btn-primary:hover { transform: translateY(-2px); box-shadow: 0 12px 40px rgba(0,0,0,.4); color: var(--primary-d); }
+    .lp-cta-btn-ghost { padding: 14px 34px; border-radius: 30px; font-weight: 600; font-size: 1rem; border: 1px solid rgba(255,255,255,.3); color: rgba(255,255,255,.85); text-decoration: none; transition: all .2s; }
+    .lp-cta-btn-ghost:hover { background: rgba(255,255,255,.1); color: #fff; }
+
+    /* ====== FOOTER ====== */
+    .lp-footer { background: var(--ink); padding: 40px 0; }
+    .lp-footer-inner { max-width: 1200px; margin: 0 auto; padding: 0 24px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 20px; }
+    .lp-footer .lp-brand-name { color: rgba(255,255,255,.7); }
+    .lp-footer-copy { color: rgba(255,255,255,.3); font-size: .8rem; }
+    .lp-footer-links { display: flex; gap: 20px; }
+    .lp-footer-links a { color: rgba(255,255,255,.45); font-size: .82rem; text-decoration: none; transition: color .15s; }
+    .lp-footer-links a:hover { color: rgba(255,255,255,.8); }
+  </style>
 </head>
 <body>
-    <nav class="navbar navbar-dark">
-        <div class="container">
-            <a class="navbar-brand" href="/">🗓️ calendarios-map</a>
-            <div class="d-flex gap-2">
-                <a href="/login" class="btn btn-light btn-sm rounded-pill">Iniciar sesión</a>
-                <a href="/register" class="btn btn-outline-light btn-sm rounded-pill">Registrarse</a>
-            </div>
-        </div>
-    </nav>
 
-    <div class="container py-5 text-center">
-        <h1 class="display-5 fw-bold mt-4">Sistema de agendamiento</h1>
-        <p class="lead text-muted">Gestiona múltiples calendarios de Google en un solo lugar</p>
-        <a href="/login" class="btn btn-primary rounded-pill px-4 mt-2">Comenzar →</a>
-
-        <div class="row g-3 mt-5 justify-content-center">
-            <div class="col-md-4"><div class="card h-100"><div class="card-body text-center p-4">
-                <div class="m-icon mx-auto" style="width:52px;height:52px;border-radius:14px;display:grid;place-items:center;font-size:1.5rem;background:#eef2ff">📅</div>
-                <h6 class="fw-bold mt-2">Múltiples calendarios</h6>
-                <p class="text-muted small mb-0">Administra todas tus agendas desde un panel unificado.</p>
-            </div></div></div>
-            <div class="col-md-4"><div class="card h-100"><div class="card-body text-center p-4">
-                <div class="m-icon mx-auto" style="width:52px;height:52px;border-radius:14px;display:grid;place-items:center;font-size:1.5rem;background:#fef3c7">👥</div>
-                <h6 class="fw-bold mt-2">Gestión de accesos</h6>
-                <p class="text-muted small mb-0">Aprueba solicitudes y controla quién agenda en cada calendario.</p>
-            </div></div></div>
-            <div class="col-md-4"><div class="card h-100"><div class="card-body text-center p-4">
-                <div class="m-icon mx-auto" style="width:52px;height:52px;border-radius:14px;display:grid;place-items:center;font-size:1.5rem;background:#dcfce7">🔄</div>
-                <h6 class="fw-bold mt-2">Sincronización Google</h6>
-                <p class="text-muted small mb-0">Las citas confirmadas se crean automáticamente en Google Calendar.</p>
-            </div></div></div>
-        </div>
+<!-- ======== NAVBAR ======== -->
+<nav class="lp-nav">
+  <div class="lp-nav-inner">
+    <a href="/" class="lp-brand">
+      <div class="lp-logo-box">🗓️</div>
+      <span class="lp-brand-name">calendario<span>MAP</span></span>
+    </a>
+    <div class="lp-nav-links">
+      <a href="/login" class="lp-btn-ghost">Iniciar sesión</a>
+      <a href="/register" class="lp-btn-fill">Crear cuenta →</a>
     </div>
+  </div>
+</nav>
 
-    <div class="f-credit">Creado por <strong>Marco Antonio Posligua San Martín</strong> · calendarios-map © 2026</div>
+<!-- ======== HERO ======== -->
+<section class="lp-hero">
+  <div class="lp-hero-inner">
+    <div class="lp-hero-left">
+      <div class="lp-hero-badge">
+        <span class="lp-badge-dot"></span>
+        Sistema profesional de agendamiento
+      </div>
+      <h1 class="lp-h1">Organiza todos tus <span class="hl">calendarios</span> desde un solo lugar</h1>
+      <p class="lp-hero-sub">Agenda reuniones, programa capacitaciones recurrentes y sincroniza automáticamente con Google Calendar. Control de accesos por usuario, rápido y seguro.</p>
+      <div class="lp-hero-cta">
+        <a href="/register" class="lp-cta-primary">Comenzar gratis →</a>
+        <a href="/login" class="lp-cta-ghost">Ya tengo cuenta</a>
+      </div>
+      <div class="lp-trust">
+        <span class="lp-trust-item">Múltiples calendarios</span>
+        <span class="lp-trust-item">Eventos recurrentes</span>
+        <span class="lp-trust-item">Seguro y privado</span>
+      </div>
+    </div>
+    <div class="lp-hero-right">
+      <div class="lp-mockup-wrap">
+        <div class="lp-mock">
+          <div class="lp-mock-header">
+            <div class="lp-mock-dots"><span></span><span></span><span></span></div>
+            <div class="lp-mock-title">📅 Agenda — Junio 2026</div>
+          </div>
+          <div class="lp-mock-body">
+            <div class="lp-mock-cal-grid">
+              <div class="lp-mock-day head">L</div><div class="lp-mock-day head">M</div>
+              <div class="lp-mock-day head">X</div><div class="lp-mock-day head">J</div>
+              <div class="lp-mock-day head">V</div><div class="lp-mock-day head">S</div>
+              <div class="lp-mock-day head">D</div>
+              <div class="lp-mock-day"></div><div class="lp-mock-day"></div>
+              <div class="lp-mock-day"></div><div class="lp-mock-day">1</div>
+              <div class="lp-mock-day">2</div><div class="lp-mock-day">3</div><div class="lp-mock-day">4</div>
+              <div class="lp-mock-day">5</div><div class="lp-mock-day ev">6</div>
+              <div class="lp-mock-day ev">7</div><div class="lp-mock-day ev">8</div>
+              <div class="lp-mock-day">9</div><div class="lp-mock-day">10</div><div class="lp-mock-day">11</div>
+              <div class="lp-mock-day">12</div><div class="lp-mock-day">13</div>
+              <div class="lp-mock-day today">14</div><div class="lp-mock-day ev2">15</div>
+              <div class="lp-mock-day ev2">16</div><div class="lp-mock-day">17</div><div class="lp-mock-day">18</div>
+              <div class="lp-mock-day">19</div><div class="lp-mock-day">20</div>
+              <div class="lp-mock-day">21</div><div class="lp-mock-day">22</div>
+              <div class="lp-mock-day">23</div><div class="lp-mock-day">24</div><div class="lp-mock-day">25</div>
+            </div>
+            <div class="lp-mock-events">
+              <div class="lp-mock-ev blue">🔁 Capacitación — 09:00–12:00</div>
+              <div class="lp-mock-ev green">✅ Consulta aprobada — 14:30</div>
+              <div class="lp-mock-ev yellow">⏳ Reunión pendiente — 16:00</div>
+            </div>
+          </div>
+        </div>
+        <div class="lp-float1">
+          <div class="lp-float-icon">🔄</div>
+          <div>
+            <strong style="color:#fff;font-size:.78rem;display:block">Sincronizado</strong>
+            <span style="color:rgba(255,255,255,.5);font-size:.7rem">Google Calendar</span>
+          </div>
+        </div>
+        <div class="lp-float2">
+          <span style="font-size:1rem">🎓</span>
+          <div>
+            <strong style="color:#fff;font-size:.75rem;display:block">Capacitación — 5 días</strong>
+            <span style="color:#6ee7b7;font-size:.7rem;font-weight:700">✓ Creada como serie</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ======== STATS ======== -->
+<section class="lp-stats">
+  <div class="lp-stats-inner">
+    <div class="lp-stat">
+      <div class="lp-stat-num"><span class="hl">∞</span></div>
+      <div class="lp-stat-label">Calendarios por cuenta</div>
+    </div>
+    <div class="lp-stat">
+      <div class="lp-stat-num">100<span class="hl">%</span></div>
+      <div class="lp-stat-label">Sincronización Google</div>
+    </div>
+    <div class="lp-stat">
+      <div class="lp-stat-num"><span class="hl">60</span>+</div>
+      <div class="lp-stat-label">Eventos por serie recurrente</div>
+    </div>
+    <div class="lp-stat">
+      <div class="lp-stat-num">24<span class="hl">/7</span></div>
+      <div class="lp-stat-label">Disponibilidad</div>
+    </div>
+  </div>
+</section>
+
+<!-- ======== FEATURES ======== -->
+<section class="lp-features">
+  <div class="lp-section-inner">
+    <div class="text-center">
+      <div class="lp-section-badge">Características</div>
+      <h2 class="lp-h2">Todo lo que necesitas para gestionar tu agenda</h2>
+      <p class="lp-section-sub">Diseñado para equipos que coordinan múltiples calendarios de forma eficiente, segura y profesional.</p>
+    </div>
+    <div class="lp-feat-grid">
+      <div class="lp-feat">
+        <div class="lp-feat-icon" style="background:#eef2ff">📅</div>
+        <div class="lp-feat-title">Múltiples calendarios</div>
+        <p class="lp-feat-body">Administra todas las agendas de tu organización desde un panel unificado con colores, accesos y permisos individuales por usuario.</p>
+      </div>
+      <div class="lp-feat featured">
+        <div class="lp-feat-icon" style="background:rgba(79,70,229,.1)">🔁</div>
+        <div class="lp-feat-title">Eventos recurrentes</div>
+        <p class="lp-feat-body">Programa capacitaciones, talleres o reuniones que se repiten varios días a la misma hora. Selecciona días de la semana y fecha fin. Hasta 60 eventos por serie.</p>
+      </div>
+      <div class="lp-feat">
+        <div class="lp-feat-icon" style="background:#fef3c7">🔗</div>
+        <div class="lp-feat-title">Sincronización Google</div>
+        <p class="lp-feat-body">Las citas aprobadas se sincronizan automáticamente a Google Calendar e invitan a todos los participantes por email.</p>
+      </div>
+      <div class="lp-feat">
+        <div class="lp-feat-icon" style="background:#fce7f3">🔐</div>
+        <div class="lp-feat-title">Control de accesos</div>
+        <p class="lp-feat-body">Los usuarios solo ven los calendarios y eventos para los cuales tienen permiso aprobado. Privacidad garantizada por diseño.</p>
+      </div>
+      <div class="lp-feat">
+        <div class="lp-feat-icon" style="background:#ecfdf5">📱</div>
+        <div class="lp-feat-title">Diseño responsivo</div>
+        <p class="lp-feat-body">Funciona perfectamente en computadoras, tablets y celulares. Interfaz optimizada para pantallas táctiles.</p>
+      </div>
+      <div class="lp-feat">
+        <div class="lp-feat-icon" style="background:#fff7ed">⚡</div>
+        <div class="lp-feat-title">Rápido y seguro</div>
+        <p class="lp-feat-body">Cabeceras de seguridad HTTP, validación de datos, cifrado de contraseñas y sesiones seguras en todos los accesos.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ======== HOW IT WORKS ======== -->
+<section class="lp-how">
+  <div class="lp-section-inner">
+    <div class="text-center">
+      <div class="lp-section-badge">Proceso</div>
+      <h2 class="lp-h2">¿Cómo funciona?</h2>
+      <p class="lp-section-sub">En tres pasos tienes tu agenda funcionando.</p>
+    </div>
+    <div class="lp-steps">
+      <div class="lp-step">
+        <div class="lp-step-num">1</div>
+        <div class="lp-step-title">Crea tu cuenta</div>
+        <p class="lp-step-body">Regístrate con tu email y solicita acceso a los calendarios de tu organización. El administrador revisa y aprueba tu solicitud.</p>
+      </div>
+      <div class="lp-step">
+        <div class="lp-step-num">2</div>
+        <div class="lp-step-title">Agenda tus citas</div>
+        <p class="lp-step-body">Crea eventos individuales o series recurrentes con todos los detalles: lugar, participantes, tema, duración y enlace de reunión virtual.</p>
+      </div>
+      <div class="lp-step">
+        <div class="lp-step-num">3</div>
+        <div class="lp-step-title">Sincronización automática</div>
+        <p class="lp-step-body">Al aprobar una cita, se crea automáticamente en Google Calendar y se notifica a todos los invitados con recordatorios.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ======== SECURITY ======== -->
+<section class="lp-security">
+  <div class="lp-section-inner">
+    <div class="lp-sec-grid">
+      <div>
+        <div class="lp-section-badge">Privacidad y seguridad</div>
+        <h2 class="lp-h2">Solo ves lo que tienes permitido ver</h2>
+        <p style="color:var(--gray);font-size:.95rem;margin-top:12px">CalendarioMAP garantiza que cada usuario únicamente accede a los calendarios y eventos para los cuales tiene permiso explícito del administrador.</p>
+        <ul class="lp-sec-list">
+          <li>
+            <div class="lp-sec-icon">🔐</div>
+            <div class="lp-sec-text">
+              <strong>Permisos por calendario</strong>
+              <span>Acceso granular: el admin aprueba cada calendario individualmente por usuario.</span>
+            </div>
+          </li>
+          <li>
+            <div class="lp-sec-icon">🛡️</div>
+            <div class="lp-sec-text">
+              <strong>Sin notificaciones no autorizadas</strong>
+              <span>Los usuarios externos nunca reciben notificaciones de eventos que no les corresponden.</span>
+            </div>
+          </li>
+          <li>
+            <div class="lp-sec-icon">🔒</div>
+            <div class="lp-sec-text">
+              <strong>Cabeceras de seguridad HTTP</strong>
+              <span>XSS, clickjacking y sniffing bloqueados por defecto en todas las respuestas.</span>
+            </div>
+          </li>
+        </ul>
+      </div>
+      <div>
+        <div class="lp-sec-visual">
+          <div class="lp-sec-visual-title">Control de accesos — Panel admin</div>
+          <div class="lp-permission-row">
+            <div class="lp-perm-user">
+              <div class="lp-perm-avatar">MA</div>
+              <span class="lp-perm-name">María Antonieta</span>
+            </div>
+            <span class="lp-perm-badge approved">✓ Aprobado</span>
+          </div>
+          <div class="lp-permission-row">
+            <div class="lp-perm-user">
+              <div class="lp-perm-avatar">JP</div>
+              <span class="lp-perm-name">Juan Pérez</span>
+            </div>
+            <span class="lp-perm-badge pending-b">⏳ Pendiente</span>
+          </div>
+          <div class="lp-permission-row">
+            <div class="lp-perm-user">
+              <div class="lp-perm-avatar">XY</div>
+              <span class="lp-perm-name">Usuario externo</span>
+            </div>
+            <span class="lp-perm-badge denied">✗ Sin acceso</span>
+          </div>
+          <div style="margin-top:18px;padding-top:14px;border-top:1px solid rgba(255,255,255,.08)">
+            <p style="color:rgba(255,255,255,.4);font-size:.72rem;line-height:1.5">Los usuarios con estado "Sin acceso" o "Pendiente" no pueden ver calendarios ni recibir notificaciones del sistema.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ======== CTA ======== -->
+<section class="lp-cta-section">
+  <div class="lp-section-inner">
+    <h2 class="lp-cta-title">¿Listo para organizar tu agenda?</h2>
+    <p class="lp-cta-sub">Crea tu cuenta ahora de forma gratuita. Sin tarjeta de crédito requerida.</p>
+    <div class="lp-cta-btns">
+      <a href="/register" class="lp-cta-btn-primary">Crear cuenta gratis →</a>
+      <a href="/login" class="lp-cta-btn-ghost">Ya tengo cuenta</a>
+    </div>
+  </div>
+</section>
+
+<!-- ======== FOOTER ======== -->
+<footer class="lp-footer">
+  <div class="lp-footer-inner">
+    <div class="lp-brand">
+      <div class="lp-logo-box" style="width:30px;height:30px;font-size:1rem">🗓️</div>
+      <span class="lp-brand-name">calendario<span style="color:#818cf8">MAP</span></span>
+    </div>
+    <div class="lp-footer-links">
+      <a href="/login">Ingresar</a>
+      <a href="/register">Registrarse</a>
+    </div>
+    <p class="lp-footer-copy">© 2026 Marco Antonio Posligua San Martín · Todos los derechos reservados</p>
+  </div>
+</footer>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 </body>
 </html>
