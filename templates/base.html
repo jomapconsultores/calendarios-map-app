@@ -72,6 +72,7 @@
       </div>
       {% endif %}
 
+      {% if is_adm %}
       <div class="nav-section">Integraciones</div>
       {% if google_connected_global %}
       <a class="nav-link" style="cursor:default">
@@ -83,6 +84,7 @@
         <span class="nav-icon">🔗</span> Google Calendar
         <span class="nav-pill" style="background:#fee2e2;color:#991b1b">Conectar</span>
       </a>
+      {% endif %}
       {% endif %}
     </nav>
 
@@ -108,17 +110,19 @@
       </div>
       <div class="topbar-actions">
         {% block topbar_actions %}
-        {% if google_connected_global %}
-        <span class="status-pill on">✅ Google</span>
-        {% else %}
-        <a href="/auth/google" class="status-pill off">🔗 Conectar Google</a>
+        {% if is_adm %}
+          {% if google_connected_global %}
+          <span class="status-pill on">✅ Google</span>
+          {% else %}
+          <a href="/auth/google" class="status-pill off">🔗 Conectar Google</a>
+          {% endif %}
         {% endif %}
         {% endblock %}
       </div>
     </header>
 
     <main class="content">
-      {% if google_needs_reauth %}
+      {% if is_adm and google_needs_reauth %}
       <div class="alert alert-warning d-flex align-items-center justify-content-between">
         <span>⚠️ <strong>Google Calendar desconectado.</strong> El token caducó o fue revocado. Las citas se aprueban igual, pero no se sincronizan hasta reconectar.</span>
         <a href="/auth/google" class="btn btn-sm btn-warning ms-3">🔗 Reconectar ahora</a>

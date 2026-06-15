@@ -793,7 +793,7 @@ def create_app():
             if not ucal:
                 return jsonify([])
             all_p = app.supabase.get_in('appointments', 'calendar_id', ucal,
-                select='id,title,encargado,tema,client_name,start_time,calendar_id,is_recurring')
+                select='id,title,encargado,tema,client_name,start_time,calendar_id,status,is_recurring')
             pending = [a for a in all_p if a.get('status') == 'pending']
         return jsonify([{
             'id': a['id'], 'title': a['title'], 'encargado': a.get('encargado', ''),

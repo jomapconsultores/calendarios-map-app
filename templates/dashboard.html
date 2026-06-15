@@ -44,6 +44,7 @@
       <span class="btn btn-primary btn-sm rounded-pill">Ir al calendario →</span>
     </a>
   </div>
+  {% if current_user.role == 'admin' %}
   <div class="col-md-6 col-xl-4">
     <a href="{{ '/auth/google' if not google_connected else '#' }}" class="module-card" {% if google_connected %}onclick="return false" style="cursor:default"{% endif %}>
       <div class="m-icon" style="background:#dcfce7">🔗</div>
@@ -52,6 +53,7 @@
       {% if not google_connected %}<span class="btn btn-primary btn-sm rounded-pill">Conectar →</span>{% endif %}
     </a>
   </div>
+  {% endif %}
   {% if current_user.role == 'admin' %}
   <div class="col-md-6 col-xl-4">
     <a href="/admin/users" class="module-card">

@@ -8,11 +8,13 @@
 {% endblock %}
 
 {% block topbar_actions %}
+{% if current_user.role == 'admin' %}
 <button class="btn btn-outline-secondary btn-sm rounded-pill" onclick="syncCalendar()" title="Sincronizar con Google">🔄 Sincronizar</button>
 {% if google_connected_global %}
 <span class="status-pill on">✅ Google</span>
 {% else %}
 <a href="/auth/google" class="status-pill off">🔗 Conectar Google</a>
+{% endif %}
 {% endif %}
 {% endblock %}
 
