@@ -703,7 +703,7 @@ def create_app():
     # ============================================================
     APPT_SELECT = ('id,title,encargado,start_time,end_time,status,calendar_id,'
                    'tema,client_name,client_email,notes,lugar,direccion,mapa,'
-                   'ciudad,meeting_link,google_event_id,is_recurring,parent_event_id')
+                   'ciudad,meeting_link,google_event_id')
 
     @app.route('/calendar/api/events')
     @login_required
@@ -786,14 +786,14 @@ def create_app():
             pending = [a for a in
                 app.supabase.get('appointments',
                     {'status': 'pending'},
-                    select='id,title,encargado,tema,client_name,start_time,is_recurring')
+                    select='id,title,encargado,tema,client_name,start_time')
             ]
         else:
             ucal = [c['calendar_id'] for c in get_user_calendars(app, current_user.id)]
             if not ucal:
                 return jsonify([])
             all_p = app.supabase.get_in('appointments', 'calendar_id', ucal,
-                select='id,title,encargado,tema,client_name,start_time,calendar_id,status,is_recurring')
+                select='id,title,encargado,tema,client_name,start_time,calendar_id,status')
             pending = [a for a in all_p if a.get('status') == 'pending']
         return jsonify([{
             'id': a['id'], 'title': a['title'], 'encargado': a.get('encargado', ''),
