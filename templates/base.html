@@ -120,6 +120,7 @@
         {% endblock %}
         <a href="/profile" class="topbar-user" title="Mi perfil">
           <span class="topbar-name">{{ current_user.full_name }}</span>
+          <span class="topbar-role">{{ 'Administrador' if is_adm else 'Staff' }}</span>
         </a>
       </div>
     </header>
