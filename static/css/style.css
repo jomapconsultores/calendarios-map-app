@@ -227,6 +227,22 @@ body {
 .topbar .page-sub { font-size: .73rem; color: var(--gray); margin: 0; }
 .topbar .topbar-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 
+.topbar-user {
+    display: flex; align-items: center; gap: 8px;
+    text-decoration: none; color: var(--dark2);
+    background: var(--light); border: 1px solid var(--border);
+    border-radius: 999px; padding: 4px 12px 4px 4px;
+    transition: var(--transition);
+}
+.topbar-user:hover { background: #e0e7ff; border-color: var(--primary); color: var(--primary); }
+.topbar-avatar {
+    width: 30px; height: 30px; border-radius: 50%;
+    background: linear-gradient(135deg, var(--primary), #7c3aed);
+    color: #fff; font-size: .72rem; font-weight: 800;
+    display: grid; place-items: center; flex-shrink: 0;
+}
+.topbar-name { font-size: .78rem; font-weight: 600; white-space: nowrap; max-width: 160px; overflow: hidden; text-overflow: ellipsis; }
+
 .menu-toggle {
     display: none;
     background: var(--light);
@@ -663,6 +679,8 @@ textarea.form-control { resize: vertical; min-height: 70px; }
 
 @media (max-width: 480px) {
     .topbar-actions .status-pill { display: none; }
+    .topbar-name { display: none; }
+    .topbar-user { padding: 4px; }
     .fc-right { display: none !important; }
     .modal-footer { flex-wrap: wrap; gap: 6px; }
     .modal-footer .btn { flex: 1; min-width: 80px; text-align: center; }

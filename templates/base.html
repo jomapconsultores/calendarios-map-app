@@ -118,6 +118,10 @@
           {% endif %}
         {% endif %}
         {% endblock %}
+        <a href="/profile" class="topbar-user" title="Mi perfil">
+          <span class="topbar-avatar">{{ current_user.full_name[:2]|upper if current_user.full_name else '?' }}</span>
+          <span class="topbar-name">{{ current_user.full_name }}</span>
+        </a>
       </div>
     </header>
 
