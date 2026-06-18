@@ -1,12 +1,17 @@
 {
+  "id": "/",
   "name": "calendarios-map",
   "short_name": "Calendarios",
-  "description": "Agenda y calendario de citas MAP",
+  "description": "Agenda y calendario de citas MAP: eventos recurrentes, varias fechas, sincronizacion con Google Calendar y acceso biometrico.",
   "lang": "es",
+  "dir": "ltr",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
+  "display_override": ["standalone", "minimal-ui"],
   "orientation": "portrait-primary",
+  "categories": ["productivity", "business", "utilities"],
+  "prefer_related_applications": false,
   "background_color": "#4f46e5",
   "theme_color": "#4f46e5",
   "icons": [
