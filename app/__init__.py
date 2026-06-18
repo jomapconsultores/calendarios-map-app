@@ -1205,7 +1205,9 @@ def create_app():
             link      = _sanitize(request.form.get('meeting_link', ''), 500)
             notes     = _sanitize(request.form.get('notes', ''), 1000)
 
-            if not all([title, cal_id, encargado, tema, date_str, time_str]):
+            sessions_present = bool(request.form.get('sessions', '').strip())
+            if not all([title, cal_id, encargado, tema]) or \
+               (not sessions_present and not all([date_str, time_str])):
                 return jsonify({'success': False, 'error': 'Faltan campos obligatorios'})
             if not is_admin() and not user_has_calendar_access(app, current_user.id, cal_id):
                 return jsonify({'success': False, 'error': 'Sin autorizacion para este calendario'})
@@ -1294,6 +1296,59 @@ def create_app():
                     return jsonify({'success': True, 'count': len(created_ids),
                                     'recurring': True, 'capped': capped})
                 return jsonify({'success': False, 'error': 'No se pudieron crear los eventos'})
+
+            # ---- Varias fechas / sesiones manuales (distinta hora y duración) ----
+            if sessions_present:
+                try:
+                    sessions = json.loads(request.form.get('sessions', '[]'))
+                except Exception:
+                    return jsonify({'success': False, 'error': 'Sesiones invalidas'})
+                if not isinstance(sessions, list) or not sessions:
+                    return jsonify({'success': False, 'error': 'Agrega al menos una fecha'})
+                if len(sessions) > 60:
+                    return jsonify({'success': False, 'error': 'Maximo 60 sesiones por serie'})
+
+                parsed = []
+                for s in sessions:
+                    try:
+                        sd = datetime.strptime((s.get('date') or ''), '%Y-%m-%d').date()
+                        st = (s.get('time') or '')
+                        sdur = max(15, min(1440, int(s.get('duration', 60) or 60)))
+                        local_dt = TIMEZONE.localize(datetime.strptime(
+                            f'{sd.isoformat()} {st}:00', '%Y-%m-%d %H:%M:%S'))
+                    except Exception:
+                        return jsonify({'success': False,
+                                        'error': 'Fecha u hora invalida en una sesion'})
+                    parsed.append((local_dt, sdur))
+                parsed.sort(key=lambda x: x[0])
+
+                ses_notes = f'[SERIE {len(parsed)} sesiones] {notes}'.strip()
+                created_ids = []; parent_id = None
+                for local_dt, sdur in parsed:
+                    s_dt = local_dt.astimezone(pytz.UTC)
+                    e_dt = s_dt + timedelta(minutes=sdur)
+                    record = _build_appointment(title, cal_id, encargado, tema,
+                        client_name, client_email, s_dt, e_dt, tipo, link,
+                        lugar, direccion, mapa, ciudad, notificar, ses_notes, current_user.id)
+                    record['is_recurring'] = True
+                    if parent_id:
+                        record['parent_event_id'] = parent_id
+                    r = app.supabase.insert('appointments', record)
+                    if not r:
+                        for col in ('is_recurring', 'parent_event_id'):
+                            record.pop(col, None)
+                        r = app.supabase.insert('appointments', record)
+                    if r:
+                        aid = r[0]['id']; created_ids.append(aid)
+                        if parent_id is None:
+                            parent_id = aid
+                            try:
+                                app.supabase.update('appointments', aid, {'parent_event_id': aid})
+                            except Exception:
+                                pass
+                if created_ids:
+                    return jsonify({'success': True, 'count': len(created_ids), 'recurring': True})
+                return jsonify({'success': False, 'error': 'No se pudieron crear las sesiones'})
 
             # ---- Single event ----
             local_dt = TIMEZONE.localize(

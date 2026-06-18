@@ -193,6 +193,27 @@
           </div>
         </div>
 
+        <!-- VARIAS FECHAS / SESIONES MANUALES -->
+        <div class="recurring-box mb-3" id="sessionsBox">
+          <div class="recurring-toggle" onclick="toggleSessions()">
+            <div class="d-flex align-items-center gap-2">
+              <span class="rec-icon">📅</span>
+              <div>
+                <div class="rec-title">Varias fechas con horas distintas</div>
+                <div class="rec-sub">Ej. sábado 9–11h y domingo 15–18h · cada día con su hora y duración</div>
+              </div>
+            </div>
+            <div class="form-check form-switch mb-0">
+              <input class="form-check-input" type="checkbox" id="fSessions" onclick="event.stopPropagation(); toggleSessions()">
+            </div>
+          </div>
+          <div id="divSessions" class="recurring-content" style="display:none">
+            <div id="sessionList"></div>
+            <button type="button" class="preset-btn mt-2" onclick="addSession()">＋ Agregar fecha</button>
+            <div class="rec-hint">Cada fila es una sesión (fecha + hora + duración). Se crean juntas como una serie y se pueden borrar todas a la vez.</div>
+          </div>
+        </div>
+
         <!-- Tipo: Presencial/Virtual -->
         <div class="row mb-3">
           <div class="col-md-6">
@@ -355,7 +376,60 @@ function toggleRecurring() {
   var chk = document.getElementById('fRecurring');
   var div = document.getElementById('divRecurring');
   div.style.display = chk.checked ? 'block' : 'none';
-  if (chk.checked) updateRecurrencePreview();
+  if (chk.checked) {
+    // Recurrencia y "varias fechas" son excluyentes
+    var sChk = document.getElementById('fSessions');
+    if (sChk && sChk.checked) { sChk.checked = false; document.getElementById('divSessions').style.display = 'none'; }
+    updateRecurrencePreview();
+  }
+}
+
+// ======== VARIAS FECHAS / SESIONES MANUALES ========
+function toggleSessions() {
+  var chk = document.getElementById('fSessions');
+  var div = document.getElementById('divSessions');
+  div.style.display = chk.checked ? 'block' : 'none';
+  if (chk.checked) {
+    var rChk = document.getElementById('fRecurring');
+    if (rChk && rChk.checked) { rChk.checked = false; document.getElementById('divRecurring').style.display = 'none'; }
+    if (!document.querySelectorAll('#sessionList .session-row').length) addSession();
+  }
+}
+
+function addSession() {
+  var baseDate = document.getElementById('fDate').value || '';
+  var baseTime = document.getElementById('fTime').value || '';
+  var row = document.createElement('div');
+  row.className = 'session-row';
+  row.innerHTML =
+    '<input type="date" class="form-control not-upper sess-date" value="' + baseDate + '">' +
+    '<input type="time" class="form-control not-upper sess-time" value="' + baseTime + '">' +
+    '<select class="form-select sess-dur">' +
+      '<option value="30">30 min</option>' +
+      '<option value="60" selected>1 hora</option>' +
+      '<option value="90">1.5 h</option>' +
+      '<option value="120">2 horas</option>' +
+      '<option value="180">3 horas</option>' +
+      '<option value="240">4 horas</option>' +
+    '</select>' +
+    '<button type="button" class="notify-rm" onclick="removeSession(this)" title="Quitar">×</button>';
+  document.getElementById('sessionList').appendChild(row);
+}
+
+function removeSession(btn) {
+  var row = btn.closest('.session-row');
+  if (row) row.remove();
+  if (!document.querySelectorAll('#sessionList .session-row').length) addSession();
+}
+
+function getSessions() {
+  return Array.from(document.querySelectorAll('#sessionList .session-row')).map(function (r) {
+    return {
+      date: r.querySelector('.sess-date').value,
+      time: r.querySelector('.sess-time').value,
+      duration: parseInt(r.querySelector('.sess-dur').value) || 60
+    };
+  });
 }
 
 function getSelectedDays() {
@@ -605,8 +679,9 @@ function editAppt(info) {
     document.getElementById('fTime').value = dt.toTimeString().slice(0, 5);
   } catch (e) { }
 
-  // Hide recurring section when editing
+  // Hide recurring / sessions sections when editing
   document.getElementById('recurringBox').style.display = 'none';
+  document.getElementById('sessionsBox').style.display = 'none';
   document.getElementById('notifyList').innerHTML = '<div class="notify-row"><input class="form-control not-upper notify-email" placeholder="email@ejemplo.com"><button type="button" class="notify-rm" onclick="removeNotify(this)">×</button></div>';
   loadCiudades();
   modal.show();
@@ -641,6 +716,11 @@ function clearForm() {
   document.getElementById('recurrencePreview').style.display = 'none';
   document.querySelectorAll('.day-btn').forEach(b => b.classList.remove('active'));
   document.getElementById('recurringBox').style.display = 'block';
+  // Reset sesiones múltiples
+  document.getElementById('fSessions').checked = false;
+  document.getElementById('divSessions').style.display = 'none';
+  document.getElementById('sessionList').innerHTML = '';
+  document.getElementById('sessionsBox').style.display = 'block';
 }
 
 function toggleType() {
@@ -682,10 +762,21 @@ function saveBooking() {
   let date = document.getElementById('fDate').value;
   let time = document.getElementById('fTime').value;
 
-  if (!title || !calId || !encargado || !tema || !date || !time) {
+  let useSessions = document.getElementById('fSessions').checked && !editId;
+  let sessions = useSessions ? getSessions() : [];
+
+  if (!title || !calId || !encargado || !tema || (!useSessions && (!date || !time))) {
     alert('❌ Completa los campos obligatorios (*)');
     btn.disabled = false; btn.textContent = '✅ GUARDAR';
     return;
+  }
+
+  if (useSessions) {
+    if (!sessions.length || sessions.some(s => !s.date || !s.time)) {
+      alert('❌ Completa fecha y hora en todas las sesiones');
+      btn.disabled = false; btn.textContent = '✅ GUARDAR';
+      return;
+    }
   }
 
   let isRecurring = document.getElementById('fRecurring').checked && !editId;
@@ -735,6 +826,8 @@ function saveBooking() {
     form.append('rec_end_mode', getRecEndMode());
     form.append('rec_end_date', document.getElementById('fRecEndDate').value || '');
     form.append('rec_count', document.getElementById('fRecCount').value || '1');
+  } else if (useSessions) {
+    form.append('sessions', JSON.stringify(sessions));
   }
 
   fetch('/calendar/api/book', { method: 'POST', body: form })
@@ -743,7 +836,8 @@ function saveBooking() {
       btn.disabled = false; btn.textContent = '✅ GUARDAR';
       if (d.success) {
         let msg = editId ? '✅ Cita actualizada' :
-          (d.recurring ? `✅ ${d.count} eventos creados como serie recurrente${d.capped ? ' (tope máximo alcanzado)' : ''}` : '✅ Cita creada');
+          (useSessions ? `✅ ${d.count} sesiones creadas` :
+            (d.recurring ? `✅ ${d.count} eventos creados como serie recurrente${d.capped ? ' (tope máximo alcanzado)' : ''}` : '✅ Cita creada'));
         showToast(msg, 'success');
         modal.hide();
         cal.refetchEvents();
@@ -882,6 +976,10 @@ function showToast(msg, type) {
 .day-btn.active { background: var(--primary); border-color: var(--primary); color: white; box-shadow: 0 2px 8px rgba(79,70,229,.4); }
 
 .rec-hint { font-size: .72rem; color: var(--gray); margin-top: 6px; }
+.session-row { display: flex; gap: 6px; align-items: center; margin-bottom: 6px; }
+.session-row .sess-date { flex: 1 1 40%; min-width: 0; }
+.session-row .sess-time { flex: 1 1 28%; min-width: 0; }
+.session-row .sess-dur  { flex: 1 1 32%; min-width: 0; }
 .rec-end-options { display: flex; flex-direction: column; gap: 4px; }
 .rec-radio { display: flex; align-items: center; gap: 8px; font-size: .82rem; font-weight: 600; color: var(--ink); cursor: pointer; }
 .rec-radio input { accent-color: var(--primary); }
