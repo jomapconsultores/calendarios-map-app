@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, redirect, url_for, flash, session, jsonify
+from flask import Flask, render_template, request, redirect, url_for, flash, session, jsonify, send_from_directory
 from flask_login import LoginManager, login_user, logout_user, login_required, current_user, UserMixin
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.middleware.proxy_fix import ProxyFix
@@ -8,12 +8,30 @@ from google_auth_oauthlib.flow import Flow
 from google.oauth2.credentials import Credentials
 import google.auth.exceptions
 from googleapiclient.discovery import build
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, date
 from collections import defaultdict, OrderedDict
-import os, requests as req_lib, traceback, pytz, json, re, time
+import os, requests as req_lib, traceback, pytz, json, re, time, calendar as _cal
 
 GOOGLE_SCOPES = ['https://www.googleapis.com/auth/calendar']
 GOOGLE_ACCOUNT_EMAIL = 'mposligua0000@gmail.com'
+
+# WebAuthn / passkeys (Face ID, huella). Import protegido: si la librería aún
+# no está instalada, la app arranca igual y la función queda deshabilitada.
+try:
+    from webauthn import (
+        generate_registration_options, verify_registration_response,
+        generate_authentication_options, verify_authentication_response,
+        options_to_json,
+    )
+    from webauthn.helpers import bytes_to_base64url, base64url_to_bytes
+    from webauthn.helpers.structs import (
+        AuthenticatorSelectionCriteria, ResidentKeyRequirement,
+        UserVerificationRequirement, PublicKeyCredentialDescriptor,
+    )
+    WEBAUTHN_AVAILABLE = True
+except Exception as _wa_err:  # pragma: no cover
+    WEBAUTHN_AVAILABLE = False
+    print(f'[webauthn] no disponible: {_wa_err}')
 
 load_dotenv()
 os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
@@ -296,6 +314,111 @@ def _build_appointment(title, cal_id, encargado, tema, client_name, client_email
 
 
 # ============================================================
+#  RECURRENCE — flexible occurrence generator (materialized)
+# ============================================================
+# Tope de seguridad: nº máximo de eventos materializados por serie.
+# Para recurrencia "indefinida" se materializa hasta este tope.
+REC_HARD_CAP = 366
+
+
+def _add_months(d, months):
+    """Suma `months` a la fecha `d`. Devuelve None si el día no existe
+    en el mes destino (ej. 31 en un mes de 30 días) — se omite la ocurrencia."""
+    m = d.month - 1 + months
+    y = d.year + m // 12
+    m = m % 12 + 1
+    last = _cal.monthrange(y, m)[1]
+    if d.day > last:
+        return None
+    return date(y, m, d.day)
+
+
+def _generate_recurrence_dates(start_d, freq, interval, weekdays,
+                               end_mode, end_date, count, cap=REC_HARD_CAP):
+    """Genera la lista de fechas de una serie recurrente.
+
+    freq:     'daily' | 'weekly' | 'monthly' | 'yearly'
+    interval: cada N (días/semanas/meses/años), entero >= 1
+    weekdays: lista de días [0=Lun..6=Dom] — solo para 'weekly'
+    end_mode: 'until' (hasta end_date) | 'count' (N ocurrencias) | 'forever'
+    """
+    interval = max(1, int(interval or 1))
+    count = max(1, int(count or 1))
+    out = []
+
+    def _reached_limit():
+        if end_mode == 'count' and len(out) >= count:
+            return True
+        return len(out) >= cap
+
+    if freq == 'daily':
+        k = 0
+        while len(out) < cap:
+            d = start_d + timedelta(days=k * interval)
+            if end_mode == 'until' and d > end_date:
+                break
+            out.append(d)
+            if _reached_limit():
+                break
+            k += 1
+
+    elif freq == 'weekly':
+        wds = sorted(set(weekdays)) if weekdays else [start_d.weekday()]
+        start_monday = start_d - timedelta(days=start_d.weekday())
+        wk = 0
+        stop = False
+        while len(out) < cap and not stop:
+            week_start = start_monday + timedelta(weeks=wk * interval)
+            for wd in wds:
+                d = week_start + timedelta(days=wd)
+                if d < start_d:
+                    continue
+                if end_mode == 'until' and d > end_date:
+                    stop = True
+                    break
+                out.append(d)
+                if _reached_limit():
+                    stop = True
+                    break
+            wk += 1
+
+    elif freq == 'monthly':
+        k = 0
+        guard = 0
+        while len(out) < cap and guard < cap * 3:
+            guard += 1
+            ref = _add_months(start_d.replace(day=1), k * interval)  # 1° del mes, siempre válido
+            if end_mode == 'until' and ref is not None and ref > end_date:
+                break
+            d = _add_months(start_d, k * interval)
+            if d is not None and not (end_mode == 'until' and d > end_date):
+                out.append(d)
+                if _reached_limit():
+                    break
+            k += 1
+
+    elif freq == 'yearly':
+        k = 0
+        guard = 0
+        while len(out) < cap and guard < cap * 3:
+            guard += 1
+            yr = start_d.year + k * interval
+            if end_mode == 'until' and date(yr, 1, 1) > end_date:
+                break
+            try:
+                d = date(yr, start_d.month, start_d.day)  # 29-feb se omite en años no bisiestos
+            except ValueError:
+                d = None
+            if d is not None and not (end_mode == 'until' and d > end_date):
+                out.append(d)
+                if _reached_limit():
+                    break
+            k += 1
+
+    return out[:cap]
+
+
+# ============================================================
 #  APP FACTORY
 # ============================================================
 def create_app():
@@ -312,6 +435,29 @@ def create_app():
 
     login_manager.init_app(app)
     login_manager.login_view = 'login'
+
+    @app.context_processor
+    def _inject_globals():
+        return {'webauthn_available': WEBAUTHN_AVAILABLE,
+                'face_login_enabled': True}
+
+    # ------ PWA: service worker / manifest / offline desde la raíz ------
+    @app.route('/sw.js')
+    def pwa_service_worker():
+        resp = send_from_directory(app.static_folder, 'sw.js',
+                                   mimetype='application/javascript')
+        resp.headers['Service-Worker-Allowed'] = '/'
+        resp.headers['Cache-Control'] = 'no-cache'
+        return resp
+
+    @app.route('/manifest.webmanifest')
+    def pwa_manifest():
+        return send_from_directory(app.static_folder, 'manifest.webmanifest',
+                                   mimetype='application/manifest+json')
+
+    @app.route('/offline.html')
+    def pwa_offline():
+        return send_from_directory(app.static_folder, 'offline.html')
 
     @login_manager.user_loader
     def load_user(uid):
@@ -385,6 +531,222 @@ def create_app():
                 return redirect(request.args.get('next') or '/dashboard')
             flash('Email o contraseña incorrectos.', 'danger')
         return render_template('login.html')
+
+    # ============================================================
+    #  WEBAUTHN — Face ID / huella (passkeys)
+    # ============================================================
+    def _rp_id():
+        return request.host.split(':')[0]
+
+    def _origin():
+        return f'{request.scheme}://{request.host}'
+
+    def _wa_guard():
+        if not WEBAUTHN_AVAILABLE:
+            return jsonify({'error': 'WebAuthn no instalado en el servidor'}), 503
+        return None
+
+    @app.route('/webauthn/register/begin', methods=['POST'])
+    @login_required
+    def webauthn_register_begin():
+        guard = _wa_guard()
+        if guard:
+            return guard
+        existing = app.supabase.get('webauthn_credentials',
+            {'user_id': str(current_user.id)}, select='credential_id')
+        exclude = [PublicKeyCredentialDescriptor(id=base64url_to_bytes(c['credential_id']))
+                   for c in existing if c.get('credential_id')]
+        opts = generate_registration_options(
+            rp_id=_rp_id(),
+            rp_name='calendarios-map',
+            user_id=str(current_user.id).encode('utf-8'),
+            user_name=current_user.email or str(current_user.id),
+            user_display_name=current_user.full_name or current_user.email or 'Usuario',
+            authenticator_selection=AuthenticatorSelectionCriteria(
+                resident_key=ResidentKeyRequirement.PREFERRED,
+                user_verification=UserVerificationRequirement.PREFERRED),
+            exclude_credentials=exclude,
+        )
+        session['wa_reg_challenge'] = bytes_to_base64url(opts.challenge)
+        return app.response_class(options_to_json(opts), mimetype='application/json')
+
+    @app.route('/webauthn/register/complete', methods=['POST'])
+    @login_required
+    def webauthn_register_complete():
+        guard = _wa_guard()
+        if guard:
+            return guard
+        data = request.get_json(silent=True) or {}
+        nombre = (data.pop('nombre', '') or '')[:80]
+        challenge = session.pop('wa_reg_challenge', None)
+        if not challenge:
+            return jsonify({'success': False, 'error': 'Sesion expirada, reintenta'})
+        try:
+            v = verify_registration_response(
+                credential=json.dumps(data),
+                expected_challenge=base64url_to_bytes(challenge),
+                expected_rp_id=_rp_id(),
+                expected_origin=_origin(),
+            )
+        except Exception as e:
+            return jsonify({'success': False, 'error': f'Verificacion fallida: {e}'})
+        transports = ','.join((data.get('response', {}) or {}).get('transports', []) or [])
+        rec = app.supabase.insert('webauthn_credentials', {
+            'user_id': str(current_user.id),
+            'credential_id': bytes_to_base64url(v.credential_id),
+            'public_key': bytes_to_base64url(v.credential_public_key),
+            'sign_count': v.sign_count,
+            'transports': transports,
+            'nombre': nombre or 'Dispositivo',
+        })
+        if not rec:
+            return jsonify({'success': False,
+                            'error': 'No se pudo guardar (¿corriste la migracion 003?)'})
+        return jsonify({'success': True})
+
+    @app.route('/webauthn/authenticate/begin', methods=['POST'])
+    def webauthn_auth_begin():
+        guard = _wa_guard()
+        if guard:
+            return guard
+        opts = generate_authentication_options(
+            rp_id=_rp_id(),
+            user_verification=UserVerificationRequirement.PREFERRED,
+        )
+        session['wa_auth_challenge'] = bytes_to_base64url(opts.challenge)
+        return app.response_class(options_to_json(opts), mimetype='application/json')
+
+    @app.route('/webauthn/authenticate/complete', methods=['POST'])
+    def webauthn_auth_complete():
+        guard = _wa_guard()
+        if guard:
+            return guard
+        data = request.get_json(silent=True) or {}
+        challenge = session.pop('wa_auth_challenge', None)
+        if not challenge:
+            return jsonify({'success': False, 'error': 'Sesion expirada, reintenta'})
+        cred_id = data.get('id', '')
+        rows = app.supabase.get('webauthn_credentials', {'credential_id': cred_id})
+        if not rows:
+            return jsonify({'success': False, 'error': 'Dispositivo no reconocido'})
+        rec = rows[0]
+        try:
+            v = verify_authentication_response(
+                credential=json.dumps(data),
+                expected_challenge=base64url_to_bytes(challenge),
+                expected_rp_id=_rp_id(),
+                expected_origin=_origin(),
+                credential_public_key=base64url_to_bytes(rec['public_key']),
+                credential_current_sign_count=rec.get('sign_count', 0) or 0,
+                require_user_verification=False,
+            )
+        except Exception as e:
+            return jsonify({'success': False, 'error': f'Autenticacion fallida: {e}'})
+        app.supabase.update('webauthn_credentials', rec['id'], {
+            'sign_count': v.new_sign_count,
+            'last_used_at': datetime.now(timezone.utc).isoformat(),
+        })
+        users = app.supabase.get('users', {'id': rec['user_id']},
+                                 select='id,email,full_name,role')
+        if not users:
+            return jsonify({'success': False, 'error': 'Usuario no encontrado'})
+        login_user(User(users[0]))
+        return jsonify({'success': True, 'redirect': '/dashboard'})
+
+    @app.route('/webauthn/credentials', methods=['GET'])
+    @login_required
+    def webauthn_credentials_list():
+        rows = app.supabase.get('webauthn_credentials',
+            {'user_id': str(current_user.id)},
+            select='id,nombre,created_at,last_used_at')
+        return jsonify(rows or [])
+
+    @app.route('/webauthn/credentials/delete/<cred_pk>', methods=['POST'])
+    @login_required
+    def webauthn_credentials_delete(cred_pk):
+        rows = app.supabase.get('webauthn_credentials', {'id': cred_pk}, select='id,user_id')
+        if not rows or str(rows[0].get('user_id')) != str(current_user.id):
+            return jsonify({'success': False, 'error': 'No autorizado'})
+        app.supabase.delete('webauthn_credentials', cred_pk)
+        return jsonify({'success': True})
+
+    # ============================================================
+    #  FACE LOGIN — reconocimiento facial por cámara (face-api.js)
+    #  Descriptor 128-d calculado en el navegador; comparación en
+    #  el servidor. Conveniencia: SIN detección de vida (un foto/
+    #  pantalla puede engañarlo). La passkey es más segura.
+    # ============================================================
+    FACE_THRESHOLD = 0.55   # distancia euclidiana máxima para considerar match
+
+    def _face_distance(a, b):
+        if len(a) != len(b):
+            return 9.9
+        return sum((x - y) ** 2 for x, y in zip(a, b)) ** 0.5
+
+    def _valid_descriptor(d):
+        return (isinstance(d, list) and len(d) == 128
+                and all(isinstance(x, (int, float)) for x in d))
+
+    @app.route('/face/enroll', methods=['POST'])
+    @login_required
+    def face_enroll():
+        data = request.get_json(silent=True) or {}
+        desc = data.get('descriptor')
+        if not _valid_descriptor(desc):
+            return jsonify({'success': False, 'error': 'Descriptor facial invalido'})
+        nombre = (data.get('nombre') or 'Rostro')[:80]
+        rec = app.supabase.insert('face_descriptors', {
+            'user_id': str(current_user.id),
+            'descriptor': json.dumps(desc),
+            'nombre': nombre,
+        })
+        if not rec:
+            return jsonify({'success': False,
+                            'error': 'No se pudo guardar (¿corriste la migracion 004?)'})
+        return jsonify({'success': True})
+
+    @app.route('/face/list', methods=['GET'])
+    @login_required
+    def face_list():
+        rows = app.supabase.get('face_descriptors', {'user_id': str(current_user.id)},
+                                select='id,nombre,created_at')
+        return jsonify(rows or [])
+
+    @app.route('/face/delete/<fid>', methods=['POST'])
+    @login_required
+    def face_delete(fid):
+        rows = app.supabase.get('face_descriptors', {'id': fid}, select='id,user_id')
+        if not rows or str(rows[0].get('user_id')) != str(current_user.id):
+            return jsonify({'success': False, 'error': 'No autorizado'})
+        app.supabase.delete('face_descriptors', fid)
+        return jsonify({'success': True})
+
+    @app.route('/face/verify', methods=['POST'])
+    def face_verify():
+        data = request.get_json(silent=True) or {}
+        email = _sanitize(data.get('email', ''), 254).lower()
+        desc = data.get('descriptor')
+        if not email or not _valid_descriptor(desc):
+            return jsonify({'success': False, 'error': 'Datos invalidos'})
+        users = app.supabase.get('users', {'email': email},
+                                 select='id,email,full_name,role')
+        # Mensaje genérico para no revelar si el email existe
+        if not users:
+            return jsonify({'success': False, 'error': 'Rostro no reconocido'})
+        uid = str(users[0]['id'])
+        stored = app.supabase.get('face_descriptors', {'user_id': uid}, select='descriptor')
+        best = 9.9
+        for s in (stored or []):
+            try:
+                v = json.loads(s['descriptor'])
+            except Exception:
+                continue
+            if _valid_descriptor(v):
+                best = min(best, _face_distance(desc, v))
+        if best <= FACE_THRESHOLD:
+            login_user(User(users[0]))
+            return jsonify({'success': True, 'redirect': '/dashboard'})
+        return jsonify({'success': False, 'error': 'Rostro no reconocido'})
 
     @app.route('/register', methods=['GET', 'POST'])
     def register():
@@ -701,22 +1063,35 @@ def create_app():
     # ============================================================
     #  API — EVENTS  (single query with IN filter for non-admin)
     # ============================================================
-    APPT_SELECT = ('id,title,encargado,start_time,end_time,status,calendar_id,'
-                   'tema,client_name,client_email,notes,lugar,direccion,mapa,'
-                   'ciudad,meeting_link,google_event_id')
+    APPT_SELECT_BASE = ('id,title,encargado,start_time,end_time,status,calendar_id,'
+                        'tema,client_name,client_email,notes,lugar,direccion,mapa,'
+                        'ciudad,meeting_link,google_event_id')
+    # Columnas de recurrencia — requieren la migración 002. El SELECT cae al
+    # base automáticamente si todavía no existen (ver _events_query abajo).
+    APPT_SELECT = APPT_SELECT_BASE + ',is_recurring,parent_event_id'
 
     @app.route('/calendar/api/events')
     @login_required
     def api_events():
+        def _events_query(fetch):
+            # fetch(select) -> lista. Intenta con columnas de recurrencia;
+            # si vuelve vacío (p.ej. columna inexistente antes de migrar),
+            # reintenta con el SELECT base para no ocultar los eventos.
+            rows = fetch(APPT_SELECT)
+            if not rows:
+                rows = fetch(APPT_SELECT_BASE)
+            return rows
+
         if is_admin():
-            events = app.supabase.get('appointments', select=APPT_SELECT)
+            events = _events_query(
+                lambda sel: app.supabase.get('appointments', select=sel))
         else:
             ucal = [c['calendar_id'] for c in get_user_calendars(app, current_user.id)]
             if not ucal:
                 return jsonify([])
             # One query with IN — replaces N separate queries
-            events = app.supabase.get_in('appointments', 'calendar_id', ucal,
-                                         select=APPT_SELECT)
+            events = _events_query(
+                lambda sel: app.supabase.get_in('appointments', 'calendar_id', ucal, select=sel))
         colors = {'pending': '#f59e0b', 'confirmed': '#10b981', 'cancelled': '#ef4444'}
         result = []
         for e in events:
@@ -844,34 +1219,45 @@ def create_app():
                 app.supabase.insert_ignore('clients',
                     {'name': client_name, 'email': client_email, 'created_by': current_user.id})
 
-            # ---- Recurring ----
+            # ---- Recurring (flexible: daily/weekly/monthly/yearly) ----
             is_recurring = request.form.get('is_recurring') == 'true'
             if is_recurring:
-                rec_days_str = request.form.get('recurrence_days', '[]')
-                rec_end_str  = request.form.get('recurrence_end_date', '')
+                freq     = request.form.get('rec_freq', 'weekly')
+                end_mode = request.form.get('rec_end_mode', 'until')
                 try:
-                    rec_days = json.loads(rec_days_str)
-                    rec_end  = datetime.strptime(rec_end_str, '%Y-%m-%d').date()
-                    start_d  = datetime.strptime(date_str, '%Y-%m-%d').date()
+                    interval  = max(1, min(366, int(request.form.get('rec_interval', '1') or 1)))
+                    start_d   = datetime.strptime(date_str, '%Y-%m-%d').date()
+                    weekdays  = json.loads(request.form.get('rec_weekdays', '[]') or '[]')
+                    rec_count = max(1, min(REC_HARD_CAP, int(request.form.get('rec_count', '1') or 1)))
+                    rec_end   = None
+                    if end_mode == 'until':
+                        rec_end = datetime.strptime(
+                            request.form.get('rec_end_date', ''), '%Y-%m-%d').date()
                 except Exception as ex:
                     return jsonify({'success': False, 'error': f'Datos de recurrencia invalidos: {ex}'})
-                if not rec_days:
-                    return jsonify({'success': False, 'error': 'Selecciona al menos un dia'})
-                if rec_end < start_d:
+
+                if freq not in ('daily', 'weekly', 'monthly', 'yearly'):
+                    return jsonify({'success': False, 'error': 'Frecuencia invalida'})
+                if end_mode == 'until' and (rec_end is None or rec_end < start_d):
                     return jsonify({'success': False, 'error': 'Fecha fin debe ser posterior a inicio'})
+                if freq == 'weekly' and weekdays and any(w < 0 or w > 6 for w in weekdays):
+                    return jsonify({'success': False, 'error': 'Dias de semana invalidos'})
 
-                dates_to_create = []
-                cur_d = start_d
-                while cur_d <= rec_end:
-                    if cur_d.weekday() in rec_days:
-                        dates_to_create.append(cur_d)
-                    cur_d += timedelta(days=1)
+                dates_to_create = _generate_recurrence_dates(
+                    start_d, freq, interval, weekdays, end_mode, rec_end, rec_count)
                 if not dates_to_create:
-                    return jsonify({'success': False, 'error': 'Ningun dia coincide con la seleccion'})
-                if len(dates_to_create) > 60:
-                    return jsonify({'success': False, 'error': 'Maximo 60 eventos por serie'})
+                    return jsonify({'success': False, 'error': 'La recurrencia no genera ninguna fecha'})
 
-                rec_notes  = f'[SERIE {len(dates_to_create)} eventos] {notes}'.strip()
+                rule_json = json.dumps({
+                    'freq': freq, 'interval': interval, 'weekdays': weekdays,
+                    'end_mode': end_mode,
+                    'end_date': rec_end.isoformat() if rec_end else None,
+                    'count': rec_count,
+                }, ensure_ascii=False)
+                # Aviso si se topó el límite de materialización (recurrencia muy larga/indefinida)
+                capped = len(dates_to_create) >= REC_HARD_CAP
+                rec_notes = f'[SERIE {len(dates_to_create)} eventos] {notes}'.strip()
+
                 created_ids = []; parent_id = None
                 for d in dates_to_create:
                     local_dt = TIMEZONE.localize(
@@ -884,10 +1270,16 @@ def create_app():
                     record['is_recurring'] = True
                     if parent_id:
                         record['parent_event_id'] = parent_id
+                    else:
+                        record['recurrence_rule'] = rule_json
+                        if rec_end:
+                            record['recurrence_end_date'] = rec_end.isoformat()
                     r = app.supabase.insert('appointments', record)
                     if not r:
-                        del record['is_recurring']
-                        record.pop('parent_event_id', None)
+                        # Fallback si aún no se corrió la migración de columnas de recurrencia
+                        for col in ('is_recurring', 'parent_event_id',
+                                    'recurrence_rule', 'recurrence_end_date'):
+                            record.pop(col, None)
                         r = app.supabase.insert('appointments', record)
                     if r:
                         aid = r[0]['id']
@@ -899,7 +1291,8 @@ def create_app():
                             except Exception:
                                 pass
                 if created_ids:
-                    return jsonify({'success': True, 'count': len(created_ids), 'recurring': True})
+                    return jsonify({'success': True, 'count': len(created_ids),
+                                    'recurring': True, 'capped': capped})
                 return jsonify({'success': False, 'error': 'No se pudieron crear los eventos'})
 
             # ---- Single event ----

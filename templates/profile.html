@@ -15,6 +15,82 @@
         <button type="submit" class="btn btn-primary rounded-pill w-100">💾 Guardar cambios</button>
       </form>
     </div></div>
+
+    {% if webauthn_available %}
+    <div class="card mt-4"><div class="card-body p-4">
+      <h5 class="section-heading">🔐 Face ID / huella</h5>
+      <p class="text-muted small">Activa el desbloqueo biométrico de tu celular para entrar sin contraseña. La huella/rostro nunca sale de tu dispositivo.</p>
+      <button type="button" class="btn btn-outline-primary rounded-pill w-100 mb-3" onclick="waRegister()">➕ Activar en este dispositivo</button>
+      <div id="waList" class="small text-muted">Cargando dispositivos…</div>
+    </div></div>
+    {% endif %}
+
+    {% if face_login_enabled %}
+    <div class="card mt-4"><div class="card-body p-4">
+      <h5 class="section-heading">📷 Reconocimiento facial</h5>
+      <p class="text-muted small">Registra tu rostro para entrar con la cámara (necesitas escribir tu email en el login). Solo se guarda un código matemático de tu cara, no la foto. Es una conveniencia: <strong>menos seguro que Face ID/huella</strong>, por eso recomendamos también activar esa opción.</p>
+      <button type="button" class="btn btn-outline-secondary rounded-pill w-100 mb-3" onclick="faceEnroll()">➕ Registrar mi rostro</button>
+      <div id="faceList" class="small text-muted">Cargando rostros…</div>
+    </div></div>
+    {% endif %}
   </div>
 </div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function bioFmt(s){ if(!s) return '—'; try { return new Date(s).toLocaleDateString('es-EC'); } catch(e){ return s; } }
+</script>
+{% if webauthn_available %}
+<script src="{{ url_for('static', filename='js/webauthn.js') }}"></script>
+<script>
+async function waLoadList(){
+  var box = document.getElementById('waList');
+  try {
+    var rows = await (await fetch('/webauthn/credentials')).json();
+    if(!rows.length){ box.innerHTML = 'No tienes dispositivos registrados todavía.'; return; }
+    box.innerHTML = rows.map(function(r){
+      return '<div class="d-flex justify-content-between align-items-center border-top py-2">'
+        + '<div><strong>'+(r.nombre||'Dispositivo')+'</strong><br>'
+        + '<span class="text-muted">Creado '+bioFmt(r.created_at)+' · Último uso '+bioFmt(r.last_used_at)+'</span></div>'
+        + '<button class="btn btn-sm btn-outline-danger rounded-pill" onclick="waDelete(\''+r.id+'\')">Quitar</button>'
+        + '</div>';
+    }).join('');
+  } catch(e){ box.innerHTML = 'No se pudo cargar la lista.'; }
+}
+async function waDelete(id){
+  if(!confirm('¿Quitar este dispositivo?')) return;
+  var res = await (await fetch('/webauthn/credentials/delete/'+id, {method:'POST'})).json();
+  if(res.success) waLoadList(); else alert('❌ '+(res.error||'Error'));
+}
+window.waOnChange = waLoadList;
+document.addEventListener('DOMContentLoaded', waLoadList);
+</script>
+{% endif %}
+{% if face_login_enabled %}
+<script src="{{ url_for('static', filename='js/faceid.js') }}"></script>
+<script>
+async function faceLoadList(){
+  var box = document.getElementById('faceList');
+  try {
+    var rows = await (await fetch('/face/list')).json();
+    if(!rows.length){ box.innerHTML = 'No tienes rostros registrados todavía.'; return; }
+    box.innerHTML = rows.map(function(r){
+      return '<div class="d-flex justify-content-between align-items-center border-top py-2">'
+        + '<div><strong>'+(r.nombre||'Rostro')+'</strong><br>'
+        + '<span class="text-muted">Registrado '+bioFmt(r.created_at)+'</span></div>'
+        + '<button class="btn btn-sm btn-outline-danger rounded-pill" onclick="faceDelete(\''+r.id+'\')">Quitar</button>'
+        + '</div>';
+    }).join('');
+  } catch(e){ box.innerHTML = 'No se pudo cargar la lista.'; }
+}
+async function faceDelete(id){
+  if(!confirm('¿Quitar este rostro?')) return;
+  var res = await (await fetch('/face/delete/'+id, {method:'POST'})).json();
+  if(res.success) faceLoadList(); else alert('❌ '+(res.error||'Error'));
+}
+window.faceOnChange = faceLoadList;
+document.addEventListener('DOMContentLoaded', faceLoadList);
+</script>
+{% endif %}
 {% endblock %}
