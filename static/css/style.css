@@ -79,9 +79,9 @@ body {
     background: #000;
 }
 .sidebar-map-logo {
-    width: 100%;
-    max-width: 210px;
-    height: auto;
+    width: auto;
+    max-width: 150px;
+    max-height: 44px;
     object-fit: contain;
     display: block;
 }
