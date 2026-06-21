@@ -54,6 +54,12 @@
 <script>
 function appAll(uid){fetch('/admin/approve-all/'+uid,{method:'POST'}).then(r=>r.json()).then(d=>{if(d.success)location.reload()})}
 function rejAll(uid){fetch('/admin/reject-all/'+uid,{method:'POST'}).then(r=>r.json()).then(d=>{if(d.success)location.reload()})}
-function delUser(uid){if(confirm('Eliminar usuario?')){fetch('/admin/user/delete/'+uid,{method:'POST'}).then(r=>r.json()).then(d=>{if(d.success)location.reload()})}}
+function delUser(uid){
+  if(!confirm('¿Eliminar este usuario? Esta acción no se puede deshacer.')) return;
+  fetch('/admin/user/delete/'+uid,{method:'POST'})
+    .then(r=>r.json())
+    .then(d=>{ if(d.success){ location.reload(); } else{ alert('❌ '+(d.error||'No se pudo eliminar')); } })
+    .catch(()=>alert('❌ Error de conexión'));
+}
 </script>
 {% endblock %}

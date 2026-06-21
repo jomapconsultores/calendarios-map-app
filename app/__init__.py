@@ -1185,13 +1185,16 @@ def create_app():
     @app.route('/admin/user/delete/<uid>', methods=['POST'])
     @login_required
     def admin_delete_user(uid):
-        if not is_admin(): return jsonify({'success': False})
-        for p in app.supabase.get('calendar_permissions', {'user_id': uid}, select='id'):
-            app.supabase.delete('calendar_permissions', p['id'])
-        app.supabase.delete('users', uid)
+        if not is_admin(): return jsonify({'success': False, 'error': 'Sin autorización'})
+        if uid == str(current_user.id):
+            return jsonify({'success': False, 'error': 'No puedes eliminarte a ti mismo'})
+        # Borrar todos los registros relacionados antes de eliminar el usuario
+        for tbl in ['calendar_permissions', 'webauthn_credentials', 'face_descriptors']:
+            for row in app.supabase.get(tbl, {'user_id': uid}, select='id'):
+                app.supabase.delete(tbl, row['id'])
+        ok = app.supabase.delete('users', uid)
         _user_cal_cache.invalidate(uid)
-        flash('Usuario eliminado', 'success')
-        return redirect('/admin/users')
+        return jsonify({'success': ok, 'error': None if ok else 'No se pudo eliminar el usuario'})
 
     @app.route('/admin/approve-one/<pid>', methods=['POST'])
     @login_required
