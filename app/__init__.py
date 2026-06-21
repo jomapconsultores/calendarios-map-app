@@ -392,6 +392,27 @@ def _make_cal_maps(all_cals):
                    for c in all_cals}
     return email_map, gcal_id_map
 
+def _build_attendees(apt, email_map):
+    """Build a deduplicated attendee list for a Google Calendar event.
+    Uses lowercase comparison to avoid case-sensitive duplicates.
+    """
+    seen = set()
+    attendees = []
+    def _add(email):
+        e = (email or '').strip().lower()
+        if e and e not in seen:
+            seen.add(e)
+            attendees.append({'email': email.strip()})
+    cal_email = email_map.get(apt.get('calendar_id', ''))
+    if cal_email:
+        _add(cal_email)
+    if apt.get('invitados'):
+        for inv in apt['invitados'].split(','):
+            _add(inv)
+    if not attendees:
+        _add(GOOGLE_ACCOUNT_EMAIL)
+    return attendees
+
 def get_user_calendars(app, uid):
     """Cached user calendars (90 s)."""
     val, hit = _user_cal_cache.get(uid)
@@ -1577,11 +1598,18 @@ def create_app():
     def api_approve(aid):
         apts = app.supabase.get('appointments', {'id': aid},
             select='id,title,encargado,tema,client_name,client_email,start_time,end_time,'
-                   'status,calendar_id,invitados,lugar,direccion,ciudad,mapa,notes,meeting_link')
+                   'status,calendar_id,invitados,lugar,direccion,ciudad,mapa,notes,'
+                   'meeting_link,google_event_id,google_cal_id')
         if not apts: return jsonify({'success': False})
         apt = apts[0]
         if not is_admin() and not user_has_calendar_access(app, current_user.id, apt.get('calendar_id')):
             return jsonify({'success': False, 'error': 'Sin autorizacion'})
+
+        # Idempotente: si ya tiene evento en Google, solo confirmar — no duplicar
+        if apt.get('google_event_id'):
+            app.supabase.update('appointments', aid, {'status': 'confirmed'})
+            return jsonify({'success': True, 'message': 'Confirmada (ya sincronizada con Google)'})
+
         creds = get_google_creds(app)
         if not creds:
             app.supabase.update('appointments', aid, {'status': 'confirmed'})
@@ -1590,24 +1618,23 @@ def create_app():
             service  = build('calendar', 'v3', credentials=creds)
             all_cals = _get_calendar_config(app)
             email_map, gcal_id_map = _make_cal_maps(all_cals)
-            cal_id   = apt.get('calendar_id')
-            gcal_id  = gcal_id_map.get(cal_id, 'primary')
-            attendees = []
-            cal_email = email_map.get(cal_id)
-            if cal_email: attendees.append({'email': cal_email})
-            if apt.get('invitados'):
-                for inv in apt['invitados'].split(','):
-                    inv = inv.strip()
-                    if inv and inv not in [a['email'] for a in attendees]:
-                        attendees.append({'email': inv})
-            if not attendees: attendees.append({'email': GOOGLE_ACCOUNT_EMAIL})
+            cal_id  = apt.get('calendar_id')
+            gcal_id = gcal_id_map.get(cal_id, 'primary')
+            attendees = _build_attendees(apt, email_map)
             event = _build_google_event(apt, attendees)
+            # Buscar si ya existe en Google Calendar para evitar duplicado
             existing = service.events().list(
                 calendarId=gcal_id, timeMin=apt['start_time'],
                 timeMax=apt['end_time'], q=apt['title'], maxResults=1).execute()
-            created = (existing['items'][0] if existing.get('items')
-                       else service.events().insert(
-                            calendarId=gcal_id, body=event, sendUpdates='all').execute())
+            if existing.get('items'):
+                # Ya existe: vincular sin reenviar notificaciones
+                gev_id = existing['items'][0]['id']
+                app.supabase.update('appointments', aid,
+                    {'status': 'confirmed', 'google_event_id': gev_id, 'google_cal_id': gcal_id})
+                return jsonify({'success': True, 'message': 'Confirmada (evento ya existía en Google)'})
+            # Nuevo evento — notificar a todos los asistentes una sola vez
+            created = service.events().insert(
+                calendarId=gcal_id, body=event, sendUpdates='all').execute()
             app.supabase.update('appointments', aid,
                 {'status': 'confirmed', 'google_event_id': created.get('id'),
                  'google_cal_id': gcal_id})
@@ -1703,15 +1730,7 @@ def create_app():
                         {'google_event_id': existing['items'][0]['id'],
                          'google_cal_id': gcal_id})
                     skipped += 1; continue
-                attendees = []
-                ce = email_map.get(cal_id)
-                if ce: attendees.append({'email': ce})
-                if apt.get('invitados'):
-                    for inv in apt['invitados'].split(','):
-                        inv = inv.strip()
-                        if inv and inv not in [a['email'] for a in attendees]:
-                            attendees.append({'email': inv})
-                if not attendees: attendees.append({'email': GOOGLE_ACCOUNT_EMAIL})
+                attendees = _build_attendees(apt, email_map)
                 event = _build_google_event(apt, attendees)
                 created = service.events().insert(calendarId=gcal_id,
                     body=event, sendUpdates='all').execute()
@@ -1752,17 +1771,9 @@ def create_app():
                 gid = apt.get('google_event_id')
                 if not gid: skipped += 1; continue
                 try:
-                    cal_id   = apt.get('calendar_id')
-                    gcal_id  = apt.get('google_cal_id') or gcal_id_map.get(cal_id, 'primary')
-                    attendees = []
-                    ce = email_map.get(cal_id)
-                    if ce: attendees.append({'email': ce})
-                    if apt.get('invitados'):
-                        for inv in apt['invitados'].split(','):
-                            inv = inv.strip()
-                            if inv and inv not in [a['email'] for a in attendees]:
-                                attendees.append({'email': inv})
-                    if not attendees: attendees.append({'email': GOOGLE_ACCOUNT_EMAIL})
+                    cal_id  = apt.get('calendar_id')
+                    gcal_id = apt.get('google_cal_id') or gcal_id_map.get(cal_id, 'primary')
+                    attendees = _build_attendees(apt, email_map)
                     ev = _build_google_event(apt, attendees)
                     patch = {'description': ev['description']}
                     if ev.get('location'): patch['location'] = ev['location']
@@ -1825,15 +1836,7 @@ def create_app():
                     # Crear en el nuevo calendario
                     merged = {**apt, **d}
                     new_gcal = gcal_id_map.get(new_cal_id, 'primary')
-                    attendees = []
-                    ce = email_map.get(new_cal_id)
-                    if ce: attendees.append({'email': ce})
-                    if merged.get('invitados'):
-                        for inv in merged['invitados'].split(','):
-                            inv = inv.strip()
-                            if inv and inv not in [a['email'] for a in attendees]:
-                                attendees.append({'email': inv})
-                    if not attendees: attendees.append({'email': GOOGLE_ACCOUNT_EMAIL})
+                    attendees = _build_attendees(merged, email_map)
                     event = _build_google_event(merged, attendees)
                     created = service.events().insert(
                         calendarId=new_gcal, body=event, sendUpdates='all').execute()
