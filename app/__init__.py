@@ -106,6 +106,13 @@ class User(UserMixin):
         self.id = d.get('id'); self.email = d.get('email')
         self.full_name = d.get('full_name'); self.role = d.get('role', 'staff')
         self.is_admin = d.get('role') == 'admin'
+        raw = d.get('modules', 'calendar,planning') or 'calendar,planning'
+        self.modules = [m.strip() for m in raw.split(',') if m.strip()]
+
+ALL_MODULES = [
+    ('calendar',  '📅 Calendario'),
+    ('planning',  '📋 Planificación'),
+]
 
 
 # ============================================================
@@ -432,6 +439,11 @@ def user_has_calendar_access(app, uid, calendar_id):
 def is_admin():
     return current_user.is_authenticated and current_user.role == 'admin'
 
+def user_can(module):
+    """True si el usuario tiene acceso al módulo (admins siempre sí)."""
+    if is_admin(): return True
+    return module in getattr(current_user, 'modules', [])
+
 
 # ============================================================
 #  APPOINTMENT BUILDER
@@ -606,7 +618,7 @@ def create_app():
     @login_manager.user_loader
     def load_user(uid):
         if app.supabase:
-            u = app.supabase.get('users', {'id': uid}, select='id,email,full_name,role')
+            u = app.supabase.get('users', {'id': uid}, select='id,email,full_name,role,modules')
             if u:
                 return User(u[0])
         return None
@@ -948,7 +960,8 @@ def create_app():
                 app.supabase.update('users', current_user.id, data)
             flash('Datos actualizados', 'success')
             return redirect('/profile')
-        return render_template('profile.html')
+        my_cals = get_user_calendars(app, current_user.id)
+        return render_template('profile.html', my_calendars=my_cals, all_modules=ALL_MODULES)
 
     # ============================================================
     #  MICROSOFT OAUTH — To-Do
@@ -1078,7 +1091,7 @@ def create_app():
         if not is_admin():
             return redirect('/dashboard')
         # 3 queries total (users, calendar_config, all permissions)
-        users     = app.supabase.get('users', select='id,email,full_name,role,created_at')
+        users     = app.supabase.get('users', select='id,email,full_name,role,modules,created_at')
         all_cals  = _get_calendar_config(app)
         all_perms = app.supabase.get('calendar_permissions',
                         select='id,user_id,calendar_id,status')
@@ -1110,7 +1123,8 @@ def create_app():
                                if p['calendar_id'] in cal_by_id],
             })
         return render_template('admin_users.html', users=users, calendarios=all_cals,
-                               pending=pending, pending_all=pending_all)
+                               pending=pending, pending_all=pending_all,
+                               all_modules=ALL_MODULES)
 
     # ============================================================
     #  ADMIN — DATABASE
@@ -1171,14 +1185,17 @@ def create_app():
         if request.form.get('role'):
             data['role'] = request.form.get('role')
         if data: app.supabase.update('users', uid, data)
+        # Módulos
+        mod_ids = request.form.getlist('modules')
+        app.supabase.update('users', uid, {'modules': ','.join(mod_ids)})
+        # Calendarios
         cal_ids = request.form.getlist('calendars')
-        # Siempre reemplaza permisos para reflejar exactamente los checkboxes marcados
         for p in app.supabase.get('calendar_permissions', {'user_id': uid}, select='id'):
             app.supabase.delete('calendar_permissions', p['id'])
         for cal_id in cal_ids:
             app.supabase.insert('calendar_permissions',
                 {'user_id': uid, 'calendar_id': cal_id, 'status': 'approved'})
-        _user_cal_cache.invalidate(uid)  # bust cache local del worker
+        _user_cal_cache.invalidate(uid)
         flash('Usuario actualizado', 'success')
         return redirect('/admin/users')
 
@@ -1281,6 +1298,9 @@ def create_app():
     @app.route('/calendar')
     @login_required
     def calendar():
+        if not user_can('calendar'):
+            flash('No tienes acceso al módulo Calendario.', 'warning')
+            return redirect('/dashboard')
         cals = (_get_calendar_config(app) if is_admin()
                 else get_user_calendars(app, current_user.id))
         return render_template('calendar.html', calendarios=cals,
@@ -1857,6 +1877,9 @@ def create_app():
     @app.route('/planning')
     @login_required
     def planning():
+        if not user_can('planning'):
+            flash('No tienes acceso al módulo Planificación.', 'warning')
+            return redirect('/dashboard')
         ms_connected = bool(get_ms_token(app))
         return render_template('planning.html', ms_connected=ms_connected)
 

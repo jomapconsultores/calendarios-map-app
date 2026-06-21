@@ -20,9 +20,22 @@
 
 <h5 class="section-heading mt-4" id="registrados">👥 Usuarios registrados <span class="badge bg-primary">{{users|length}}</span></h5>
 {% for u in users %}
+{% set u_modules = (u.modules or 'calendar,planning').split(',') %}
 <div class="user-row card mb-2"><div class="card-body"><div class="row align-items-center">
-  <div class="col-md-3"><strong>{{u.full_name}}</strong><br><small class="text-muted">{{u.email}}</small><br><span class="badge bg-{{'danger' if u.role=='admin' else 'info'}}">{{u.role}}</span></div>
-  <div class="col-md-5">{%for c in u.calendars%}<span class="cal-badge badge bg-light text-dark border me-1 mb-1"><span class="dot" style="background:{{c.color}}"></span>{{c.name}}</span>{%endfor%}{%if not u.calendars%}<span class="text-warning small">Sin acceso</span>{%endif%}</div>
+  <div class="col-md-3">
+    <strong>{{u.full_name}}</strong><br>
+    <small class="text-muted">{{u.email}}</small><br>
+    <span class="badge bg-{{'danger' if u.role=='admin' else 'info'}}">{{u.role}}</span>
+  </div>
+  <div class="col-md-5">
+    {%for c in u.calendars%}<span class="cal-badge badge bg-light text-dark border me-1 mb-1"><span class="dot" style="background:{{c.color}}"></span>{{c.name}}</span>{%endfor%}
+    {%if not u.calendars%}<span class="text-warning small">Sin calendarios</span>{%endif%}
+    <div class="mt-1">
+      {%for mid, mlabel in all_modules%}
+        {%if mid in u_modules%}<span class="badge bg-primary bg-opacity-25 text-primary me-1" style="font-size:.65rem">{{mlabel}}</span>{%endif%}
+      {%endfor%}
+    </div>
+  </div>
   <div class="col-md-4 text-md-end mt-2 mt-md-0">
     <button class="btn btn-outline-primary btn-sm rounded-pill" data-bs-toggle="modal" data-bs-target="#edit{{u.id}}">✏️ Editar</button>
     <button class="btn btn-outline-danger btn-sm rounded-pill" onclick="delUser('{{u.id}}')">🗑️</button>
@@ -40,9 +53,35 @@
       <div class="col-md-6"><label class="form-label">Nueva contraseña</label><input name="password" type="password" class="form-control" placeholder="Dejar vacío…"></div>
       <div class="col-md-6"><label class="form-label">Rol</label><select name="role" class="form-select"><option value="staff" {{'selected' if u.role=='staff'}}>Staff</option><option value="admin" {{'selected' if u.role=='admin'}}>Admin</option></select></div>
     </div>
-    <div class="mb-3"><label class="form-label">Acceso a calendarios:</label><div class="row">
-      {%for c in calendarios%}<div class="col-md-6"><div class="form-check"><input class="form-check-input" type="checkbox" name="calendars" value="{{c.calendar_id}}" {{'checked' if c in u.calendars}}><label><span class="dot" style="background:{{c.color}}"></span>{{c.name}}</label></div></div>{%endfor%}
-    </div></div>
+
+    <div class="mb-3">
+      <label class="form-label">Módulos con acceso:</label>
+      <div class="row">
+        {%for mid, mlabel in all_modules%}
+        <div class="col-md-6">
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" name="modules" value="{{mid}}" {{'checked' if mid in u_modules}}>
+            <label class="form-check-label">{{mlabel}}</label>
+          </div>
+        </div>
+        {%endfor%}
+      </div>
+    </div>
+
+    <div class="mb-3">
+      <label class="form-label">Acceso a calendarios:</label>
+      <div class="row">
+        {%for c in calendarios%}
+        <div class="col-md-6">
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" name="calendars" value="{{c.calendar_id}}" {{'checked' if c in u.calendars}}>
+            <label class="form-check-label"><span class="dot" style="background:{{c.color}}"></span>{{c.name}}</label>
+          </div>
+        </div>
+        {%endfor%}
+      </div>
+    </div>
+
     <button class="btn btn-primary rounded-pill">💾 Guardar</button>
   </form></div>
 </div></div></div>

@@ -80,8 +80,8 @@ body {
 }
 .sidebar-map-logo {
     width: auto;
-    max-width: 150px;
-    max-height: 44px;
+    max-width: 120px;
+    max-height: 32px;
     object-fit: contain;
     display: block;
 }

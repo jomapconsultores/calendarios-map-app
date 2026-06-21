@@ -16,6 +16,32 @@
       </form>
     </div></div>
 
+    <div class="card mt-4"><div class="card-body p-4">
+      <h5 class="section-heading">🔑 Mis accesos</h5>
+      <div class="mb-3">
+        <p class="text-muted small mb-2"><strong>Módulos habilitados:</strong></p>
+        {%for mid, mlabel in all_modules%}
+          {%if mid in current_user.modules%}
+          <span class="badge bg-primary me-1 mb-1" style="font-size:.8rem">{{mlabel}}</span>
+          {%else%}
+          <span class="badge bg-secondary bg-opacity-25 text-secondary me-1 mb-1" style="font-size:.8rem">{{mlabel}}</span>
+          {%endif%}
+        {%endfor%}
+      </div>
+      <div>
+        <p class="text-muted small mb-2"><strong>Calendarios asignados:</strong></p>
+        {%if my_calendars%}
+          {%for c in my_calendars%}
+          <span class="badge bg-light text-dark border me-1 mb-1" style="font-size:.8rem">
+            <span class="dot" style="background:{{c.color}}"></span> {{c.name}}
+          </span>
+          {%endfor%}
+        {%else%}
+          <span class="text-warning small">Sin calendarios asignados. Contacta al administrador.</span>
+        {%endif%}
+      </div>
+    </div></div>
+
     {% if webauthn_available %}
     <div class="card mt-4"><div class="card-body p-4">
       <h5 class="section-heading">🔐 Face ID / huella</h5>
