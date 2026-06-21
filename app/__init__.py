@@ -376,9 +376,21 @@ def _get_calendar_config(app):
     val, hit = _cal_cache.get('all')
     if hit:
         return val
-    result = app.supabase.get('calendar_config', select='calendar_id,name,email,color')
+    result = app.supabase.get('calendar_config', select='calendar_id,name,email,color,google_cal_id')
     _cal_cache.set('all', result)
     return result
+
+def _make_cal_maps(all_cals):
+    """Build two maps from calendar_config list.
+    Returns (email_map, gcal_id_map):
+      email_map   — calendar_id → contact email (attendee)
+      gcal_id_map — calendar_id → Google Calendar ID to use for events
+    """
+    email_map   = {c['calendar_id']: c['email']
+                   for c in all_cals if c.get('email')}
+    gcal_id_map = {c['calendar_id']: (c.get('google_cal_id') or 'primary')
+                   for c in all_cals}
+    return email_map, gcal_id_map
 
 def get_user_calendars(app, uid):
     """Cached user calendars (90 s)."""
@@ -1575,11 +1587,13 @@ def create_app():
             app.supabase.update('appointments', aid, {'status': 'confirmed'})
             return jsonify({'success': True, 'message': 'Aprobada (sin sincronizacion Google)'})
         try:
-            service   = build('calendar', 'v3', credentials=creds)
-            all_cals  = _get_calendar_config(app)
-            cal_map   = {c['calendar_id']: c['email'] for c in all_cals if c.get('email')}
+            service  = build('calendar', 'v3', credentials=creds)
+            all_cals = _get_calendar_config(app)
+            email_map, gcal_id_map = _make_cal_maps(all_cals)
+            cal_id   = apt.get('calendar_id')
+            gcal_id  = gcal_id_map.get(cal_id, 'primary')
             attendees = []
-            cal_email = cal_map.get(apt.get('calendar_id'))
+            cal_email = email_map.get(cal_id)
             if cal_email: attendees.append({'email': cal_email})
             if apt.get('invitados'):
                 for inv in apt['invitados'].split(','):
@@ -1589,13 +1603,14 @@ def create_app():
             if not attendees: attendees.append({'email': GOOGLE_ACCOUNT_EMAIL})
             event = _build_google_event(apt, attendees)
             existing = service.events().list(
-                calendarId='primary', timeMin=apt['start_time'],
+                calendarId=gcal_id, timeMin=apt['start_time'],
                 timeMax=apt['end_time'], q=apt['title'], maxResults=1).execute()
             created = (existing['items'][0] if existing.get('items')
                        else service.events().insert(
-                            calendarId='primary', body=event, sendUpdates='all').execute())
+                            calendarId=gcal_id, body=event, sendUpdates='all').execute())
             app.supabase.update('appointments', aid,
-                {'status': 'confirmed', 'google_event_id': created.get('id')})
+                {'status': 'confirmed', 'google_event_id': created.get('id'),
+                 'google_cal_id': gcal_id})
             return jsonify({'success': True,
                 'message': f'Aprobada — {len(attendees)} invitado(s) notificado(s)'})
         except google.auth.exceptions.RefreshError:
@@ -1622,7 +1637,7 @@ def create_app():
     @login_required
     def api_delete(aid):
         apts = app.supabase.get('appointments', {'id': aid},
-            select='id,calendar_id,google_event_id')
+            select='id,calendar_id,google_event_id,google_cal_id')
         if not apts: return jsonify({'success': False})
         apt = apts[0]
         if not is_admin() and not user_has_calendar_access(app, current_user.id, apt.get('calendar_id')):
@@ -1630,9 +1645,10 @@ def create_app():
         if apt.get('google_event_id'):
             creds = get_google_creds(app)
             if creds:
+                gcal_id = apt.get('google_cal_id') or 'primary'
                 try:
                     build('calendar', 'v3', credentials=creds).events().delete(
-                        calendarId='primary', eventId=apt['google_event_id']).execute()
+                        calendarId=gcal_id, eventId=apt['google_event_id']).execute()
                 except Exception:
                     pass
         app.supabase.delete('appointments', aid)
@@ -1642,7 +1658,7 @@ def create_app():
     @login_required
     def api_delete_series(parent_id):
         all_apts = app.supabase.get('appointments',
-            select='id,calendar_id,google_event_id,parent_event_id')
+            select='id,calendar_id,google_event_id,google_cal_id,parent_event_id')
         series = [a for a in all_apts
                   if a.get('parent_event_id') == parent_id or a.get('id') == parent_id]
         if not series: return jsonify({'success': False, 'error': 'Serie no encontrada'})
@@ -1652,9 +1668,10 @@ def create_app():
         creds = get_google_creds(app); deleted = 0
         for apt in series:
             if apt.get('google_event_id') and creds:
+                gcal_id = apt.get('google_cal_id') or 'primary'
                 try:
                     build('calendar', 'v3', credentials=creds).events().delete(
-                        calendarId='primary', eventId=apt['google_event_id']).execute()
+                        calendarId=gcal_id, eventId=apt['google_event_id']).execute()
                 except Exception:
                     pass
             app.supabase.delete('appointments', apt['id']); deleted += 1
@@ -1668,7 +1685,7 @@ def create_app():
         if not creds: return jsonify({'success': False, 'error': 'Google no conectado'})
         synced = 0; errors = 0; skipped = 0
         all_cals = _get_calendar_config(app)
-        cal_map  = {c['calendar_id']: c['email'] for c in all_cals if c.get('email')}
+        email_map, gcal_id_map = _make_cal_maps(all_cals)
         service = build('calendar', 'v3', credentials=creds)
         for apt in app.supabase.get('appointments',
                 select='id,title,encargado,tema,client_name,start_time,end_time,calendar_id,'
@@ -1676,15 +1693,18 @@ def create_app():
             if apt.get('status') != 'confirmed' or apt.get('google_event_id'):
                 continue
             try:
+                cal_id  = apt.get('calendar_id')
+                gcal_id = gcal_id_map.get(cal_id, 'primary')
                 existing = service.events().list(
-                    calendarId='primary', timeMin=apt['start_time'],
+                    calendarId=gcal_id, timeMin=apt['start_time'],
                     timeMax=apt['end_time'], q=apt['title'], maxResults=1).execute()
                 if existing.get('items'):
                     app.supabase.update('appointments', apt['id'],
-                        {'google_event_id': existing['items'][0]['id']})
+                        {'google_event_id': existing['items'][0]['id'],
+                         'google_cal_id': gcal_id})
                     skipped += 1; continue
                 attendees = []
-                ce = cal_map.get(apt.get('calendar_id'))
+                ce = email_map.get(cal_id)
                 if ce: attendees.append({'email': ce})
                 if apt.get('invitados'):
                     for inv in apt['invitados'].split(','):
@@ -1693,10 +1713,10 @@ def create_app():
                             attendees.append({'email': inv})
                 if not attendees: attendees.append({'email': GOOGLE_ACCOUNT_EMAIL})
                 event = _build_google_event(apt, attendees)
-                created = service.events().insert(calendarId='primary',
+                created = service.events().insert(calendarId=gcal_id,
                     body=event, sendUpdates='all').execute()
                 app.supabase.update('appointments', apt['id'],
-                    {'google_event_id': created.get('id')})
+                    {'google_event_id': created.get('id'), 'google_cal_id': gcal_id})
                 synced += 1
             except google.auth.exceptions.RefreshError:
                 return jsonify({'success': False, 'synced': synced, 'skipped': skipped,
@@ -1722,17 +1742,20 @@ def create_app():
         try:
             service  = build('calendar', 'v3', credentials=creds)
             all_cals = _get_calendar_config(app)
-            cal_map  = {c['calendar_id']: c['email'] for c in all_cals if c.get('email')}
+            email_map, gcal_id_map = _make_cal_maps(all_cals)
             apts = app.supabase.get('appointments',
                 select='id,title,encargado,tema,client_name,start_time,end_time,calendar_id,'
-                       'invitados,direccion,ciudad,lugar,mapa,notes,meeting_link,status,google_event_id')
+                       'invitados,direccion,ciudad,lugar,mapa,notes,meeting_link,status,'
+                       'google_event_id,google_cal_id')
             for apt in apts:
                 if apt.get('status') != 'confirmed': continue
                 gid = apt.get('google_event_id')
                 if not gid: skipped += 1; continue
                 try:
+                    cal_id   = apt.get('calendar_id')
+                    gcal_id  = apt.get('google_cal_id') or gcal_id_map.get(cal_id, 'primary')
                     attendees = []
-                    ce = cal_map.get(apt.get('calendar_id'))
+                    ce = email_map.get(cal_id)
                     if ce: attendees.append({'email': ce})
                     if apt.get('invitados'):
                         for inv in apt['invitados'].split(','):
@@ -1744,7 +1767,7 @@ def create_app():
                     patch = {'description': ev['description']}
                     if ev.get('location'): patch['location'] = ev['location']
                     service.events().patch(
-                        calendarId='primary', eventId=gid, body=patch).execute()
+                        calendarId=gcal_id, eventId=gid, body=patch).execute()
                     updated += 1
                 except Exception:
                     errors += 1
@@ -1758,6 +1781,69 @@ def create_app():
                 return jsonify({'success': False,
                     'error': 'Google desconectado. Reconecta en /auth/google.'})
             return jsonify({'success': False, 'error': str(e)})
+
+    # ============================================================
+    #  APPOINTMENT UPDATE — re-sync Google Calendar on calendar change
+    # ============================================================
+    @app.route('/calendar/api/appointment/<aid>', methods=['PATCH'])
+    @login_required
+    def api_update_appointment(aid):
+        """Update appointment fields.
+        If calendar_id changes and the appointment is confirmed, deletes the
+        old Google Calendar event and creates a new one in the correct calendar.
+        """
+        if not is_admin(): return jsonify({'success': False, 'error': 'Solo admin'})
+        d = request.get_json() or {}
+        if not d: return jsonify({'success': False, 'error': 'Sin datos'})
+
+        apts = app.supabase.get('appointments', {'id': aid},
+            select='id,calendar_id,google_event_id,google_cal_id,status,'
+                   'title,encargado,tema,client_name,client_email,'
+                   'start_time,end_time,invitados,lugar,direccion,ciudad,mapa,notes,meeting_link')
+        if not apts: return jsonify({'success': False, 'error': 'No encontrado'})
+        apt = apts[0]
+
+        new_cal_id = d.get('calendar_id')
+        old_cal_id = apt.get('calendar_id')
+        cal_changed = new_cal_id and new_cal_id != old_cal_id
+        is_confirmed = apt.get('status') == 'confirmed'
+
+        if cal_changed and apt.get('google_event_id') and is_confirmed:
+            creds = get_google_creds(app)
+            if creds:
+                all_cals = _get_calendar_config(app)
+                email_map, gcal_id_map = _make_cal_maps(all_cals)
+                try:
+                    service = build('calendar', 'v3', credentials=creds)
+                    # Borrar del calendario anterior
+                    old_gcal = apt.get('google_cal_id') or gcal_id_map.get(old_cal_id, 'primary')
+                    try:
+                        service.events().delete(
+                            calendarId=old_gcal, eventId=apt['google_event_id']).execute()
+                    except Exception:
+                        pass
+                    # Crear en el nuevo calendario
+                    merged = {**apt, **d}
+                    new_gcal = gcal_id_map.get(new_cal_id, 'primary')
+                    attendees = []
+                    ce = email_map.get(new_cal_id)
+                    if ce: attendees.append({'email': ce})
+                    if merged.get('invitados'):
+                        for inv in merged['invitados'].split(','):
+                            inv = inv.strip()
+                            if inv and inv not in [a['email'] for a in attendees]:
+                                attendees.append({'email': inv})
+                    if not attendees: attendees.append({'email': GOOGLE_ACCOUNT_EMAIL})
+                    event = _build_google_event(merged, attendees)
+                    created = service.events().insert(
+                        calendarId=new_gcal, body=event, sendUpdates='all').execute()
+                    d['google_event_id'] = created.get('id')
+                    d['google_cal_id']   = new_gcal
+                except Exception as e:
+                    print(f'[api_update_appointment] Google error: {e}')
+
+        ok = app.supabase.update('appointments', aid, d)
+        return jsonify({'success': ok})
 
     # ============================================================
     #  PLANNING MODULE
