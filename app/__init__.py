@@ -94,7 +94,7 @@ class TTLCache:
 
 # Module-level caches (shared across requests in same worker)
 _cal_cache      = TTLCache(ttl=300)   # calendar_config — 5 min
-_user_cal_cache = TTLCache(ttl=90)    # user calendars  — 90 s
+_user_cal_cache = TTLCache(ttl=10)    # user calendars  — 10 s (corto: multi-worker safe)
 _google_cache   = TTLCache(ttl=120)   # google status   — 2 min
 
 
@@ -1172,13 +1172,13 @@ def create_app():
             data['role'] = request.form.get('role')
         if data: app.supabase.update('users', uid, data)
         cal_ids = request.form.getlist('calendars')
-        if cal_ids:
-            for p in app.supabase.get('calendar_permissions', {'user_id': uid}, select='id'):
-                app.supabase.delete('calendar_permissions', p['id'])
-            for cal_id in cal_ids:
-                app.supabase.insert('calendar_permissions',
-                    {'user_id': uid, 'calendar_id': cal_id, 'status': 'approved'})
-        _user_cal_cache.invalidate(uid)  # bust cache
+        # Siempre reemplaza permisos para reflejar exactamente los checkboxes marcados
+        for p in app.supabase.get('calendar_permissions', {'user_id': uid}, select='id'):
+            app.supabase.delete('calendar_permissions', p['id'])
+        for cal_id in cal_ids:
+            app.supabase.insert('calendar_permissions',
+                {'user_id': uid, 'calendar_id': cal_id, 'status': 'approved'})
+        _user_cal_cache.invalidate(uid)  # bust cache local del worker
         flash('Usuario actualizado', 'success')
         return redirect('/admin/users')
 
