@@ -7,7 +7,8 @@
   <meta name="description" content="Sistema de agendamiento profesional con múltiples calendarios, eventos recurrentes, sincronización Google Calendar y control de accesos por usuario.">
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🗓️</text></svg>">
+  <link rel="apple-touch-icon" href="{{ url_for('static', filename='images/map_logo.png') }}">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='14' fill='%23000'/><text x='6' y='72' font-size='54' font-weight='900' fill='%23c8ff00' font-family='Arial,sans-serif'>MAP</text></svg>">
   <!-- PWA -->
   <link rel="manifest" href="/manifest.webmanifest">
   <meta name="theme-color" content="#4f46e5">
@@ -47,8 +48,9 @@
     }
     .lp-nav-inner { max-width: 1200px; margin: 0 auto; padding: 14px 24px; display: flex; align-items: center; justify-content: space-between; gap: 16px; }
     .lp-brand { display: flex; align-items: center; gap: 10px; text-decoration: none; }
-    .lp-logo-box { width: 38px; height: 38px; background: linear-gradient(135deg, var(--primary), var(--accent)); border-radius: 10px; display: grid; place-items: center; font-size: 1.2rem; box-shadow: 0 4px 12px rgba(79,70,229,.35); }
-    .lp-brand-name { font-weight: 800; font-size: 1.15rem; color: var(--ink); letter-spacing: -.4px; }
+    .lp-logo-box { height: 42px; display: flex; align-items: center; }
+    .lp-logo-box img { height: 100%; width: auto; object-fit: contain; }
+    .lp-brand-name { font-weight: 800; font-size: 1.15rem; color: var(--ink); letter-spacing: -.4px; display:none; }
     .lp-brand-name span { color: var(--primary); }
     .lp-nav-links { display: flex; align-items: center; gap: 8px; }
     .lp-btn-ghost { padding: 8px 18px; border-radius: 25px; font-weight: 600; font-size: .85rem; color: var(--gray); text-decoration: none; border: 1px solid var(--border); transition: all .15s; }
@@ -298,8 +300,7 @@
 <nav class="lp-nav">
   <div class="lp-nav-inner">
     <a href="/" class="lp-brand">
-      <div class="lp-logo-box">🗓️</div>
-      <span class="lp-brand-name">calendario<span>MAP</span></span>
+      <div class="lp-logo-box"><img src="{{ url_for('static', filename='images/map_logo.png') }}" alt="MAP Consultoría &amp; Asesoría Planificación"></div>
     </a>
     <div class="lp-nav-links">
       <a href="/login" class="lp-btn-ghost">Iniciar sesión</a>
@@ -554,8 +555,7 @@
 <footer class="lp-footer">
   <div class="lp-footer-inner">
     <div class="lp-brand">
-      <div class="lp-logo-box" style="width:30px;height:30px;font-size:1rem">🗓️</div>
-      <span class="lp-brand-name">calendario<span style="color:#818cf8">MAP</span></span>
+      <div class="lp-logo-box" style="height:34px"><img src="{{ url_for('static', filename='images/map_logo.png') }}" alt="MAP"></div>
     </div>
     <div class="lp-footer-links">
       <a href="/login">Ingresar</a>

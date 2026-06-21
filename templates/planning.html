@@ -1,0 +1,1268 @@
+{% extends "base.html" %}
+{% block title %}Planificación — CalendarioMAP{% endblock %}
+{% block page_title %}Planificación{% endblock %}
+{% block page_sub %}<p class="page-sub">Proyectos, tareas y seguimiento de procesos</p>{% endblock %}
+
+{% block head %}
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<style>
+/* ===== PLANNING STYLES ===== */
+.plan-toolbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:12px}
+.view-tabs{display:flex;gap:4px}
+.view-tab{padding:6px 14px;border:1.5px solid #e2e8f0;border-radius:20px;background:#fff;
+  font-size:.8rem;font-weight:600;cursor:pointer;color:#64748b;transition:.15s}
+.view-tab.active{background:#4f46e5;color:#fff;border-color:#4f46e5}
+.quick-add-bar{display:flex;gap:8px;align-items:center;background:#fff;border:1.5px solid #e2e8f0;
+  border-radius:14px;padding:8px 12px;margin-bottom:14px;box-shadow:0 1px 4px rgba(0,0,0,.06)}
+.quick-add-bar input{flex:1;border:none;outline:none;font-size:.92rem;color:#1e293b;background:transparent}
+.quick-add-bar input::placeholder{color:#94a3b8}
+.quick-add-bar select{border:1px solid #e2e8f0;border-radius:8px;padding:4px 8px;font-size:.8rem;color:#374151;background:#f8fafc}
+.quick-add-bar .btn-qa{background:#4f46e5;color:#fff;border:none;border-radius:10px;padding:6px 16px;
+  font-size:.82rem;font-weight:600;cursor:pointer;white-space:nowrap}
+.quick-add-bar .btn-qa:hover{background:#4338ca}
+
+.stats-row{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:14px}
+.stat-card{background:#fff;border-radius:12px;padding:12px 16px;border:1.5px solid #e2e8f0;
+  display:flex;flex-direction:column;gap:2px;box-shadow:0 1px 3px rgba(0,0,0,.05)}
+.stat-card .sc-num{font-size:1.6rem;font-weight:700;line-height:1}
+.stat-card .sc-lbl{font-size:.75rem;color:#64748b;font-weight:500}
+.stat-card.danger .sc-num{color:#ef4444}
+.stat-card.warning .sc-num{color:#f59e0b}
+.stat-card.success .sc-num{color:#10b981}
+.stat-card.info .sc-num{color:#4f46e5}
+
+/* LIST VIEW */
+.task-table{width:100%;border-collapse:collapse;font-size:.84rem}
+.task-table th{background:#f8fafc;color:#64748b;font-size:.75rem;font-weight:600;
+  text-transform:uppercase;letter-spacing:.04em;padding:8px 12px;border-bottom:1.5px solid #e2e8f0;white-space:nowrap}
+.task-table td{padding:8px 12px;border-bottom:1px solid #f1f5f9;vertical-align:middle}
+.task-table tr:hover td{background:#fafbff}
+.task-table tr.overdue td{background:#fff5f5}
+.task-table tr.due-soon td{background:#fffbeb}
+.prog-bar{width:80px;height:6px;background:#e2e8f0;border-radius:3px;overflow:hidden;display:inline-block;vertical-align:middle}
+.prog-bar-fill{height:100%;background:#10b981;border-radius:3px;transition:.3s}
+
+.badge-status{display:inline-block;padding:3px 10px;border-radius:20px;font-size:.72rem;font-weight:700;white-space:nowrap}
+.bs-pending{background:#fef3c7;color:#92400e}
+.bs-in_progress{background:#dbeafe;color:#1e40af}
+.bs-review{background:#ede9fe;color:#5b21b6}
+.bs-done{background:#d1fae5;color:#065f46}
+.bs-blocked{background:#fee2e2;color:#991b1b}
+
+.badge-prio{display:inline-block;padding:2px 8px;border-radius:20px;font-size:.7rem;font-weight:700}
+.bp-low{background:#f0fdf4;color:#166534;border:1px solid #bbf7d0}
+.bp-medium{background:#fff7ed;color:#9a3412;border:1px solid #fed7aa}
+.bp-high{background:#fef2f2;color:#991b1b;border:1px solid #fecaca}
+.bp-urgent{background:#7c3aed;color:#fff}
+
+.days-badge{display:inline-block;padding:2px 8px;border-radius:20px;font-size:.72rem;font-weight:700}
+.days-ok{background:#f0fdf4;color:#166534}
+.days-warn{background:#fffbeb;color:#92400e}
+.days-over{background:#fee2e2;color:#991b1b}
+
+/* KANBAN */
+.kanban-board{display:flex;gap:12px;overflow-x:auto;padding-bottom:12px;min-height:400px}
+.kanban-col{flex:0 0 220px;background:#f8fafc;border-radius:12px;padding:10px;border:1.5px solid #e2e8f0}
+.kanban-col-header{font-size:.78rem;font-weight:700;padding:6px 10px;border-radius:8px;
+  margin-bottom:8px;text-align:center;border-left:3px solid currentColor}
+.kanban-cards{display:flex;flex-direction:column;gap:8px;min-height:60px}
+.kanban-card{background:#fff;border-radius:10px;padding:10px 12px;cursor:pointer;
+  border:1.5px solid #e2e8f0;box-shadow:0 1px 3px rgba(0,0,0,.06);transition:.15s;user-select:none}
+.kanban-card:hover{border-color:#a5b4fc;box-shadow:0 2px 8px rgba(79,70,229,.12)}
+.kanban-card.dragging{opacity:.5}
+.kanban-card.overdue{border-color:#fca5a5;background:#fff5f5}
+.kanban-card.due-soon{border-color:#fcd34d;background:#fffbeb}
+.kc-title{font-size:.82rem;font-weight:600;color:#1e293b;margin-bottom:4px;line-height:1.3}
+.kc-project{font-size:.72rem;color:#8b5cf6;margin-bottom:5px;font-weight:500}
+.kc-footer{display:flex;align-items:center;gap:5px;flex-wrap:wrap}
+.kc-assigned{font-size:.7rem;color:#64748b;background:#f1f5f9;padding:1px 6px;border-radius:10px}
+.kc-progress{height:4px;background:#e2e8f0;border-radius:2px;margin-top:6px;overflow:hidden}
+.kc-progress div{height:100%;background:#4f46e5;border-radius:2px}
+.kanban-col.drag-over .kanban-cards{background:#ede9fe;border-radius:8px}
+.kanban-drop-hint{text-align:center;color:#a5b4fc;font-size:.78rem;padding:10px;display:none}
+.kanban-col.drag-over .kanban-drop-hint{display:block}
+
+/* GANTT */
+.gantt-wrap{overflow-x:auto}
+.gantt-container{min-width:800px;font-size:.8rem}
+.gantt-axis{display:flex;border-bottom:2px solid #e2e8f0;margin-bottom:4px;position:relative;height:28px}
+.gantt-month-label{position:absolute;font-size:.72rem;color:#64748b;font-weight:600;padding-top:6px}
+.gantt-today-label{position:absolute;font-size:.7rem;color:#ef4444;font-weight:700;padding-top:2px;
+  transform:translateX(-50%);white-space:nowrap}
+.gantt-rows{position:relative}
+.gantt-row{display:flex;align-items:center;height:34px;border-bottom:1px solid #f1f5f9}
+.gantt-row:hover{background:#fafbff}
+.gantt-label{width:200px;flex-shrink:0;padding-right:12px;font-size:.8rem;color:#1e293b;
+  font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer}
+.gantt-label:hover{color:#4f46e5}
+.gantt-timeline{flex:1;position:relative;height:100%;display:flex;align-items:center}
+.gantt-bar{position:absolute;height:18px;border-radius:4px;opacity:.9;cursor:pointer;
+  display:flex;align-items:center;padding:0 6px;font-size:.7rem;font-weight:600;color:#fff;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:4px}
+.gantt-bar:hover{opacity:1;z-index:10}
+.gantt-today-line{position:absolute;top:0;bottom:0;width:2px;background:#ef4444;z-index:5;pointer-events:none}
+.gantt-gridline{position:absolute;top:0;bottom:0;width:1px;background:#f1f5f9;z-index:1}
+
+/* PROCESS MAP */
+.map-wrap{background:#fff;border-radius:14px;border:1.5px solid #e2e8f0;padding:24px;min-height:300px;overflow:auto}
+.map-legend{display:flex;gap:16px;flex-wrap:wrap;margin-bottom:16px;padding:10px 16px;
+  background:#f8fafc;border-radius:10px;font-size:.78rem}
+.map-legend-item{display:flex;align-items:center;gap:5px;font-weight:500}
+.map-legend-dot{width:12px;height:12px;border-radius:3px}
+.mermaid-container svg{max-width:100%;height:auto}
+
+/* PROJECT PILLS */
+.project-pills{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px}
+.proj-pill{padding:4px 12px;border-radius:20px;font-size:.78rem;font-weight:600;cursor:pointer;
+  border:1.5px solid;transition:.15s}
+.proj-pill.active{color:#fff}
+.proj-pill-all{border-color:#94a3b8;color:#64748b;background:#f8fafc}
+.proj-pill-all.active{background:#64748b;color:#fff;border-color:#64748b}
+
+/* MODALS */
+.plan-modal .modal-header{background:linear-gradient(135deg,#4f46e5,#7c3aed);color:#fff}
+.plan-modal .nav-tabs .nav-link{color:#64748b;font-size:.82rem}
+.plan-modal .nav-tabs .nav-link.active{color:#4f46e5;font-weight:600}
+.modal-section-label{font-size:.72rem;font-weight:700;text-transform:uppercase;
+  letter-spacing:.06em;color:#64748b;margin-bottom:6px;margin-top:12px}
+.phase-sug{position:absolute;z-index:100;background:#fff;border:1.5px solid #e2e8f0;
+  border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.1);max-height:160px;overflow-y:auto}
+.phase-sug-item{padding:6px 12px;cursor:pointer;font-size:.82rem;color:#374151}
+.phase-sug-item:hover{background:#ede9fe;color:#4f46e5}
+input[type=range].prog-range{accent-color:#4f46e5;width:100%}
+
+/* OVERDUE ALERT */
+.overdue-alert{background:#fff5f5;border:1.5px solid #fca5a5;border-radius:10px;
+  padding:10px 16px;margin-bottom:12px;font-size:.83rem;color:#991b1b;display:flex;
+  align-items:center;gap:8px}
+
+/* Action buttons in table */
+.btn-xs{padding:3px 10px;font-size:.73rem;border-radius:8px;border:none;cursor:pointer;font-weight:600}
+.btn-xs-edit{background:#ede9fe;color:#5b21b6}
+.btn-xs-del{background:#fee2e2;color:#991b1b}
+.btn-xs-edit:hover{background:#ddd6fe}
+.btn-xs-del:hover{background:#fecaca}
+
+@media(max-width:768px){
+  .stats-row{grid-template-columns:1fr 1fr}
+  .plan-toolbar{flex-direction:column;align-items:stretch}
+  .view-tabs{overflow-x:auto}
+}
+</style>
+{% endblock %}
+
+{% block topbar_actions %}
+{% if ms_connected %}
+<button class="btn btn-outline-primary btn-sm rounded-pill" onclick="openImportTodoModal()" title="Importar desde Microsoft To-Do">
+  📋 Microsoft To-Do
+</button>
+{% else %}
+<a href="/auth/microsoft" class="btn btn-outline-secondary btn-sm rounded-pill" title="Conectar Microsoft To-Do">
+  🔗 Conectar To-Do
+</a>
+{% endif %}
+<label class="btn btn-outline-secondary btn-sm rounded-pill mb-0" title="Importar desde Excel" style="cursor:pointer">
+  📥 Excel
+  <input type="file" id="excelInput" accept=".xlsx,.xls" style="display:none" onchange="importExcel(this)">
+</label>
+<button class="btn btn-outline-secondary btn-sm rounded-pill" onclick="exportExcel()" title="Exportar a Excel">
+  📤 Excel
+</button>
+{% endblock %}
+
+{% block content %}
+
+<!-- ALERT OVERDUE -->
+<div id="overdueAlert" class="overdue-alert" style="display:none">
+  🚨 <strong>Tienes <span id="overdueCount">0</span> tarea(s) vencida(s).</strong>
+  <a href="#" onclick="filterOverdue(); return false" style="color:#991b1b;font-weight:700;text-decoration:underline">Ver</a>
+</div>
+
+<!-- STATS -->
+<div class="stats-row" id="statsRow">
+  <div class="stat-card info"><div class="sc-num" id="stTotal">0</div><div class="sc-lbl">Total tareas</div></div>
+  <div class="stat-card danger"><div class="sc-num" id="stOverdue">0</div><div class="sc-lbl">Vencidas</div></div>
+  <div class="stat-card warning"><div class="sc-num" id="stInProg">0</div><div class="sc-lbl">En progreso</div></div>
+  <div class="stat-card success"><div class="sc-num" id="stDone">0</div><div class="sc-lbl">Completadas</div></div>
+</div>
+
+<!-- TOOLBAR -->
+<div class="plan-toolbar">
+  <div class="view-tabs">
+    <button class="view-tab active" data-view="list" onclick="setView('list')">📋 Lista</button>
+    <button class="view-tab" data-view="kanban" onclick="setView('kanban')">🗂 Kanban</button>
+    <button class="view-tab" data-view="gantt" onclick="setView('gantt')">📊 Gantt</button>
+    <button class="view-tab" data-view="map" onclick="setView('map')">🗺 Mapa proceso</button>
+  </div>
+  <div style="flex:1"></div>
+  <input id="searchInput" class="form-control form-control-sm" style="max-width:200px"
+    placeholder="🔍 Buscar tarea..." oninput="renderCurrentView()">
+  <select id="filterStatus" class="form-select form-select-sm" style="max-width:160px" onchange="renderCurrentView()">
+    <option value="">Todos los estados</option>
+    <option value="pending">Pendiente</option>
+    <option value="in_progress">En Progreso</option>
+    <option value="review">En Revisión</option>
+    <option value="done">Completado</option>
+    <option value="blocked">Bloqueado</option>
+  </select>
+  <button class="btn btn-primary btn-sm rounded-pill" onclick="openProjectModal(null)">+ Proyecto</button>
+</div>
+
+<!-- PROJECT PILLS -->
+<div class="project-pills" id="projectPills">
+  <span class="proj-pill proj-pill-all active" onclick="setProject(null)">Todos</span>
+</div>
+
+<!-- QUICK ADD -->
+<div class="quick-add-bar">
+  <input id="qTitle" placeholder="+ Agregar tarea rápida — escribe y presiona Enter..."
+    onkeydown="if(event.key==='Enter') quickAdd()">
+  <select id="qProject" style="max-width:140px">
+    <option value="">Sin proyecto</option>
+  </select>
+  <select id="qPriority">
+    <option value="medium">🟡 Media</option>
+    <option value="low">🟢 Baja</option>
+    <option value="high">🔴 Alta</option>
+    <option value="urgent">🚨 Urgente</option>
+  </select>
+  <button class="btn-qa" onclick="quickAdd()">+ Agregar</button>
+</div>
+
+<!-- ===== VIEWS ===== -->
+<div id="view-list">
+  <div class="table-responsive">
+    <table class="task-table">
+      <thead>
+        <tr>
+          <th>#</th><th>Tarea</th><th>Proyecto</th><th>Fase</th>
+          <th>Prioridad</th><th>Asignado</th><th>Vencimiento</th>
+          <th>Días</th><th>Progreso</th><th>Estado</th><th>Acciones</th>
+        </tr>
+      </thead>
+      <tbody id="taskTableBody"></tbody>
+    </table>
+    <div id="listEmpty" class="text-center text-muted py-5" style="display:none">
+      <div style="font-size:2rem">📋</div>
+      No hay tareas. Agrega la primera usando la barra de arriba.
+    </div>
+  </div>
+</div>
+
+<div id="view-kanban" style="display:none"></div>
+<div id="view-gantt" style="display:none"><div class="gantt-wrap" id="ganttInner"></div></div>
+<div id="view-map" style="display:none">
+  <div class="map-legend">
+    <span class="map-legend-item"><span class="map-legend-dot" style="background:#fef3c7;border:1px solid #f59e0b"></span> Pendiente</span>
+    <span class="map-legend-item"><span class="map-legend-dot" style="background:#dbeafe;border:1px solid #3b82f6"></span> En Progreso</span>
+    <span class="map-legend-item"><span class="map-legend-dot" style="background:#d1fae5;border:1px solid #10b981"></span> Completada</span>
+    <span class="map-legend-item"><span class="map-legend-dot" style="background:#fee2e2;border:1px solid #ef4444"></span> Bloqueada</span>
+  </div>
+  <div class="map-wrap"><div id="mapDiagram"></div></div>
+</div>
+
+<!-- ========= TASK MODAL ========= -->
+<div class="modal fade plan-modal" id="taskModal" tabindex="-1">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-content border-0 shadow">
+      <div class="modal-header">
+        <h5 class="modal-title text-white" id="taskModalTitle">📝 Nueva tarea</h5>
+        <button class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="mTaskId">
+
+        <!-- TABS -->
+        <ul class="nav nav-tabs mb-3" id="taskTabs">
+          <li class="nav-item"><a class="nav-link active" data-bs-toggle="tab" href="#tabBasic">📋 Básico</a></li>
+          <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#tabDates">📅 Fechas</a></li>
+          <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#tabExtra">📎 Adicional</a></li>
+        </ul>
+        <div class="tab-content">
+
+          <!-- TAB BÁSICO -->
+          <div class="tab-pane fade show active" id="tabBasic">
+            <div class="mb-3">
+              <label class="form-label fw-semibold">TÍTULO *</label>
+              <input id="mTitle" class="form-control" placeholder="Descripción de la tarea..." required>
+            </div>
+            <div class="row mb-3">
+              <div class="col-md-6">
+                <label class="form-label fw-semibold">PROYECTO</label>
+                <select id="mProject" class="form-select">
+                  <option value="">Sin proyecto</option>
+                </select>
+              </div>
+              <div class="col-md-6 position-relative">
+                <label class="form-label fw-semibold">FASE / ETAPA</label>
+                <input id="mPhase" class="form-control" placeholder="Ej: Análisis, Desarrollo, Revisión..."
+                  autocomplete="off" oninput="showPhaseSuggestions(this.value)">
+                <div class="phase-sug" id="phaseSug" style="display:none"></div>
+              </div>
+            </div>
+            <div class="row mb-3">
+              <div class="col-md-4">
+                <label class="form-label fw-semibold">PRIORIDAD</label>
+                <select id="mPriority" class="form-select">
+                  <option value="low">🟢 Baja</option>
+                  <option value="medium" selected>🟡 Media</option>
+                  <option value="high">🔴 Alta</option>
+                  <option value="urgent">🚨 Urgente</option>
+                </select>
+              </div>
+              <div class="col-md-8">
+                <label class="form-label fw-semibold">ESTADO</label>
+                <select id="mStatus" class="form-select" onchange="onStatusChange()">
+                  <option value="pending">⏳ Pendiente</option>
+                  <option value="in_progress">⚙️ En Progreso</option>
+                  <option value="review">🔍 En Revisión</option>
+                  <option value="done">✅ Completado</option>
+                  <option value="blocked">🚫 Bloqueado</option>
+                </select>
+              </div>
+            </div>
+            <div class="row mb-3">
+              <div class="col-md-6">
+                <label class="form-label fw-semibold">ASIGNADO A</label>
+                <input id="mAssigned" class="form-control" placeholder="Nombre del responsable">
+              </div>
+              <div class="col-md-6">
+                <label class="form-label fw-semibold">EMAIL RESPONSABLE</label>
+                <input id="mEmail" type="email" class="form-control" placeholder="correo@ejemplo.com">
+              </div>
+            </div>
+            <div class="mb-3">
+              <label class="form-label fw-semibold">DESCRIPCIÓN</label>
+              <textarea id="mDesc" class="form-control" rows="3" placeholder="Detalle de la tarea..."></textarea>
+            </div>
+          </div>
+
+          <!-- TAB FECHAS -->
+          <div class="tab-pane fade" id="tabDates">
+            <div class="row mb-3">
+              <div class="col-md-6">
+                <label class="form-label fw-semibold">FECHA DE INICIO</label>
+                <input id="mStartDate" type="date" class="form-control">
+              </div>
+              <div class="col-md-6">
+                <label class="form-label fw-semibold">FECHA DE VENCIMIENTO</label>
+                <input id="mDueDate" type="date" class="form-control">
+              </div>
+            </div>
+            <div class="row mb-3">
+              <div class="col-md-6">
+                <label class="form-label fw-semibold">FECHA DE COMPLETADO</label>
+                <input id="mCompDate" type="date" class="form-control">
+              </div>
+              <div class="col-md-6">
+                <label class="form-label fw-semibold">ALERTAR (días antes del vencimiento)</label>
+                <input id="mAlertDays" type="number" class="form-control" value="3" min="0" max="60">
+              </div>
+            </div>
+            <div class="mb-3">
+              <label class="form-label fw-semibold">PROGRESO: <span id="progLabel">0</span>%</label>
+              <input id="mProgress" type="range" class="prog-range" min="0" max="100" value="0"
+                oninput="document.getElementById('progLabel').textContent=this.value">
+            </div>
+            <div id="daysInfoBox" class="p-3 rounded" style="background:#f8fafc;font-size:.83rem;display:none">
+              <div class="row text-center">
+                <div class="col"><strong id="daysElapsed">—</strong><br><small class="text-muted">Días transcurridos</small></div>
+                <div class="col"><strong id="daysRemaining">—</strong><br><small class="text-muted">Días restantes</small></div>
+                <div class="col"><strong id="daysDuration">—</strong><br><small class="text-muted">Duración total</small></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- TAB ADICIONAL -->
+          <div class="tab-pane fade" id="tabExtra">
+            <div class="mb-3">
+              <label class="form-label fw-semibold">ETIQUETAS <small class="text-muted">(separadas por coma)</small></label>
+              <input id="mTags" class="form-control" placeholder="diseño, urgente, cliente-abc">
+            </div>
+            <div class="mb-3">
+              <label class="form-label fw-semibold">NOTAS INTERNAS</label>
+              <textarea id="mNotes" class="form-control" rows="4" placeholder="Notas, comentarios, actualizaciones..."></textarea>
+            </div>
+            <div class="mb-1" id="sourceBox" style="display:none">
+              <label class="form-label fw-semibold">FUENTE</label>
+              <input id="mSource" class="form-control" readonly style="background:#f8fafc;color:#64748b">
+            </div>
+          </div>
+
+        </div><!-- tab-content -->
+      </div>
+      <div class="modal-footer justify-content-between">
+        <button class="btn btn-outline-danger btn-sm" id="btnDeleteTask" onclick="deleteTask()" style="display:none">🗑 Eliminar</button>
+        <div class="d-flex gap-2">
+          <button class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+          <button class="btn btn-primary" onclick="saveTask()">💾 Guardar tarea</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ========= PROJECT MODAL ========= -->
+<div class="modal fade plan-modal" id="projectModal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content border-0 shadow">
+      <div class="modal-header">
+        <h5 class="modal-title text-white" id="projModalTitle">📁 Nuevo proyecto</h5>
+        <button class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="mProjId">
+        <div class="mb-3">
+          <label class="form-label fw-semibold">NOMBRE *</label>
+          <input id="mProjName" class="form-control" placeholder="Nombre del proyecto">
+        </div>
+        <div class="row mb-3">
+          <div class="col-md-6">
+            <label class="form-label fw-semibold">ESTADO</label>
+            <select id="mProjStatus" class="form-select">
+              <option value="active">Activo</option>
+              <option value="paused">Pausado</option>
+              <option value="completed">Completado</option>
+              <option value="cancelled">Cancelado</option>
+            </select>
+          </div>
+          <div class="col-md-4">
+            <label class="form-label fw-semibold">COLOR</label>
+            <input id="mProjColor" type="color" class="form-control form-control-color w-100" value="#4f46e5">
+          </div>
+          <div class="col-md-2 d-flex align-items-end">
+            <div class="w-100 text-center py-1 rounded fw-bold text-white" id="projColorPreview" style="background:#4f46e5;font-size:.75rem">Vista</div>
+          </div>
+        </div>
+        <div class="row mb-3">
+          <div class="col-md-6">
+            <label class="form-label fw-semibold">FECHA INICIO</label>
+            <input id="mProjStart" type="date" class="form-control">
+          </div>
+          <div class="col-md-6">
+            <label class="form-label fw-semibold">FECHA FIN</label>
+            <input id="mProjDue" type="date" class="form-control">
+          </div>
+        </div>
+        <div class="mb-3">
+          <label class="form-label fw-semibold">DESCRIPCIÓN</label>
+          <textarea id="mProjDesc" class="form-control" rows="2" placeholder="Descripción del proyecto..."></textarea>
+        </div>
+        <div class="mb-3">
+          <label class="form-label fw-semibold">RESPONSABLE</label>
+          <input id="mProjOwner" class="form-control" placeholder="Nombre del responsable del proyecto">
+        </div>
+      </div>
+      <div class="modal-footer justify-content-between">
+        <button class="btn btn-outline-danger btn-sm" id="btnDeleteProj" onclick="deleteProject()" style="display:none">🗑 Eliminar</button>
+        <div class="d-flex gap-2">
+          <button class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+          <button class="btn btn-primary" onclick="saveProject()">💾 Guardar</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ========= IMPORT MICROSOFT TO-DO MODAL ========= -->
+<div class="modal fade" id="importTodoModal" tabindex="-1">
+  <div class="modal-dialog modal-sm">
+    <div class="modal-content border-0 shadow">
+      <div class="modal-header" style="background:#0078d4;color:#fff">
+        <h6 class="modal-title">📋 Importar Microsoft To-Do</h6>
+        <button class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body text-center py-4">
+        <img src="{{ url_for('static', filename='images/map_logo.png') }}" alt="MAP" style="max-width:160px;height:auto;margin-bottom:16px;display:block;margin-left:auto;margin-right:auto">
+        <p class="mb-1" style="font-size:.85rem">Importa todas tus listas y tareas de <strong>Microsoft To-Do</strong> al módulo de planificación.</p>
+        <p class="text-muted mb-3" style="font-size:.78rem">Las tareas existentes no se duplican. La lista de origen se guarda como etiqueta.</p>
+        <button class="btn w-100 fw-bold" style="background:#0078d4;color:#fff" onclick="doImportTodo()">
+          Importar ahora
+        </button>
+        <div id="importTodoResult" class="mt-3" style="display:none;font-size:.83rem"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ===== SCRIPT ===== -->
+<script>
+mermaid.initialize({ startOnLoad: false, theme: 'default',
+  flowchart: { curve: 'basis', nodeSpacing: 40, rankSpacing: 60 } });
+
+// ——————————————————————————————————————————
+//  STATE
+// ——————————————————————————————————————————
+let allTasks = [], allProjects = [], curProject = null, curView = 'list';
+let editingTaskId = null, editingProjectId = null;
+let dragTaskId = null;
+const today = new Date(); today.setHours(0,0,0,0);
+
+const STATUS_LABELS = {
+  pending:'Pendiente', in_progress:'En Progreso', review:'En Revisión',
+  done:'Completado', blocked:'Bloqueado'
+};
+const STATUS_COLS = {
+  pending:'#f59e0b', in_progress:'#3b82f6', review:'#8b5cf6',
+  done:'#10b981', blocked:'#ef4444'
+};
+const PRIO_LABELS = { low:'Baja', medium:'Media', high:'Alta', urgent:'Urgente' };
+const BAR_COLORS = {
+  pending:'#f59e0b', in_progress:'#4f46e5', review:'#8b5cf6',
+  done:'#10b981', blocked:'#ef4444'
+};
+
+// ——————————————————————————————————————————
+//  BOOTSTRAP QUERY PARAM — open initial view
+// ——————————————————————————————————————————
+document.addEventListener('DOMContentLoaded', () => {
+  const params = new URLSearchParams(location.search);
+  const v = params.get('view');
+  if (v && ['list','kanban','gantt','map'].includes(v)) setView(v, false);
+  loadData();
+});
+
+// ——————————————————————————————————————————
+//  DATA LOADING
+// ——————————————————————————————————————————
+async function loadData() {
+  try {
+    const [proj, tasks] = await Promise.all([
+      fetch('/planning/api/projects').then(r => r.json()),
+      fetch('/planning/api/tasks').then(r => r.json()),
+    ]);
+    allProjects = Array.isArray(proj) ? proj : [];
+    allTasks    = Array.isArray(tasks) ? tasks : [];
+  } catch(e) {
+    allProjects = []; allTasks = [];
+  }
+  renderAll();
+}
+
+// ——————————————————————————————————————————
+//  RENDER ALL
+// ——————————————————————————————————————————
+function renderAll() {
+  renderProjectPills();
+  fillProjectSelects();
+  updateStats();
+  renderCurrentView();
+}
+
+function filteredTasks() {
+  let t = allTasks;
+  if (curProject) t = t.filter(x => x.project_id === curProject);
+  const s = document.getElementById('filterStatus').value;
+  if (s) t = t.filter(x => (x.status || 'pending') === s);
+  const q = (document.getElementById('searchInput').value || '').toLowerCase();
+  if (q) t = t.filter(x => (x.title||'').toLowerCase().includes(q) ||
+    (x.description||'').toLowerCase().includes(q) ||
+    (x.assigned_to||'').toLowerCase().includes(q));
+  return t;
+}
+
+// ——————————————————————————————————————————
+//  STATS
+// ——————————————————————————————————————————
+function updateStats() {
+  const t = curProject ? allTasks.filter(x => x.project_id === curProject) : allTasks;
+  const overdue = t.filter(x => x.due_date && x.status !== 'done' &&
+    new Date(x.due_date) < today).length;
+  document.getElementById('stTotal').textContent = t.length;
+  document.getElementById('stOverdue').textContent = overdue;
+  document.getElementById('stInProg').textContent = t.filter(x => x.status === 'in_progress').length;
+  document.getElementById('stDone').textContent = t.filter(x => x.status === 'done').length;
+  const alert = document.getElementById('overdueAlert');
+  if (overdue > 0) {
+    alert.style.display = 'flex';
+    document.getElementById('overdueCount').textContent = overdue;
+  } else {
+    alert.style.display = 'none';
+  }
+}
+
+function filterOverdue() {
+  document.getElementById('filterStatus').value = '';
+  setView('list');
+  // highlight overdue
+  document.getElementById('searchInput').value = '';
+  renderCurrentView();
+  setTimeout(() => {
+    document.querySelectorAll('.task-table tr.overdue').forEach(r =>
+      r.scrollIntoView({ behavior: 'smooth', block: 'nearest' }));
+  }, 300);
+}
+
+// ——————————————————————————————————————————
+//  PROJECT PILLS
+// ——————————————————————————————————————————
+function renderProjectPills() {
+  const c = document.getElementById('projectPills');
+  c.innerHTML = `<span class="proj-pill proj-pill-all ${!curProject?'active':''}" onclick="setProject(null)">Todos</span>`;
+  allProjects.forEach(p => {
+    c.innerHTML += `<span class="proj-pill ${curProject===p.id?'active':''}"
+      style="border-color:${p.color};${curProject===p.id?'background:'+p.color+';color:#fff':''}"
+      onclick="setProject('${p.id}')"
+      ondblclick="openProjectModal('${p.id}')"
+      title="Doble clic para editar">
+      ${esc(p.name)}
+    </span>`;
+  });
+}
+
+function setProject(id) {
+  curProject = id;
+  renderAll();
+}
+
+function fillProjectSelects() {
+  const opts = allProjects.map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('');
+  document.querySelectorAll('#qProject,#mProject').forEach(s => {
+    const prev = s.value;
+    s.innerHTML = '<option value="">Sin proyecto</option>' + opts;
+    if (prev) s.value = prev;
+  });
+}
+
+// ——————————————————————————————————————————
+//  VIEW SWITCHING
+// ——————————————————————————————————————————
+function setView(v, render=true) {
+  curView = v;
+  document.querySelectorAll('.view-tab').forEach(b =>
+    b.classList.toggle('active', b.dataset.view === v));
+  ['list','kanban','gantt','map'].forEach(name =>
+    document.getElementById('view-'+name).style.display = (name===v ? '' : 'none'));
+  if (render) renderCurrentView();
+}
+
+function renderCurrentView() {
+  if (curView === 'list') renderList();
+  else if (curView === 'kanban') renderKanban();
+  else if (curView === 'gantt') renderGantt();
+  else if (curView === 'map') renderMap();
+}
+
+// ——————————————————————————————————————————
+//  LIST VIEW
+// ——————————————————————————————————————————
+function renderList() {
+  const tasks = filteredTasks();
+  const tbody = document.getElementById('taskTableBody');
+  const empty = document.getElementById('listEmpty');
+  if (!tasks.length) { tbody.innerHTML=''; empty.style.display=''; return; }
+  empty.style.display = 'none';
+  tbody.innerHTML = tasks.map((t,i) => {
+    const proj = allProjects.find(p => p.id === t.project_id);
+    const dl = daysLeft(t.due_date, t.status);
+    const rowCls = dl !== null && dl < 0 && t.status !== 'done' ? 'overdue' :
+                   dl !== null && dl <= 3 && t.status !== 'done' ? 'due-soon' : '';
+    const daysBadge = daysBadgeHtml(dl, t.status);
+    const prog = t.progress_pct || 0;
+    return `<tr class="${rowCls}" onclick="openTask('${t.id}')" style="cursor:pointer">
+      <td class="text-muted">${i+1}</td>
+      <td><strong>${esc(t.title)}</strong>${t.tags ? `<br><small class="text-muted">${esc(t.tags)}</small>` : ''}</td>
+      <td>${proj ? `<span style="color:${proj.color};font-weight:600;font-size:.78rem">${esc(proj.name)}</span>` : '<span class="text-muted">—</span>'}</td>
+      <td><span class="text-muted" style="font-size:.8rem">${esc(t.phase||'—')}</span></td>
+      <td><span class="badge-prio bp-${t.priority||'medium'}">${PRIO_LABELS[t.priority]||'Media'}</span></td>
+      <td style="font-size:.8rem;color:#374151">${esc(t.assigned_to||'—')}</td>
+      <td style="font-size:.8rem;white-space:nowrap">${t.due_date ? fmtDate(t.due_date) : '<span class="text-muted">—</span>'}</td>
+      <td>${daysBadge}</td>
+      <td>
+        <div class="prog-bar" title="${prog}% completado"><div class="prog-bar-fill" style="width:${prog}%"></div></div>
+        <small class="text-muted ms-1">${prog}%</small>
+      </td>
+      <td><span class="badge-status bs-${t.status||'pending'}">${STATUS_LABELS[t.status||'pending']}</span></td>
+      <td onclick="event.stopPropagation()">
+        <button class="btn-xs btn-xs-edit" onclick="openTask('${t.id}')">✏️</button>
+        <button class="btn-xs btn-xs-del" onclick="confirmDelete('${t.id}','${esc(t.title).replace(/'/g,"\\'")}')">🗑</button>
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+function daysBadgeHtml(dl, status) {
+  if (status === 'done') return '<span class="days-badge days-ok">✅</span>';
+  if (dl === null) return '<span class="text-muted">—</span>';
+  if (dl < 0) return `<span class="days-badge days-over">Vencida ${Math.abs(dl)}d</span>`;
+  if (dl <= 3) return `<span class="days-badge days-warn">⚠️ ${dl}d</span>`;
+  return `<span class="days-badge days-ok">${dl}d</span>`;
+}
+
+// ——————————————————————————————————————————
+//  KANBAN VIEW
+// ——————————————————————————————————————————
+function renderKanban() {
+  const tasks = filteredTasks();
+  const COLS = [
+    { key:'pending', label:'Pendiente', icon:'⏳' },
+    { key:'in_progress', label:'En Progreso', icon:'⚙️' },
+    { key:'review', label:'En Revisión', icon:'🔍' },
+    { key:'done', label:'Completado', icon:'✅' },
+    { key:'blocked', label:'Bloqueado', icon:'🚫' },
+  ];
+  const wrap = document.getElementById('view-kanban');
+  wrap.innerHTML = '<div class="kanban-board">' + COLS.map(col => {
+    const cTasks = tasks.filter(t => (t.status||'pending') === col.key);
+    return `<div class="kanban-col" data-status="${col.key}"
+        ondragover="event.preventDefault(); this.classList.add('drag-over')"
+        ondragleave="this.classList.remove('drag-over')"
+        ondrop="onDrop(event,'${col.key}')">
+      <div class="kanban-col-header" style="color:${STATUS_COLS[col.key]};border-color:${STATUS_COLS[col.key]}">
+        ${col.icon} ${col.label} <span class="badge bg-secondary ms-1" style="font-size:.72rem">${cTasks.length}</span>
+      </div>
+      <div class="kanban-cards" id="kcol-${col.key}">
+        <div class="kanban-drop-hint">Soltar aquí</div>
+        ${cTasks.map(t => kanbanCard(t)).join('')}
+      </div>
+    </div>`;
+  }).join('') + '</div>';
+}
+
+function kanbanCard(t) {
+  const proj = allProjects.find(p => p.id === t.project_id);
+  const dl = daysLeft(t.due_date, t.status);
+  const cls = (dl !== null && dl < 0 && t.status !== 'done') ? 'overdue' :
+              (dl !== null && dl <= 3 && t.status !== 'done') ? 'due-soon' : '';
+  const prog = t.progress_pct || 0;
+  return `<div class="kanban-card ${cls}" draggable="true"
+      ondragstart="onDragStart(event,'${t.id}')"
+      onclick="openTask('${t.id}')">
+    <div class="kc-title">${esc(t.title)}</div>
+    ${proj ? `<div class="kc-project" style="color:${proj.color}">📁 ${esc(proj.name)}</div>` : ''}
+    <div class="kc-footer">
+      <span class="badge-prio bp-${t.priority||'medium'}" style="font-size:.68rem">${PRIO_LABELS[t.priority||'medium']}</span>
+      ${dl !== null ? daysBadgeHtml(dl, t.status) : ''}
+      ${t.assigned_to ? `<span class="kc-assigned">${esc(t.assigned_to.split(' ')[0])}</span>` : ''}
+    </div>
+    ${prog > 0 ? `<div class="kc-progress"><div style="width:${prog}%;background:${STATUS_COLS[t.status||'pending']}"></div></div>` : ''}
+  </div>`;
+}
+
+function onDragStart(e, tid) {
+  dragTaskId = tid;
+  setTimeout(() => { const el = e.target; if(el) el.classList.add('dragging'); }, 0);
+}
+
+function onDrop(e, newStatus) {
+  e.preventDefault();
+  document.querySelectorAll('.kanban-col').forEach(c => c.classList.remove('drag-over'));
+  if (!dragTaskId) return;
+  const t = allTasks.find(x => x.id === dragTaskId);
+  if (!t || t.status === newStatus) return;
+  const patch = { status: newStatus };
+  if (newStatus === 'done' && !t.completed_date)
+    patch.completed_date = new Date().toISOString().split('T')[0];
+  fetch(`/planning/api/tasks/${dragTaskId}`, {
+    method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify(patch)
+  }).then(r => r.json()).then(d => {
+    if (d.success) { t.status = newStatus; if(patch.completed_date) t.completed_date = patch.completed_date; renderAll(); }
+  });
+  dragTaskId = null;
+}
+
+// ——————————————————————————————————————————
+//  GANTT VIEW
+// ——————————————————————————————————————————
+function renderGantt() {
+  const tasks = filteredTasks().filter(t => t.start_date || t.due_date);
+  const el = document.getElementById('ganttInner');
+  if (!tasks.length) {
+    el.innerHTML = '<div class="text-center text-muted py-5">📊 No hay tareas con fechas. Asigna fechas de inicio y vencimiento.</div>';
+    return;
+  }
+  // Compute bounds
+  const allDates = [];
+  tasks.forEach(t => {
+    if (t.start_date) allDates.push(new Date(t.start_date));
+    if (t.due_date)   allDates.push(new Date(t.due_date));
+  });
+  const minD = new Date(Math.min(...allDates)); minD.setDate(minD.getDate()-3);
+  const maxD = new Date(Math.max(...allDates)); maxD.setDate(maxD.getDate()+3);
+  const span = maxD - minD;
+  const pct = d => Math.max(0, Math.min(100, (new Date(d) - minD) / span * 100));
+  const todayPct = pct(today);
+
+  // Month axis labels
+  let axisHtml = '';
+  let cur = new Date(minD); cur.setDate(1);
+  while (cur <= maxD) {
+    const p = pct(cur);
+    axisHtml += `<span class="gantt-month-label" style="left:${p.toFixed(1)}%">
+      ${cur.toLocaleString('es',{month:'short'})} ${cur.getFullYear().toString().slice(-2)}
+    </span>`;
+    cur.setMonth(cur.getMonth()+1);
+  }
+
+  // Sort by start_date or due_date
+  const sorted = [...tasks].sort((a,b) =>
+    (a.start_date||a.due_date||'') < (b.start_date||b.due_date||'') ? -1 : 1);
+
+  // Group by project
+  const projMap = {};
+  sorted.forEach(t => { const k = t.project_id||'__none'; if(!projMap[k]) projMap[k]=[]; projMap[k].push(t); });
+
+  let rowsHtml = '';
+  Object.entries(projMap).forEach(([pid, ptasks]) => {
+    const proj = allProjects.find(p => p.id === pid);
+    if (proj) rowsHtml += `<div class="gantt-row" style="background:#f8fafc">
+      <div class="gantt-label" style="color:${proj.color};font-size:.78rem;font-weight:700">📁 ${esc(proj.name)}</div>
+      <div class="gantt-timeline"></div>
+    </div>`;
+    ptasks.forEach(t => {
+      const sD = t.start_date ? new Date(t.start_date) : new Date(t.due_date);
+      const eD = t.due_date   ? new Date(t.due_date)   : new Date(t.start_date);
+      const left = pct(sD); const right = pct(eD);
+      const width = Math.max(right - left, 0.5);
+      const dl = daysLeft(t.due_date, t.status);
+      const bColor = BAR_COLORS[t.status||'pending'];
+      rowsHtml += `<div class="gantt-row" onclick="openTask('${t.id}')" title="${esc(t.title)}: ${esc(t.assigned_to||'')}">
+        <div class="gantt-label">${esc(t.title)}</div>
+        <div class="gantt-timeline" style="position:relative">
+          <div class="gantt-today-line" style="left:${todayPct.toFixed(1)}%"></div>
+          <div class="gantt-bar" style="left:${left.toFixed(1)}%;width:${width.toFixed(1)}%;background:${bColor}"
+            title="${esc(t.title)} — ${STATUS_LABELS[t.status||'pending']}">
+            ${width > 8 ? esc(t.title.substring(0,20)) : ''}
+          </div>
+        </div>
+      </div>`;
+    });
+  });
+
+  el.innerHTML = `<div class="gantt-container">
+    <div class="gantt-axis" style="position:relative;height:32px;border-bottom:2px solid #e2e8f0;margin-bottom:2px">
+      <div style="position:absolute;width:200px;flex-shrink:0"></div>
+      <div style="position:relative;flex:1;left:200px;right:0;height:100%">
+        ${axisHtml}
+        <span class="gantt-today-label" style="left:${todayPct.toFixed(1)}%">▼ Hoy</span>
+      </div>
+    </div>
+    <div class="gantt-rows">${rowsHtml}</div>
+  </div>`;
+}
+
+// ——————————————————————————————————————————
+//  PROCESS MAP (Mermaid)
+// ——————————————————————————————————————————
+async function renderMap() {
+  const tasks = filteredTasks();
+  if (!tasks.length) {
+    document.getElementById('mapDiagram').innerHTML =
+      '<div class="text-center text-muted py-5">🗺 No hay tareas. Crea tareas y asígnales una fase para ver el mapa de proceso.</div>';
+    return;
+  }
+
+  // Group tasks by phase
+  const phases = {};
+  tasks.forEach(t => {
+    const ph = (t.phase || 'General').trim();
+    if (!phases[ph]) phases[ph] = [];
+    phases[ph].push(t);
+  });
+
+  const phaseKeys = Object.keys(phases);
+  let diagram = '%%{init: {"theme": "base", "themeVariables": {"primaryColor":"#4f46e5","primaryTextColor":"#fff","lineColor":"#94a3b8"}}}%%\nflowchart LR\n';
+
+  // Classify each phase
+  function phaseStatus(ptasks) {
+    const done = ptasks.filter(t => t.status === 'done').length;
+    const blocked = ptasks.filter(t => t.status === 'blocked').length;
+    const inProg = ptasks.filter(t => t.status === 'in_progress').length;
+    if (done === ptasks.length) return 'done';
+    if (blocked > 0) return 'blocked';
+    if (inProg > 0 || done > 0) return 'in_progress';
+    return 'pending';
+  }
+
+  function phaseIcon(s) {
+    return {pending:'⏳', in_progress:'⚙️', done:'✅', blocked:'🚫', review:'🔍'}[s] || '📋';
+  }
+
+  // Days info
+  function daysInfo(ptasks) {
+    const started = ptasks.filter(t => t.start_date);
+    if (!started.length) return '';
+    const minStart = new Date(Math.min(...started.map(t => new Date(t.start_date))));
+    const elapsed = Math.floor((today - minStart) / 86400000);
+    const hasDue = ptasks.filter(t => t.due_date && t.status !== 'done');
+    if (!hasDue.length) return `${elapsed}d transcurridos`;
+    const maxDue = new Date(Math.max(...hasDue.map(t => new Date(t.due_date))));
+    const rem = Math.ceil((maxDue - today) / 86400000);
+    return `${elapsed}d ≡ ${rem >= 0 ? rem+'d restantes' : Math.abs(rem)+'d vencida'}`;
+  }
+
+  phaseKeys.forEach((ph, i) => {
+    const ptasks = phases[ph];
+    const done = ptasks.filter(t => t.status === 'done').length;
+    const total = ptasks.length;
+    const st = phaseStatus(ptasks);
+    const icon = phaseIcon(st);
+    const days = daysInfo(ptasks);
+    const nodeId = `P${i}`;
+    const label = `"${icon} ${ph}\\n${done}/${total} ✅${days ? '\\n⏱ '+days : ''}"`;
+    diagram += `  ${nodeId}[${label}]:::${st}\n`;
+  });
+
+  // Connect phases in order
+  for (let i = 0; i < phaseKeys.length - 1; i++)
+    diagram += `  P${i} --> P${i+1}\n`;
+
+  // Task detail nodes for in-progress and blocked phases
+  phaseKeys.forEach((ph, i) => {
+    const ptasks = phases[ph];
+    const st = phaseStatus(ptasks);
+    if (['in_progress','blocked'].includes(st)) {
+      ptasks.filter(t => t.status !== 'done').forEach((t, j) => {
+        const tid = `T${i}_${j}`;
+        const dl = daysLeft(t.due_date, t.status);
+        const dStr = dl !== null ? (dl < 0 ? `\\n🔴 ${Math.abs(dl)}d vencida` : dl <= 3 ? `\\n⚠️ ${dl}d` : `\\n✓ ${dl}d`) : '';
+        const stIcon = {pending:'⏳',in_progress:'⚙️',review:'🔍',blocked:'🚫'}[t.status]||'📋';
+        diagram += `  ${tid}["${stIcon} ${t.title.substring(0,25).replace(/"/g,"'")}${dStr}"]:::${t.status}\n`;
+        diagram += `  P${i} --> ${tid}\n`;
+      });
+    }
+  });
+
+  diagram += `  classDef pending fill:#fef3c7,stroke:#f59e0b,color:#000,rx:8\n`;
+  diagram += `  classDef in_progress fill:#dbeafe,stroke:#3b82f6,color:#000,rx:8\n`;
+  diagram += `  classDef review fill:#ede9fe,stroke:#8b5cf6,color:#000,rx:8\n`;
+  diagram += `  classDef done fill:#d1fae5,stroke:#10b981,color:#065f46,rx:8\n`;
+  diagram += `  classDef blocked fill:#fee2e2,stroke:#ef4444,color:#991b1b,rx:8\n`;
+
+  const container = document.getElementById('mapDiagram');
+  try {
+    const { svg } = await mermaid.render('mermaid-map-' + Date.now(), diagram);
+    container.innerHTML = svg;
+    container.querySelector('svg').style.maxWidth = '100%';
+  } catch(e) {
+    container.innerHTML = `<div class="alert alert-warning">No se pudo generar el diagrama. Asegúrate de que las fases tienen nombres válidos (sin caracteres especiales).<br><small>${e.message}</small></div>`;
+  }
+}
+
+// ——————————————————————————————————————————
+//  QUICK ADD
+// ——————————————————————————————————————————
+async function quickAdd() {
+  const title = document.getElementById('qTitle').value.trim();
+  if (!title) { document.getElementById('qTitle').focus(); return; }
+  const pid = document.getElementById('qProject').value;
+  const prio = document.getElementById('qPriority').value;
+  const payload = { title, priority: prio, status: 'pending', phase: 'General' };
+  if (pid) payload.project_id = pid;
+  const r = await fetch('/planning/api/tasks', {
+    method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)
+  }).then(x => x.json());
+  if (r.success) {
+    allTasks.push(r.task);
+    document.getElementById('qTitle').value = '';
+    renderAll();
+    showToast('✅ Tarea agregada', 'success');
+  } else {
+    showToast('❌ ' + (r.error||'Error al agregar'), 'danger');
+  }
+}
+
+// ——————————————————————————————————————————
+//  TASK MODAL
+// ——————————————————————————————————————————
+function openTask(id) {
+  editingTaskId = id;
+  const t = allTasks.find(x => x.id === id);
+  document.getElementById('taskModalTitle').textContent = t ? '✏️ Editar tarea' : '📝 Nueva tarea';
+  document.getElementById('mTaskId').value = id || '';
+  document.getElementById('btnDeleteTask').style.display = t ? '' : 'none';
+  document.getElementById('mTitle').value    = t ? t.title : '';
+  document.getElementById('mProject').value  = t ? (t.project_id||'') : (curProject||'');
+  document.getElementById('mPhase').value    = t ? (t.phase||'General') : 'General';
+  document.getElementById('mPriority').value = t ? (t.priority||'medium') : 'medium';
+  document.getElementById('mStatus').value   = t ? (t.status||'pending') : 'pending';
+  document.getElementById('mAssigned').value = t ? (t.assigned_to||'') : '';
+  document.getElementById('mEmail').value    = t ? (t.assigned_email||'') : '';
+  document.getElementById('mDesc').value     = t ? (t.description||'') : '';
+  document.getElementById('mStartDate').value= t ? (t.start_date||'') : '';
+  document.getElementById('mDueDate').value  = t ? (t.due_date||'') : '';
+  document.getElementById('mCompDate').value = t ? (t.completed_date||'') : '';
+  document.getElementById('mAlertDays').value= t ? (t.alert_days||3) : 3;
+  const prog = t ? (t.progress_pct||0) : 0;
+  document.getElementById('mProgress').value = prog;
+  document.getElementById('progLabel').textContent = prog;
+  document.getElementById('mTags').value     = t ? (t.tags||'') : '';
+  document.getElementById('mNotes').value    = t ? (t.notes||'') : '';
+  const srcBox = document.getElementById('sourceBox');
+  if (t && t.source && t.source !== 'manual') {
+    srcBox.style.display = '';
+    document.getElementById('mSource').value = t.source === 'google_todo' ? 'Google Tasks' : t.source;
+  } else { srcBox.style.display = 'none'; }
+  updateDaysInfo();
+  // Activate first tab
+  document.querySelector('#taskTabs .nav-link').click();
+  new bootstrap.Modal(document.getElementById('taskModal')).show();
+}
+
+function openNewTask() { editingTaskId = null; openTask(null); }
+
+function updateDaysInfo() {
+  const sd = document.getElementById('mStartDate').value;
+  const dd = document.getElementById('mDueDate').value;
+  const box = document.getElementById('daysInfoBox');
+  if (!sd && !dd) { box.style.display = 'none'; return; }
+  box.style.display = '';
+  const start = sd ? new Date(sd) : null;
+  const due   = dd ? new Date(dd) : null;
+  const now = today;
+  document.getElementById('daysElapsed').textContent =
+    start ? Math.max(0, Math.floor((now - start) / 86400000)) + ' días' : '—';
+  document.getElementById('daysRemaining').textContent =
+    due   ? Math.ceil((due - now) / 86400000) + ' días' : '—';
+  document.getElementById('daysDuration').textContent =
+    (start && due) ? Math.ceil((due - start) / 86400000) + ' días' : '—';
+}
+document.addEventListener('change', e => {
+  if (['mStartDate','mDueDate'].includes(e.target.id)) updateDaysInfo();
+});
+
+function onStatusChange() {
+  const s = document.getElementById('mStatus').value;
+  if (s === 'done') {
+    document.getElementById('mProgress').value = 100;
+    document.getElementById('progLabel').textContent = '100';
+    if (!document.getElementById('mCompDate').value)
+      document.getElementById('mCompDate').value = new Date().toISOString().split('T')[0];
+  }
+}
+
+function showPhaseSuggestions(v) {
+  const sug = document.getElementById('phaseSug');
+  const phases = [...new Set(allTasks.map(t => t.phase).filter(Boolean))];
+  const filtered = v ? phases.filter(p => p.toLowerCase().includes(v.toLowerCase())) : phases;
+  if (!filtered.length || !v) { sug.style.display = 'none'; return; }
+  sug.innerHTML = filtered.slice(0,8).map(p =>
+    `<div class="phase-sug-item" onclick="document.getElementById('mPhase').value='${p.replace(/'/g,"\\'")}';document.getElementById('phaseSug').style.display='none'">${p}</div>`
+  ).join('');
+  sug.style.display = '';
+}
+document.addEventListener('click', e => {
+  if (!e.target.closest('#mPhase') && !e.target.closest('#phaseSug'))
+    document.getElementById('phaseSug').style.display = 'none';
+});
+
+async function saveTask() {
+  const title = document.getElementById('mTitle').value.trim();
+  if (!title) { alert('El título es requerido'); return; }
+  const payload = {
+    title,
+    project_id: document.getElementById('mProject').value || null,
+    phase: document.getElementById('mPhase').value.trim() || 'General',
+    priority: document.getElementById('mPriority').value,
+    status: document.getElementById('mStatus').value,
+    assigned_to: document.getElementById('mAssigned').value.trim(),
+    assigned_email: document.getElementById('mEmail').value.trim(),
+    description: document.getElementById('mDesc').value.trim(),
+    start_date: document.getElementById('mStartDate').value || null,
+    due_date: document.getElementById('mDueDate').value || null,
+    completed_date: document.getElementById('mCompDate').value || null,
+    alert_days: parseInt(document.getElementById('mAlertDays').value) || 3,
+    progress_pct: parseInt(document.getElementById('mProgress').value) || 0,
+    tags: document.getElementById('mTags').value.trim(),
+    notes: document.getElementById('mNotes').value.trim(),
+  };
+  let r;
+  if (editingTaskId) {
+    r = await fetch(`/planning/api/tasks/${editingTaskId}`,
+      { method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) }
+    ).then(x => x.json());
+    if (r.success) {
+      const i = allTasks.findIndex(t => t.id === editingTaskId);
+      if (i >= 0) allTasks[i] = { ...allTasks[i], ...payload };
+    }
+  } else {
+    r = await fetch('/planning/api/tasks',
+      { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) }
+    ).then(x => x.json());
+    if (r.success) allTasks.push(r.task);
+  }
+  if (r.success) {
+    bootstrap.Modal.getInstance(document.getElementById('taskModal')).hide();
+    renderAll();
+    showToast(editingTaskId ? '✅ Tarea actualizada' : '✅ Tarea creada', 'success');
+  } else {
+    showToast('❌ ' + (r.error||'Error al guardar'), 'danger');
+  }
+}
+
+async function deleteTask() {
+  if (!editingTaskId || !confirm('¿Eliminar esta tarea?')) return;
+  const r = await fetch(`/planning/api/tasks/${editingTaskId}`, { method:'DELETE' }).then(x => x.json());
+  if (r.success) {
+    allTasks = allTasks.filter(t => t.id !== editingTaskId);
+    bootstrap.Modal.getInstance(document.getElementById('taskModal')).hide();
+    renderAll();
+    showToast('🗑 Tarea eliminada', 'warning');
+  }
+}
+
+async function confirmDelete(id, title) {
+  if (!confirm(`¿Eliminar la tarea "${title}"?`)) return;
+  const r = await fetch(`/planning/api/tasks/${id}`, { method:'DELETE' }).then(x => x.json());
+  if (r.success) {
+    allTasks = allTasks.filter(t => t.id !== id);
+    renderAll();
+    showToast('🗑 Tarea eliminada', 'warning');
+  }
+}
+
+// ——————————————————————————————————————————
+//  PROJECT MODAL
+// ——————————————————————————————————————————
+function openProjectModal(id) {
+  editingProjectId = id || null;
+  const p = id ? allProjects.find(x => x.id === id) : null;
+  document.getElementById('projModalTitle').textContent = p ? '✏️ Editar proyecto' : '📁 Nuevo proyecto';
+  document.getElementById('mProjId').value    = id || '';
+  document.getElementById('mProjName').value  = p ? p.name : '';
+  document.getElementById('mProjStatus').value= p ? (p.status||'active') : 'active';
+  document.getElementById('mProjColor').value = p ? (p.color||'#4f46e5') : '#4f46e5';
+  document.getElementById('mProjStart').value = p ? (p.start_date||'') : '';
+  document.getElementById('mProjDue').value   = p ? (p.due_date||'') : '';
+  document.getElementById('mProjDesc').value  = p ? (p.description||'') : '';
+  document.getElementById('mProjOwner').value = p ? (p.owner||'') : '';
+  document.getElementById('projColorPreview').style.background = p ? (p.color||'#4f46e5') : '#4f46e5';
+  document.getElementById('btnDeleteProj').style.display = p ? '' : 'none';
+  new bootstrap.Modal(document.getElementById('projectModal')).show();
+}
+document.getElementById('mProjColor').addEventListener('input', e => {
+  document.getElementById('projColorPreview').style.background = e.target.value;
+});
+
+async function saveProject() {
+  const name = document.getElementById('mProjName').value.trim();
+  if (!name) { alert('El nombre es requerido'); return; }
+  const payload = {
+    name,
+    status: document.getElementById('mProjStatus').value,
+    color: document.getElementById('mProjColor').value,
+    start_date: document.getElementById('mProjStart').value || null,
+    due_date: document.getElementById('mProjDue').value || null,
+    description: document.getElementById('mProjDesc').value.trim(),
+    owner: document.getElementById('mProjOwner').value.trim(),
+  };
+  let r;
+  if (editingProjectId) {
+    r = await fetch(`/planning/api/projects/${editingProjectId}`,
+      { method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) }
+    ).then(x => x.json());
+    if (r.success) {
+      const i = allProjects.findIndex(p => p.id === editingProjectId);
+      if (i >= 0) allProjects[i] = { ...allProjects[i], ...payload };
+    }
+  } else {
+    r = await fetch('/planning/api/projects',
+      { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) }
+    ).then(x => x.json());
+    if (r.success) allProjects.push(r.project);
+  }
+  if (r.success) {
+    bootstrap.Modal.getInstance(document.getElementById('projectModal')).hide();
+    renderAll();
+    showToast(editingProjectId ? '✅ Proyecto actualizado' : '✅ Proyecto creado', 'success');
+  } else {
+    showToast('❌ Error al guardar proyecto', 'danger');
+  }
+}
+
+async function deleteProject() {
+  if (!editingProjectId || !confirm('¿Eliminar este proyecto? Las tareas quedarán sin proyecto.')) return;
+  const r = await fetch(`/planning/api/projects/${editingProjectId}`, { method:'DELETE' }).then(x => x.json());
+  if (r.success) {
+    allProjects = allProjects.filter(p => p.id !== editingProjectId);
+    if (curProject === editingProjectId) curProject = null;
+    bootstrap.Modal.getInstance(document.getElementById('projectModal')).hide();
+    renderAll();
+    showToast('🗑 Proyecto eliminado', 'warning');
+  }
+}
+
+// ——————————————————————————————————————————
+//  MICROSOFT TO-DO IMPORT
+// ——————————————————————————————————————————
+function openImportTodoModal() {
+  document.getElementById('importTodoResult').style.display = 'none';
+  new bootstrap.Modal(document.getElementById('importTodoModal')).show();
+}
+
+async function doImportTodo() {
+  const btn = document.querySelector('#importTodoModal button[onclick="doImportTodo()"]');
+  btn.disabled = true; btn.textContent = '⏳ Importando...';
+  const r = await fetch('/planning/api/import-todo', { method:'POST' }).then(x => x.json());
+  btn.disabled = false; btn.textContent = 'Importar ahora';
+  const res = document.getElementById('importTodoResult');
+  res.style.display = '';
+  if (r.success) {
+    res.innerHTML = `<div class="alert alert-success py-2">✅ <strong>${r.imported}</strong> tareas importadas. ${r.skipped||0} ya existían.${r.errors ? ' | '+r.errors+' con error' : ''}</div>`;
+    await loadData();
+  } else if (r.needs_auth) {
+    res.innerHTML = `<div class="alert alert-warning py-2">🔗 <a href="/auth/microsoft" class="alert-link">Conecta Microsoft To-Do</a> primero desde Integraciones en el menú lateral.</div>`;
+  } else {
+    res.innerHTML = `<div class="alert alert-danger py-2">❌ ${r.error}</div>`;
+  }
+}
+
+// ——————————————————————————————————————————
+//  EXCEL IMPORT / EXPORT
+// ——————————————————————————————————————————
+async function importExcel(input) {
+  const file = input.files[0];
+  if (!file) return;
+  const fd = new FormData(); fd.append('file', file);
+  showToast('⏳ Importando Excel...', 'warning');
+  const r = await fetch('/planning/api/import-excel', { method:'POST', body: fd }).then(x => x.json());
+  input.value = '';
+  if (r.success) {
+    showToast(`✅ ${r.imported} tareas importadas${r.errors ? ' | '+r.errors+' errores' : ''}`, 'success');
+    await loadData();
+  } else {
+    showToast('❌ ' + (r.error||'Error al importar'), 'danger');
+  }
+}
+
+function exportExcel() {
+  const pid = curProject ? `?project_id=${curProject}` : '';
+  window.open('/planning/api/export-excel' + pid, '_blank');
+}
+
+// ——————————————————————————————————————————
+//  HELPERS
+// ——————————————————————————————————————————
+function daysLeft(due_date, status) {
+  if (!due_date) return null;
+  return Math.ceil((new Date(due_date) - today) / 86400000);
+}
+
+function fmtDate(d) {
+  if (!d) return '';
+  const dt = new Date(d + 'T00:00:00');
+  return dt.toLocaleDateString('es', { day:'2-digit', month:'short', year:'numeric' });
+}
+
+function esc(s) {
+  return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function showToast(msg, type) {
+  let c = document.getElementById('toastCont');
+  if (!c) {
+    c = document.createElement('div');
+    c.id = 'toastCont';
+    c.style.cssText = 'position:fixed;bottom:20px;right:20px;z-index:9999;display:flex;flex-direction:column;gap:8px;';
+    document.body.appendChild(c);
+  }
+  const t = document.createElement('div');
+  const clr = { success:'#10b981', warning:'#f59e0b', danger:'#ef4444', info:'#4f46e5' };
+  t.style.cssText = `background:${clr[type]||'#3b82f6'};color:#fff;padding:12px 20px;border-radius:12px;
+    font-size:.85rem;font-weight:600;box-shadow:0 4px 20px rgba(0,0,0,.25);max-width:360px;`;
+  t.textContent = msg;
+  c.appendChild(t);
+  setTimeout(() => { t.style.transition='opacity .3s'; t.style.opacity='0'; setTimeout(()=>t.remove(),300); }, 3500);
+}
+</script>
+{% endblock %}

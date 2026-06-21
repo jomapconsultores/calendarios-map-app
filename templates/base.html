@@ -13,8 +13,8 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Calendarios">
-<link rel="apple-touch-icon" href="{{ url_for('static', filename='icons/apple-touch-icon.png') }}">
-<link rel="icon" type="image/png" sizes="32x32" href="{{ url_for('static', filename='icons/favicon-32.png') }}">
+<link rel="apple-touch-icon" href="{{ url_for('static', filename='images/map_logo.png') }}">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='14' fill='%23000'/><text x='6' y='72' font-size='54' font-weight='900' fill='%23c8ff00' font-family='Arial,sans-serif'>MAP</text></svg>">
 {% block head %}{% endblock %}
 </head>
 <body>
@@ -25,7 +25,7 @@
   <!-- ============ MENÚ LATERAL IZQUIERDO ============ -->
   <aside class="sidebar" id="sidebar">
     <a href="/dashboard" class="sidebar-brand">
-      <span class="logo">🗓️</span> calendarios-map
+      <img src="{{ url_for('static', filename='images/map_logo.png') }}" alt="MAP" class="sidebar-map-logo">
     </a>
 
     <nav class="sidebar-nav">
@@ -44,6 +44,19 @@
           <li><a href="/calendar">Agenda mensual</a></li>
           <li><a href="/calendar?action=new">Nueva cita</a></li>
           <li><a href="/calendar?action=pending">Pendientes</a></li>
+        </ul>
+      </div>
+
+      <div class="nav-group {{ 'open' if path.startswith('/planning') }}">
+        <a href="/planning" class="nav-link {{ 'active' if path == '/planning' }}" data-toggle-group>
+          <span class="nav-icon">📋</span> Planificación
+          <span class="nav-caret">▶</span>
+        </a>
+        <ul class="nav-sub">
+          <li><a href="/planning">Mis tareas</a></li>
+          <li><a href="/planning?view=kanban">Tablero Kanban</a></li>
+          <li><a href="/planning?view=gantt">Gantt</a></li>
+          <li><a href="/planning?view=map">Mapa de procesos</a></li>
         </ul>
       </div>
 
@@ -94,6 +107,10 @@
         <span class="nav-pill" style="background:#fee2e2;color:#991b1b">Conectar</span>
       </a>
       {% endif %}
+      <a href="/auth/microsoft" class="nav-link" title="Conectar Microsoft To-Do para importar tareas">
+        <span class="nav-icon">📋</span> Microsoft To-Do
+        <span class="nav-pill" style="background:#dbeafe;color:#1e40af">Conectar</span>
+      </a>
       {% endif %}
     </nav>
 

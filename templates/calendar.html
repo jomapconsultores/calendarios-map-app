@@ -9,7 +9,8 @@
 
 {% block topbar_actions %}
 {% if current_user.role == 'admin' %}
-<button class="btn btn-outline-secondary btn-sm rounded-pill" onclick="syncCalendar()" title="Sincronizar con Google">🔄 Sincronizar</button>
+<button class="btn btn-outline-secondary btn-sm rounded-pill" onclick="syncCalendar()" title="Sincronizar citas sin evento Google">🔄 Sincronizar</button>
+<button class="btn btn-outline-warning btn-sm rounded-pill" onclick="fixCalendarEvents()" title="Actualizar ubicación y enlace en TODOS los eventos ya sincronizados">📍 Fix ubicaciones</button>
 {% if google_connected_global %}
 <span class="status-pill on">✅ Google</span>
 {% else %}
@@ -921,6 +922,17 @@ function syncCalendar() {
     .then(r => r.json())
     .then(d => {
       if (d.success) showToast(`✅ Sync: ${d.synced} nuevas | ${d.skipped || 0} saltadas | ${d.errors || 0} errores`, 'success');
+      else alert('❌ ' + d.error);
+    });
+}
+
+function fixCalendarEvents() {
+  if (!confirm('¿Actualizar ubicación y enlace de reunión en TODOS los eventos Google ya sincronizados?\n\nEsto corrige citas presenciales (dirección) y virtuales (link) de forma retroactiva.')) return;
+  showToast('⏳ Actualizando eventos...', 'warning');
+  fetch('/calendar/api/fix-events', { method: 'POST' })
+    .then(r => r.json())
+    .then(d => {
+      if (d.success) showToast(`✅ Fix: ${d.updated} actualizados | ${d.skipped} sin evento Google | ${d.errors} errores`, 'success');
       else alert('❌ ' + d.error);
     });
 }

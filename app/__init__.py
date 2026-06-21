@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, redirect, url_for, flash, session, jsonify, send_from_directory
+from flask import Flask, render_template, request, redirect, url_for, flash, session, jsonify, send_from_directory, send_file
 from flask_login import LoginManager, login_user, logout_user, login_required, current_user, UserMixin
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.middleware.proxy_fix import ProxyFix
@@ -10,9 +10,23 @@ import google.auth.exceptions
 from googleapiclient.discovery import build
 from datetime import datetime, timedelta, timezone, date
 from collections import defaultdict, OrderedDict
-import os, requests as req_lib, traceback, pytz, json, re, time, calendar as _cal
+import os, requests as req_lib, traceback, pytz, json, re, time, calendar as _cal, io
+from urllib.parse import quote as _url_quote
+
+try:
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    OPENPYXL_AVAILABLE = True
+except ImportError:
+    OPENPYXL_AVAILABLE = False
 
 GOOGLE_SCOPES = ['https://www.googleapis.com/auth/calendar']
+
+# Microsoft Graph — To-Do
+MS_AUTH_URL   = 'https://login.microsoftonline.com/common/oauth2/v2.0/authorize'
+MS_TOKEN_URL  = 'https://login.microsoftonline.com/common/oauth2/v2.0/token'
+MS_GRAPH_URL  = 'https://graph.microsoft.com/v1.0'
+MS_SCOPES     = 'Tasks.Read offline_access User.Read'
 GOOGLE_ACCOUNT_EMAIL = 'mposligua0000@gmail.com'
 
 # WebAuthn / passkeys (Face ID, huella). Import protegido: si la librería aún
@@ -179,6 +193,18 @@ class SupabaseAPI:
             print(f'[supabase.delete] {table}: {e}')
             return False
 
+    def get_q(self, table, query_params=None, select='*'):
+        """Query with raw PostgREST filter params, e.g. {'status': 'eq.done'}."""
+        q = f'{self.url}/rest/v1/{table}?select={select}'
+        for k, v in (query_params or {}).items():
+            q += f'&{k}={v}'
+        try:
+            r = self._session.get(q, timeout=self._timeout)
+            return r.json() if r.status_code == 200 else []
+        except Exception as e:
+            print(f'[supabase.get_q] {table}: {e}')
+            return []
+
 
 # ============================================================
 #  HELPERS
@@ -192,6 +218,85 @@ def _sanitize(s, max_len=255):
 
 def _validate_email(email):
     return bool(re.match(r'^[^@\s]+@[^@\s]+\.[^@\s]+$', email or ''))
+
+
+# ============================================================
+#  GOOGLE CALENDAR EVENT BUILDER
+# ============================================================
+def _build_google_event(apt, attendees):
+    """Build a Google Calendar event body, properly handling virtual vs presencial."""
+    is_virtual = bool(apt.get('meeting_link'))
+    desc = (f"Titulo: {apt.get('title', '')}\n"
+            f"Encargado: {apt.get('encargado', '')}\n"
+            f"Tema: {apt.get('tema', '')}")
+    if apt.get('client_name'): desc += f"\nCliente: {apt['client_name']}"
+
+    if is_virtual:
+        desc += f"\n\n🔗 Enlace de reunion: {apt['meeting_link']}"
+        location = apt['meeting_link']
+    else:
+        if apt.get('lugar'):     desc += f"\nLugar: {apt['lugar']}"
+        if apt.get('direccion'): desc += f"\nDireccion: {apt['direccion']}"
+        if apt.get('ciudad'):    desc += f"\nCiudad: {apt['ciudad']}, Ecuador"
+        if apt.get('mapa'):      desc += f"\n📍 Mapa: {apt['mapa']}"
+        location = ''
+        if apt.get('direccion'):
+            location = apt['direccion']
+            if apt.get('ciudad'): location += f", {apt['ciudad']}, Ecuador"
+            if apt.get('lugar'):  location = f"{apt['lugar']}, {location}"
+        elif apt.get('lugar'):
+            location = apt['lugar']
+
+    if apt.get('notes'): desc += f"\nNotas: {apt['notes']}"
+
+    event = {
+        'summary': f"{apt.get('title', '')} - {apt.get('encargado', '')}",
+        'description': desc,
+        'start': {'dateTime': apt['start_time'], 'timeZone': 'America/Guayaquil'},
+        'end':   {'dateTime': apt['end_time'],   'timeZone': 'America/Guayaquil'},
+        'attendees': attendees,
+        'reminders': {'useDefault': False, 'overrides': [
+            {'method': 'email', 'minutes': 1440},
+            {'method': 'popup', 'minutes': 30}]},
+    }
+    if location: event['location'] = location
+    return event
+
+
+# ============================================================
+#  MICROSOFT TOKEN HELPER
+# ============================================================
+def get_ms_token(app):
+    """Return a valid MS Graph access_token, refreshing if expired."""
+    tokens = app.supabase.get('ms_tokens', select='*')
+    if not tokens: return None
+    t = tokens[0]
+    expiry_str = t.get('expires_at')
+    if expiry_str:
+        try:
+            exp = datetime.fromisoformat(expiry_str.replace('Z', '+00:00'))
+            if datetime.now(timezone.utc) >= exp - timedelta(minutes=5):
+                r = req_lib.post(MS_TOKEN_URL, data={
+                    'client_id':     app.config.get('MS_CLIENT_ID', ''),
+                    'client_secret': app.config.get('MS_CLIENT_SECRET', ''),
+                    'grant_type':    'refresh_token',
+                    'refresh_token': t.get('refresh_token', ''),
+                    'scope': MS_SCOPES,
+                }, timeout=(5, 15))
+                if r.status_code == 200:
+                    d = r.json()
+                    new_exp = (datetime.now(timezone.utc)
+                               + timedelta(seconds=d.get('expires_in', 3600))).isoformat()
+                    app.supabase.update('ms_tokens', t['id'], {
+                        'access_token':  d['access_token'],
+                        'refresh_token': d.get('refresh_token', t['refresh_token']),
+                        'expires_at':    new_exp,
+                    })
+                    return d['access_token']
+                return None
+        except Exception:
+            pass
+    return t.get('access_token')
 
 
 # ============================================================
@@ -458,6 +563,12 @@ def create_app():
     @app.route('/offline.html')
     def pwa_offline():
         return send_from_directory(app.static_folder, 'offline.html')
+
+    # ------ Digital Asset Links: vincula la app TWA de Google Play con la web ------
+    @app.route('/.well-known/assetlinks.json')
+    def well_known_assetlinks():
+        return send_from_directory(app.static_folder, 'assetlinks.json',
+                                   mimetype='application/json')
 
     @login_manager.user_loader
     def load_user(uid):
@@ -805,6 +916,85 @@ def create_app():
             flash('Datos actualizados', 'success')
             return redirect('/profile')
         return render_template('profile.html')
+
+    # ============================================================
+    #  MICROSOFT OAUTH — To-Do
+    # ============================================================
+    @app.route('/auth/microsoft')
+    @login_required
+    def auth_microsoft():
+        if not is_admin(): return redirect(url_for('planning'))
+        cid = app.config.get('MS_CLIENT_ID', '')
+        if not cid:
+            flash('Configura MS_CLIENT_ID en las variables de entorno.', 'warning')
+            return redirect(url_for('planning'))
+        redirect_uri = app.config.get('MS_REDIRECT_URI') or request.host_url.rstrip('/') + '/auth/microsoft/callback'
+        params = (f'?client_id={cid}'
+                  f'&response_type=code'
+                  f'&redirect_uri={_url_quote(redirect_uri, safe="")}'
+                  f'&scope={_url_quote(MS_SCOPES, safe="")}'
+                  f'&response_mode=query'
+                  f'&prompt=consent')
+        return redirect(MS_AUTH_URL + params)
+
+    @app.route('/auth/microsoft/callback')
+    @login_required
+    def auth_microsoft_callback():
+        if not is_admin(): return redirect(url_for('planning'))
+        code  = request.args.get('code')
+        error = request.args.get('error_description') or request.args.get('error')
+        if error:
+            flash(f'Microsoft error: {error}', 'danger')
+            return redirect(url_for('planning'))
+        if not code:
+            flash('No se recibió código de autorización.', 'danger')
+            return redirect(url_for('planning'))
+        redirect_uri = app.config.get('MS_REDIRECT_URI') or request.host_url.rstrip('/') + '/auth/microsoft/callback'
+        try:
+            r = req_lib.post(MS_TOKEN_URL, data={
+                'client_id':     app.config.get('MS_CLIENT_ID', ''),
+                'client_secret': app.config.get('MS_CLIENT_SECRET', ''),
+                'grant_type':    'authorization_code',
+                'code':          code,
+                'redirect_uri':  redirect_uri,
+                'scope':         MS_SCOPES,
+            }, timeout=(5, 15))
+            if r.status_code != 200:
+                flash(f'Error al obtener token: {r.text[:200]}', 'danger')
+                return redirect(url_for('planning'))
+            d = r.json()
+            exp = (datetime.now(timezone.utc)
+                   + timedelta(seconds=d.get('expires_in', 3600))).isoformat()
+            # Get user email from Graph
+            me_r = req_lib.get(f'{MS_GRAPH_URL}/me',
+                               headers={'Authorization': f'Bearer {d["access_token"]}'},
+                               timeout=(5, 10))
+            ms_email = me_r.json().get('mail') or me_r.json().get('userPrincipalName', 'microsoft') if me_r.ok else 'microsoft'
+            # Upsert token
+            existing = app.supabase.get('ms_tokens', {'email': ms_email})
+            token_data = {
+                'email':         ms_email,
+                'access_token':  d['access_token'],
+                'refresh_token': d.get('refresh_token', ''),
+                'expires_at':    exp,
+            }
+            if existing:
+                app.supabase.update('ms_tokens', existing[0]['id'], token_data)
+            else:
+                app.supabase.insert('ms_tokens', token_data)
+            flash(f'✅ Microsoft To-Do conectado ({ms_email})', 'success')
+        except Exception as e:
+            flash(f'Error de conexión: {e}', 'danger')
+        return redirect(url_for('planning'))
+
+    @app.route('/auth/microsoft/disconnect', methods=['POST'])
+    @login_required
+    def auth_microsoft_disconnect():
+        if not is_admin(): return jsonify({'success': False})
+        tokens = app.supabase.get('ms_tokens', select='id')
+        for t in (tokens or []):
+            app.supabase.delete('ms_tokens', t['id'])
+        return jsonify({'success': True})
 
     # ============================================================
     #  GOOGLE OAUTH
@@ -1397,30 +1587,7 @@ def create_app():
                     if inv and inv not in [a['email'] for a in attendees]:
                         attendees.append({'email': inv})
             if not attendees: attendees.append({'email': GOOGLE_ACCOUNT_EMAIL})
-            desc = (f"Titulo: {apt['title']}\nEncargado: {apt.get('encargado','')}"
-                    f"\nTema: {apt.get('tema','')}")
-            if apt.get('client_name'): desc += f"\nCliente: {apt['client_name']}"
-            if apt.get('lugar'): desc += f"\nLugar: {apt['lugar']}"
-            if apt.get('direccion'): desc += f"\nDireccion: {apt['direccion']}"
-            if apt.get('ciudad'): desc += f"\nCiudad: {apt['ciudad']}"
-            if apt.get('mapa'): desc += f"\nMapa: {apt['mapa']}"
-            if apt.get('notes'): desc += f"\nNotas: {apt['notes']}"
-            location = ''
-            if apt.get('direccion'):
-                location = apt['direccion']
-                if apt.get('ciudad'): location += f", {apt['ciudad']}, Ecuador"
-                if apt.get('lugar'): location = f"{apt['lugar']}, {location}"
-            event = {
-                'summary': f"{apt['title']} - {apt.get('encargado','')}",
-                'description': desc,
-                'start': {'dateTime': apt['start_time'], 'timeZone': 'America/Guayaquil'},
-                'end':   {'dateTime': apt['end_time'],   'timeZone': 'America/Guayaquil'},
-                'attendees': attendees,
-                'reminders': {'useDefault': False, 'overrides': [
-                    {'method': 'email', 'minutes': 1440},
-                    {'method': 'popup', 'minutes': 30}]},
-            }
-            if location: event['location'] = location
+            event = _build_google_event(apt, attendees)
             existing = service.events().list(
                 calendarId='primary', timeMin=apt['start_time'],
                 timeMax=apt['end_time'], q=apt['title'], maxResults=1).execute()
@@ -1502,13 +1669,13 @@ def create_app():
         synced = 0; errors = 0; skipped = 0
         all_cals = _get_calendar_config(app)
         cal_map  = {c['calendar_id']: c['email'] for c in all_cals if c.get('email')}
+        service = build('calendar', 'v3', credentials=creds)
         for apt in app.supabase.get('appointments',
-                select='id,title,encargado,tema,start_time,end_time,calendar_id,'
-                       'invitados,direccion,ciudad,lugar,status,google_event_id'):
+                select='id,title,encargado,tema,client_name,start_time,end_time,calendar_id,'
+                       'invitados,direccion,ciudad,lugar,mapa,notes,meeting_link,status,google_event_id'):
             if apt.get('status') != 'confirmed' or apt.get('google_event_id'):
                 continue
             try:
-                service  = build('calendar', 'v3', credentials=creds)
                 existing = service.events().list(
                     calendarId='primary', timeMin=apt['start_time'],
                     timeMax=apt['end_time'], q=apt['title'], maxResults=1).execute()
@@ -1525,20 +1692,7 @@ def create_app():
                         if inv and inv not in [a['email'] for a in attendees]:
                             attendees.append({'email': inv})
                 if not attendees: attendees.append({'email': GOOGLE_ACCOUNT_EMAIL})
-                location = apt.get('direccion', '')
-                if location and apt.get('ciudad'): location += f", {apt['ciudad']}, Ecuador"
-                if location and apt.get('lugar'): location = f"{apt['lugar']}, {location}"
-                event = {
-                    'summary': f"{apt['title']} - {apt.get('encargado','')}",
-                    'description': f"Titulo: {apt['title']}\nEncargado: {apt.get('encargado','')}\nTema: {apt.get('tema','')}",
-                    'start': {'dateTime': apt['start_time'], 'timeZone': 'America/Guayaquil'},
-                    'end':   {'dateTime': apt['end_time'],   'timeZone': 'America/Guayaquil'},
-                    'attendees': attendees,
-                    'reminders': {'useDefault': False, 'overrides': [
-                        {'method': 'email', 'minutes': 1440},
-                        {'method': 'popup', 'minutes': 30}]},
-                }
-                if location: event['location'] = location
+                event = _build_google_event(apt, attendees)
                 created = service.events().insert(calendarId='primary',
                     body=event, sendUpdates='all').execute()
                 app.supabase.update('appointments', apt['id'],
@@ -1553,6 +1707,361 @@ def create_app():
                         'errors': errors, 'error': 'Google desconectado. Reconecta en /auth/google.'})
                 errors += 1
         return jsonify({'success': True, 'synced': synced, 'skipped': skipped, 'errors': errors})
+
+    # ============================================================
+    #  RETROACTIVE FIX — patch all existing Google events with
+    #  correct location + link (presencial / virtual)
+    # ============================================================
+    @app.route('/calendar/api/fix-events', methods=['POST'])
+    @login_required
+    def api_fix_events():
+        if not is_admin(): return jsonify({'success': False, 'error': 'Solo admin'})
+        creds = get_google_creds(app)
+        if not creds: return jsonify({'success': False, 'error': 'Google no conectado'})
+        updated = 0; errors = 0; skipped = 0
+        try:
+            service  = build('calendar', 'v3', credentials=creds)
+            all_cals = _get_calendar_config(app)
+            cal_map  = {c['calendar_id']: c['email'] for c in all_cals if c.get('email')}
+            apts = app.supabase.get('appointments',
+                select='id,title,encargado,tema,client_name,start_time,end_time,calendar_id,'
+                       'invitados,direccion,ciudad,lugar,mapa,notes,meeting_link,status,google_event_id')
+            for apt in apts:
+                if apt.get('status') != 'confirmed': continue
+                gid = apt.get('google_event_id')
+                if not gid: skipped += 1; continue
+                try:
+                    attendees = []
+                    ce = cal_map.get(apt.get('calendar_id'))
+                    if ce: attendees.append({'email': ce})
+                    if apt.get('invitados'):
+                        for inv in apt['invitados'].split(','):
+                            inv = inv.strip()
+                            if inv and inv not in [a['email'] for a in attendees]:
+                                attendees.append({'email': inv})
+                    if not attendees: attendees.append({'email': GOOGLE_ACCOUNT_EMAIL})
+                    ev = _build_google_event(apt, attendees)
+                    patch = {'description': ev['description']}
+                    if ev.get('location'): patch['location'] = ev['location']
+                    service.events().patch(
+                        calendarId='primary', eventId=gid, body=patch).execute()
+                    updated += 1
+                except Exception:
+                    errors += 1
+            return jsonify({'success': True, 'updated': updated,
+                            'skipped': skipped, 'errors': errors})
+        except google.auth.exceptions.RefreshError:
+            return jsonify({'success': False,
+                'error': 'Google desconectado. Reconecta en /auth/google.'})
+        except Exception as e:
+            if _is_invalid_grant(e):
+                return jsonify({'success': False,
+                    'error': 'Google desconectado. Reconecta en /auth/google.'})
+            return jsonify({'success': False, 'error': str(e)})
+
+    # ============================================================
+    #  PLANNING MODULE
+    # ============================================================
+    @app.route('/planning')
+    @login_required
+    def planning():
+        ms_connected = bool(get_ms_token(app))
+        return render_template('planning.html', ms_connected=ms_connected)
+
+    @app.route('/planning/api/projects', methods=['GET'])
+    @login_required
+    def planning_projects():
+        rows = app.supabase.get('projects', select='*')
+        return jsonify(rows or [])
+
+    @app.route('/planning/api/projects', methods=['POST'])
+    @login_required
+    def planning_create_project():
+        d = request.get_json() or {}
+        d['created_by'] = current_user.id
+        d['name'] = _sanitize(d.get('name', ''), 200)
+        if not d['name']: return jsonify({'success': False, 'error': 'Nombre requerido'})
+        r = app.supabase.insert('projects', d)
+        return jsonify({'success': bool(r), 'project': r[0] if r else None})
+
+    @app.route('/planning/api/projects/<pid>', methods=['PATCH'])
+    @login_required
+    def planning_update_project(pid):
+        d = request.get_json() or {}
+        ok = app.supabase.update('projects', pid, d)
+        return jsonify({'success': ok})
+
+    @app.route('/planning/api/projects/<pid>', methods=['DELETE'])
+    @login_required
+    def planning_delete_project(pid):
+        if not is_admin(): return jsonify({'success': False, 'error': 'Solo admin'})
+        ok = app.supabase.delete('projects', pid)
+        return jsonify({'success': ok})
+
+    @app.route('/planning/api/tasks', methods=['GET'])
+    @login_required
+    def planning_tasks():
+        pid = request.args.get('project_id')
+        if pid:
+            rows = app.supabase.get('tasks', {'project_id': pid}, select='*')
+        else:
+            rows = app.supabase.get('tasks', select='*')
+        return jsonify(rows or [])
+
+    @app.route('/planning/api/tasks', methods=['POST'])
+    @login_required
+    def planning_create_task():
+        d = request.get_json() or {}
+        d['created_by'] = current_user.id
+        d['title'] = _sanitize(d.get('title', ''), 300)
+        if not d['title']: return jsonify({'success': False, 'error': 'Título requerido'})
+        d.setdefault('status', 'pending')
+        d.setdefault('priority', 'medium')
+        d.setdefault('phase', 'General')
+        d.setdefault('progress_pct', 0)
+        d.setdefault('alert_days', 3)
+        r = app.supabase.insert('tasks', d)
+        return jsonify({'success': bool(r), 'task': r[0] if r else None})
+
+    @app.route('/planning/api/tasks/<tid>', methods=['PATCH'])
+    @login_required
+    def planning_update_task(tid):
+        d = request.get_json() or {}
+        d['updated_at'] = datetime.now(timezone.utc).isoformat()
+        if d.get('status') == 'done' and not d.get('completed_date'):
+            d['completed_date'] = date.today().isoformat()
+        ok = app.supabase.update('tasks', tid, d)
+        return jsonify({'success': ok})
+
+    @app.route('/planning/api/tasks/<tid>', methods=['DELETE'])
+    @login_required
+    def planning_delete_task(tid):
+        ok = app.supabase.delete('tasks', tid)
+        return jsonify({'success': ok})
+
+    @app.route('/planning/api/deps/<tid>', methods=['GET'])
+    @login_required
+    def planning_task_deps(tid):
+        rows = app.supabase.get('task_deps', {'task_id': tid}, select='depends_on')
+        return jsonify([r['depends_on'] for r in (rows or [])])
+
+    @app.route('/planning/api/deps', methods=['POST'])
+    @login_required
+    def planning_add_dep():
+        d = request.get_json() or {}
+        r = app.supabase.insert_ignore('task_deps', d)
+        return jsonify({'success': bool(r)})
+
+    @app.route('/planning/api/import-todo', methods=['POST'])
+    @login_required
+    def planning_import_todo():
+        if not is_admin(): return jsonify({'success': False, 'error': 'Solo admin'})
+        token = get_ms_token(app)
+        if not token:
+            return jsonify({'success': False, 'needs_auth': True,
+                'error': 'Microsoft To-Do no está conectado. Conecta primero desde Planificación.'})
+        headers = {'Authorization': f'Bearer {token}', 'Accept': 'application/json'}
+        # Status and priority mappings
+        status_map = {
+            'notStarted': 'pending', 'inProgress': 'in_progress',
+            'completed': 'done', 'waitingOnOthers': 'review', 'deferred': 'blocked'
+        }
+        prio_map = {'low': 'low', 'normal': 'medium', 'high': 'high'}
+        imported = 0; skipped = 0; errors = 0
+        try:
+            # Get all To-Do task lists
+            r = req_lib.get(f'{MS_GRAPH_URL}/me/todo/lists', headers=headers, timeout=(5,15))
+            if r.status_code == 401:
+                return jsonify({'success': False, 'needs_auth': True,
+                    'error': 'Token expirado o sin permiso. Reconecta Microsoft To-Do.'})
+            r.raise_for_status()
+            lists = r.json().get('value', [])
+            for lst in lists:
+                list_id    = lst['id']
+                list_title = lst.get('displayName', 'To-Do')
+                # Paginate tasks
+                url = f'{MS_GRAPH_URL}/me/todo/lists/{list_id}/tasks?$top=100'
+                while url:
+                    tr = req_lib.get(url, headers=headers, timeout=(5,15))
+                    tr.raise_for_status()
+                    tdata = tr.json()
+                    for task in tdata.get('value', []):
+                        title = (task.get('title') or '').strip()
+                        if not title: continue
+                        tid = task.get('id', '')
+                        # Dedup by source_id
+                        existing = app.supabase.get_q('tasks',
+                            {'source_id': f'eq.{tid}', 'source': 'eq.ms_todo'})
+                        if existing: skipped += 1; continue
+                        # Parse due date
+                        due = None
+                        if task.get('dueDateTime'):
+                            try: due = task['dueDateTime']['dateTime'][:10]
+                            except Exception: pass
+                        # Parse completed date
+                        comp = None
+                        if task.get('completedDateTime'):
+                            try: comp = task['completedDateTime']['dateTime'][:10]
+                            except Exception: pass
+                        # Build task
+                        td = {
+                            'title':          title,
+                            'description':    (task.get('body') or {}).get('content', ''),
+                            'status':         status_map.get(task.get('status','notStarted'), 'pending'),
+                            'priority':       prio_map.get(task.get('importance','normal'), 'medium'),
+                            'due_date':       due,
+                            'completed_date': comp,
+                            'tags':           list_title,
+                            'phase':          'General',
+                            'source':         'ms_todo',
+                            'source_id':      tid,
+                            'created_by':     current_user.id,
+                        }
+                        if td['status'] == 'done' and comp:
+                            td['progress_pct'] = 100
+                        try:
+                            app.supabase.insert('tasks', td)
+                            imported += 1
+                        except Exception:
+                            errors += 1
+                    url = tdata.get('@odata.nextLink')
+            return jsonify({'success': True, 'imported': imported,
+                            'skipped': skipped, 'errors': errors})
+        except Exception as e:
+            return jsonify({'success': False, 'error': str(e)})
+
+    @app.route('/planning/api/export-excel')
+    @login_required
+    def planning_export_excel():
+        if not OPENPYXL_AVAILABLE:
+            return jsonify({'error': 'openpyxl no instalado'}), 500
+        pid = request.args.get('project_id')
+        tasks = (app.supabase.get('tasks', {'project_id': pid}, select='*')
+                 if pid else app.supabase.get('tasks', select='*'))
+        projects_map = {p['id']: p['name']
+                        for p in (app.supabase.get('projects', select='id,name') or [])}
+        wb = openpyxl.Workbook()
+        ws = wb.active; ws.title = 'Tareas'
+        hdr_fill = PatternFill('solid', fgColor='4F46E5')
+        hdr_font = Font(color='FFFFFF', bold=True)
+        thin = Side(style='thin', color='CCCCCC')
+        brd  = Border(left=thin, right=thin, top=thin, bottom=thin)
+        headers = ['Proyecto','Fase','Título','Descripción','Estado','Prioridad',
+                   'Asignado a','Email','F. Inicio','F. Vencimiento',
+                   'Días restantes','Progreso %','Alerta (días)','Etiquetas','Notas','Fuente']
+        for i, h in enumerate(headers, 1):
+            c = ws.cell(row=1, column=i, value=h)
+            c.fill = hdr_fill; c.font = hdr_font
+            c.alignment = Alignment(horizontal='center', vertical='center')
+            c.border = brd
+        ws.row_dimensions[1].height = 20
+        today_d = date.today()
+        for ri, t in enumerate(tasks or [], 2):
+            due_str = (t.get('due_date') or '')[:10]
+            days_left = None
+            if due_str:
+                try:
+                    days_left = (datetime.strptime(due_str,'%Y-%m-%d').date() - today_d).days
+                except Exception: pass
+            row = [
+                projects_map.get(t.get('project_id'), ''),
+                t.get('phase',''), t.get('title',''), t.get('description',''),
+                t.get('status',''), t.get('priority',''),
+                t.get('assigned_to',''), t.get('assigned_email',''),
+                t.get('start_date','')[:10] if t.get('start_date') else '',
+                due_str, days_left,
+                t.get('progress_pct',0), t.get('alert_days',3),
+                t.get('tags',''), t.get('notes',''), t.get('source',''),
+            ]
+            for ci, val in enumerate(row, 1):
+                c = ws.cell(row=ri, column=ci, value=val)
+                c.border = brd
+                if ci == 11 and val is not None:
+                    c.font = Font(color='EF4444' if val < 0 else ('F59E0B' if val <= 3 else '000000'))
+        for col in ws.columns:
+            ml = max((len(str(c.value or '')) for c in col), default=0)
+            ws.column_dimensions[col[0].column_letter].width = min(ml + 3, 50)
+        buf = io.BytesIO(); wb.save(buf); buf.seek(0)
+        fname = f'tareas_{datetime.now().strftime("%Y%m%d_%H%M")}.xlsx'
+        return send_file(buf, as_attachment=True, download_name=fname,
+            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+
+    @app.route('/planning/api/import-excel', methods=['POST'])
+    @login_required
+    def planning_import_excel():
+        if not OPENPYXL_AVAILABLE:
+            return jsonify({'success': False, 'error': 'openpyxl no instalado'}), 500
+        f = request.files.get('file')
+        if not f: return jsonify({'success': False, 'error': 'No se recibió archivo'})
+        try:
+            wb = openpyxl.load_workbook(io.BytesIO(f.read()), data_only=True)
+            ws = wb.active
+            raw_headers = [str(c.value or '').strip().lower() for c in ws[1]]
+            # Normalize headers — support Spanish and English
+            alias = {
+                'título': 'title', 'titulo': 'title',
+                'descripción': 'description', 'descripcion': 'description',
+                'fase': 'phase',
+                'estado': 'status',
+                'prioridad': 'priority',
+                'asignado a': 'assigned_to',
+                'f. inicio': 'start_date', 'fecha inicio': 'start_date',
+                'f. vencimiento': 'due_date', 'fecha vencimiento': 'due_date',
+                'progreso %': 'progress_pct', 'progreso': 'progress_pct',
+                'alerta (días)': 'alert_days', 'alerta días': 'alert_days',
+                'etiquetas': 'tags',
+                'notas': 'notes',
+                'email': 'assigned_email',
+                'proyecto': '_project_name',
+            }
+            headers = [alias.get(h, h) for h in raw_headers]
+            # Build project name map
+            proj_by_name = {p['name'].lower(): p['id']
+                            for p in (app.supabase.get('projects', select='id,name') or [])}
+            imported = 0; errors = 0
+            for row in ws.iter_rows(min_row=2, values_only=True):
+                if all(v is None or str(v).strip() == '' for v in row): continue
+                rd = dict(zip(headers, row))
+                title = str(rd.get('title', '')).strip()
+                if not title: continue
+                try:
+                    td = {
+                        'title': title,
+                        'description': str(rd.get('description', '') or ''),
+                        'phase': str(rd.get('phase', 'General') or 'General').strip(),
+                        'status': str(rd.get('status', 'pending') or 'pending').lower().replace(' ','_'),
+                        'priority': str(rd.get('priority', 'medium') or 'medium').lower(),
+                        'assigned_to': str(rd.get('assigned_to', '') or ''),
+                        'assigned_email': str(rd.get('assigned_email', '') or ''),
+                        'tags': str(rd.get('tags', '') or ''),
+                        'notes': str(rd.get('notes', '') or ''),
+                        'source': 'excel',
+                        'created_by': current_user.id,
+                    }
+                    # Map project name → id
+                    pname = str(rd.get('_project_name', '') or '').strip().lower()
+                    if pname and pname in proj_by_name:
+                        td['project_id'] = proj_by_name[pname]
+                    # Parse dates
+                    for fld in ('start_date', 'due_date'):
+                        val = rd.get(fld)
+                        if val:
+                            if isinstance(val, datetime): td[fld] = val.strftime('%Y-%m-%d')
+                            elif isinstance(val, date):   td[fld] = val.isoformat()
+                            elif str(val).strip():
+                                try: td[fld] = datetime.strptime(str(val).strip()[:10],'%Y-%m-%d').strftime('%Y-%m-%d')
+                                except Exception: pass
+                    # Progress
+                    try: td['progress_pct'] = max(0, min(100, int(float(str(rd.get('progress_pct') or 0)))))
+                    except Exception: td['progress_pct'] = 0
+                    try: td['alert_days'] = max(0, int(float(str(rd.get('alert_days') or 3))))
+                    except Exception: td['alert_days'] = 3
+                    app.supabase.insert('tasks', td)
+                    imported += 1
+                except Exception: errors += 1
+            return jsonify({'success': True, 'imported': imported, 'errors': errors})
+        except Exception as e:
+            return jsonify({'success': False, 'error': str(e)})
 
     # ============================================================
     #  UTILITY

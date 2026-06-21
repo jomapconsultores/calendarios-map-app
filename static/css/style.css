@@ -66,15 +66,24 @@ body {
 .sidebar-brand {
     display: flex;
     align-items: center;
+    justify-content: center;
     gap: 11px;
     font-weight: 800;
     font-size: 1.05rem;
     color: #fff;
-    padding: 18px 18px;
+    padding: 14px 12px;
     letter-spacing: -.3px;
     border-bottom: 1px solid rgba(255,255,255,.06);
     text-decoration: none;
     flex-shrink: 0;
+    background: #000;
+}
+.sidebar-map-logo {
+    width: 100%;
+    max-width: 210px;
+    height: auto;
+    object-fit: contain;
+    display: block;
 }
 .sidebar-brand:hover { color: #fff; }
 .sidebar-brand .logo {
