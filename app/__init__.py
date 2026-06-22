@@ -1392,6 +1392,70 @@ def create_app():
     # ============================================================
     #  DASHBOARD  (optimized: O(3) queries instead of O(2N+3))
     # ============================================================
+    def _dashboard_widgets(app):
+        """Calcula las cifras-tarjeta del panel para el usuario logueado."""
+        today_iso = date.today().isoformat()
+        in_7d_iso = (date.today() + timedelta(days=7)).isoformat()
+        # Tareas: aplica los mismos permisos que /planning/api/tasks
+        all_tasks = app.supabase.get('tasks', select='id,status,due_date,priority,source,ms_email,created_by,assigned_to,assigned_email,subtasks') or []
+        if not is_admin():
+            allowed_ms = set(get_user_ms_emails(app, current_user.id))
+            has_todo   = 'todo'     in getattr(current_user, 'modules', [])
+            has_plan   = 'planning' in getattr(current_user, 'modules', [])
+            uid = str(current_user.id)
+            def vis(t):
+                if t.get('source') == 'ms_todo':
+                    return has_todo and (t.get('ms_email') or '') in allowed_ms
+                if not has_plan: return False
+                if t.get('created_by') == uid: return True
+                if t.get('assigned_to') == uid: return True
+                if (t.get('assigned_email') or '').lower() == (current_user.email or '').lower():
+                    return True
+                return False
+            all_tasks = [t for t in all_tasks if vis(t)]
+        pending_all   = [t for t in all_tasks if t.get('status') != 'done']
+        overdue       = [t for t in pending_all if t.get('due_date') and t['due_date'] < today_iso]
+        today_tasks   = [t for t in all_tasks  if t.get('due_date') == today_iso]
+        week_tasks    = [t for t in pending_all if t.get('due_date') and today_iso <= t['due_date'] <= in_7d_iso]
+        manual_pend   = [t for t in pending_all if t.get('source') != 'ms_todo']
+        todo_pend     = [t for t in pending_all if t.get('source') == 'ms_todo']
+        # Subtareas pendientes (suma global)
+        sub_pending = 0
+        for t in pending_all:
+            for s in (t.get('subtasks') or []):
+                if not s.get('done'): sub_pending += 1
+        # Citas próximas (siguientes 7 días)
+        next_apts = []
+        try:
+            apt_rows = app.supabase.get('appointments', select='id,title,start_time,status,encargado,calendar_id') or []
+            # Filtra por permisos de calendarios del usuario si no es admin
+            if not is_admin():
+                user_cal_ids = {c.get('calendar_id') for c in get_user_calendars(app, current_user.id)}
+                apt_rows = [a for a in apt_rows if a.get('calendar_id') in user_cal_ids]
+            for a in apt_rows:
+                st = (a.get('start_time') or '')[:10]
+                if st and today_iso <= st <= in_7d_iso and a.get('status') != 'cancelled':
+                    next_apts.append(a)
+            next_apts.sort(key=lambda x: x.get('start_time') or '')
+            next_apts = next_apts[:5]
+        except Exception:
+            next_apts = []
+        # Cuentas MS conectadas (solo admin)
+        ms_accounts = []
+        if is_admin():
+            ms_accounts = [t.get('email','') for t in (app.supabase.get('ms_tokens', select='email') or []) if t.get('email')]
+        return {
+            'total_pending':  len(pending_all),
+            'overdue':        len(overdue),
+            'today_count':    len(today_tasks),
+            'week_count':     len(week_tasks),
+            'manual_pending': len(manual_pend),
+            'todo_pending':   len(todo_pend),
+            'sub_pending':    sub_pending,
+            'next_apts':      next_apts,
+            'ms_accounts':    ms_accounts,
+        }
+
     @app.route('/dashboard')
     @login_required
     def dashboard():
@@ -1429,8 +1493,13 @@ def create_app():
             cals = get_user_calendars(app, current_user.id)
             pending = []; pending_all = []
         google_ok = get_google_creds(app) is not None
+        widgets = _dashboard_widgets(app)
         return render_template('dashboard.html', calendarios=cals, pending=pending,
-                               pending_all=pending_all, google_connected=google_ok)
+                               pending_all=pending_all, google_connected=google_ok,
+                               widgets=widgets,
+                               can_planning=user_can('planning'),
+                               can_todo=user_can('todo'),
+                               can_calendar=user_can('calendar'))
 
     # ============================================================
     #  CALENDAR VIEW

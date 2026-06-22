@@ -616,6 +616,11 @@ document.addEventListener('DOMContentLoaded', () => {
   const params = new URLSearchParams(location.search);
   const v = params.get('view');
   if (v && ['list','kanban','gantt','map'].includes(v)) setView(v, false);
+  // Filtro temporal pasado por URL desde el dashboard
+  const tf = params.get('tf');
+  if (tf && ['my-day','overdue','today','tomorrow','week','no-date'].includes(tf)) {
+    curTimeFilter = tf;
+  }
   loadData();
   updateSyncIndicator();
   // Polling: refrescar tareas cada 60s en silencio
