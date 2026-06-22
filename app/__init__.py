@@ -2100,6 +2100,46 @@ def create_app():
         ok = app.supabase.delete('task_deps', dep_id)
         return jsonify({'success': ok})
 
+    @app.route('/planning/api/tasks/<tid>/refresh-subtasks', methods=['POST'])
+    @login_required
+    def planning_refresh_subtasks(tid):
+        """Trae las subtareas más recientes desde Microsoft To-Do para una tarea concreta."""
+        if not is_admin(): return jsonify({'success': False, 'error': 'Solo admin'})
+        rows = app.supabase.get('tasks', {'id': tid}, select='*')
+        if not rows: return jsonify({'success': False, 'error': 'Tarea no encontrada'})
+        task = rows[0]
+        ms_email = task.get('ms_email'); list_id = task.get('ms_list_id')
+        src_id   = task.get('source_id')
+        if not (ms_email and list_id and src_id):
+            return jsonify({'success': False, 'error': 'Esta tarea no es de Microsoft To-Do'})
+        token = get_ms_token_for(app, ms_email)
+        if not token: return jsonify({'success': False, 'error': 'Token MS no disponible'})
+        headers = {'Authorization': f'Bearer {token}'}
+        items = []
+        url = f'{MS_GRAPH_URL}/me/todo/lists/{list_id}/tasks/{src_id}/checklistItems?$top=200'
+        try:
+            while url:
+                r = req_lib.get(url, headers=headers, timeout=(5,15))
+                if r.status_code != 200:
+                    return jsonify({'success': False, 'error': f'MS error {r.status_code}'})
+                d = r.json()
+                items.extend(d.get('value', []))
+                url = d.get('@odata.nextLink')
+        except Exception as e:
+            return jsonify({'success': False, 'error': str(e)[:200]})
+        subs = [{
+            'id':   ci.get('id',''),
+            'name': (ci.get('displayName') or '').strip(),
+            'done': bool(ci.get('isChecked')),
+            'checked_at': ci.get('checkedDateTime'),
+        } for ci in items]
+        prog = int(sum(1 for s in subs if s.get('done')) * 100 / len(subs)) if subs else (task.get('progress_pct') or 0)
+        app.supabase.update('tasks', tid, {
+            'subtasks':       subs,
+            'progress_pct':   prog,
+            'last_synced_at': datetime.now(timezone.utc).isoformat()})
+        return jsonify({'success': True, 'count': len(subs), 'progress': prog, 'subtasks': subs})
+
     @app.route('/planning/api/tasks/<tid>/subtask/<sid>', methods=['PATCH'])
     @login_required
     def planning_toggle_subtask(tid, sid):
@@ -2288,16 +2328,6 @@ def create_app():
                                     'checked_at': ci.get('checkedDateTime'),
                                 } for ci in raw_subs]
                             if tid in existing_ids:
-                                # Actualizamos subtareas de la tarea existente si difieren
-                                try:
-                                    app.supabase._session.patch(
-                                        f"{app.supabase.url}/rest/v1/tasks?source_id=eq.{tid}",
-                                        headers={'Prefer':'return=minimal'},
-                                        json={'subtasks': subs,
-                                              'last_synced_at': sync_iso},
-                                        timeout=app.supabase._timeout)
-                                except Exception:
-                                    pass
                                 skipped += 1
                                 continue
                             # Variable interna para reutilizar abajo

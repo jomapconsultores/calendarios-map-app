@@ -411,6 +411,12 @@ input[type=range].prog-range{accent-color:#4f46e5;width:100%}
               <span class="small text-muted">Subtareas de esta tarea. Marca las completadas; el progreso se actualiza solo.</span>
               <span id="subtaskCounter" class="badge bg-primary">0/0</span>
             </div>
+            <div id="msSubsRefreshRow" style="display:none" class="mb-2">
+              <button id="btnRefreshSubs" class="btn btn-sm btn-outline-primary" onclick="refreshSubtasksFromMs()">
+                🔄 Sincronizar subtareas con Microsoft To-Do
+              </button>
+              <small id="refreshSubsHint" class="text-muted ms-2"></small>
+            </div>
             <div id="subtasksList"></div>
             <div class="input-group input-group-sm mt-2">
               <input id="newSubInput" class="form-control" placeholder="+ Agregar subtarea (Enter)"
@@ -1374,6 +1380,31 @@ async function toggleSubtask(idx) {
   }
 }
 
+async function refreshSubtasksFromMs() {
+  if (!editingTaskId) return;
+  const btn = document.getElementById('btnRefreshSubs');
+  btn.disabled = true; btn.textContent = '⏳ Sincronizando...';
+  try {
+    const r = await fetch(`/planning/api/tasks/${editingTaskId}/refresh-subtasks`, {method:'POST'}).then(x=>x.json());
+    if (r.success) {
+      currentSubs = r.subtasks || [];
+      renderSubtasks();
+      const idx = allTasks.findIndex(t => t.id === editingTaskId);
+      if (idx >= 0) {
+        allTasks[idx].subtasks = currentSubs;
+        allTasks[idx].progress_pct = r.progress;
+      }
+      renderAll();
+      showToast(`🔄 ${r.count} subtareas sincronizadas`, 'success');
+    } else {
+      showToast('❌ ' + (r.error || 'Error al sincronizar'), 'danger');
+    }
+  } catch(e) {
+    showToast('❌ Error de conexión', 'danger');
+  }
+  btn.disabled = false; btn.textContent = '🔄 Sincronizar subtareas con Microsoft To-Do';
+}
+
 function addSubtask() {
   const input = document.getElementById('newSubInput');
   const name = (input.value || '').trim();
@@ -1550,6 +1581,14 @@ function openTask(id) {
   currentSubs = t && Array.isArray(t.subtasks) ? JSON.parse(JSON.stringify(t.subtasks)) : [];
   renderSubtasks();
   document.getElementById('newSubInput').value = '';
+  // Botón de refresh: solo si la tarea viene de MS y soy admin
+  const refreshRow = document.getElementById('msSubsRefreshRow');
+  if (refreshRow) {
+    const canRefresh = IS_ADMIN && t && t.source === 'ms_todo' && t.source_id && t.ms_email && t.ms_list_id;
+    refreshRow.style.display = canRefresh ? '' : 'none';
+    document.getElementById('refreshSubsHint').textContent = canRefresh
+      ? 'Trae todas las subtareas (incl. más de 20) desde Microsoft.' : '';
+  }
   // Cargar dependencias
   loadDeps(id);
   document.getElementById('depSearch').value = '';
