@@ -2210,11 +2210,31 @@ def create_app():
         task = rows[0]
         ms_email = task.get('ms_email'); list_id = task.get('ms_list_id')
         src_id   = task.get('source_id')
-        if not (ms_email and list_id and src_id):
+        if not (ms_email and src_id):
             return jsonify({'success': False, 'error': 'Esta tarea no es de Microsoft To-Do'})
         token = get_ms_token_for(app, ms_email)
         if not token: return jsonify({'success': False, 'error': 'Token MS no disponible'})
         headers = {'Authorization': f'Bearer {token}'}
+        # Si no sabemos en qué lista vive la tarea, la buscamos
+        if not list_id:
+            try:
+                lr = req_lib.get(f'{MS_GRAPH_URL}/me/todo/lists', headers=headers, timeout=(5,15))
+                if lr.status_code != 200:
+                    return jsonify({'success': False, 'error': f'MS lists error {lr.status_code}'})
+                for lst in lr.json().get('value', []):
+                    cand = lst['id']
+                    chk = req_lib.get(
+                        f'{MS_GRAPH_URL}/me/todo/lists/{cand}/tasks/{src_id}',
+                        headers=headers, timeout=(5,10))
+                    if chk.status_code == 200:
+                        list_id = cand
+                        # Guardar para no buscar de nuevo
+                        app.supabase.update('tasks', tid, {'ms_list_id': list_id})
+                        break
+                if not list_id:
+                    return jsonify({'success': False, 'error': 'Tarea no encontrada en MS (¿borrada?)'})
+            except Exception as e:
+                return jsonify({'success': False, 'error': f'Buscando lista: {str(e)[:200]}'})
         items = []
         url = f'{MS_GRAPH_URL}/me/todo/lists/{list_id}/tasks/{src_id}/checklistItems?$top=200'
         try:
