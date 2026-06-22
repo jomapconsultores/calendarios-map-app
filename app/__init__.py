@@ -1228,8 +1228,15 @@ def create_app():
                 'calendars':  [cal_by_id[p['calendar_id']] for p in perms_list
                                if p['calendar_id'] in cal_by_id],
             })
-        # Cuentas MS conectadas + permisos por usuario
-        ms_accounts = [t.get('email','') for t in (app.supabase.get('ms_tokens', select='email') or [])]
+        # Cuentas MS conectadas + permisos por usuario + conteos
+        ms_accounts_raw = app.supabase.get('ms_tokens', select='email') or []
+        ms_accounts = [t.get('email','') for t in ms_accounts_raw if t.get('email')]
+        # Contar tareas por cuenta para mostrar al admin la magnitud
+        ms_counts = {}
+        for ms in ms_accounts:
+            rows = app.supabase.get('tasks', {'ms_email': ms, 'source': 'ms_todo'},
+                                    select='id') or []
+            ms_counts[ms] = len(rows)
         ms_perms_all = app.supabase.get('ms_account_permissions', select='user_id,ms_email') or []
         ms_by_user = defaultdict(list)
         for p in ms_perms_all:
@@ -1238,7 +1245,8 @@ def create_app():
             u['ms_emails'] = ms_by_user.get(u['id'], [])
         return render_template('admin_users.html', users=users, calendarios=all_cals,
                                pending=pending, pending_all=pending_all,
-                               all_modules=ALL_MODULES, ms_accounts=ms_accounts)
+                               all_modules=ALL_MODULES, ms_accounts=ms_accounts,
+                               ms_counts=ms_counts)
 
     # ============================================================
     #  ADMIN — DATABASE
