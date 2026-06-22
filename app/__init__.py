@@ -23,8 +23,8 @@ except ImportError:
 GOOGLE_SCOPES = ['https://www.googleapis.com/auth/calendar']
 
 # Microsoft Graph — To-Do
-MS_AUTH_URL   = 'https://login.microsoftonline.com/common/oauth2/v2.0/authorize'
-MS_TOKEN_URL  = 'https://login.microsoftonline.com/common/oauth2/v2.0/token'
+MS_AUTH_URL   = 'https://login.microsoftonline.com/consumers/oauth2/v2.0/authorize'
+MS_TOKEN_URL  = 'https://login.microsoftonline.com/consumers/oauth2/v2.0/token'
 MS_GRAPH_URL  = 'https://graph.microsoft.com/v1.0'
 MS_SCOPES     = 'Tasks.ReadWrite offline_access User.Read'
 GOOGLE_ACCOUNT_EMAIL = 'mposligua0000@gmail.com'
