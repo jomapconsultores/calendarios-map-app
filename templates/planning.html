@@ -148,6 +148,51 @@ input[type=range].prog-range{accent-color:#4f46e5;width:100%}
   .plan-toolbar{flex-direction:column;align-items:stretch}
   .view-tabs{overflow-x:auto}
 }
+
+/* ===== POLISH PROFESIONAL ===== */
+.task-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  background: #f8fafc;
+  backdrop-filter: blur(8px);
+}
+.task-table tr {
+  transition: background .12s ease, transform .12s ease;
+}
+.task-table tr:hover td {
+  background: #f5f7ff !important;
+}
+.task-table tr.group-header td {
+  letter-spacing: .02em;
+  border-top: 1px solid rgba(255,255,255,.2);
+  box-shadow: 0 1px 4px rgba(67,56,202,.18);
+  transition: filter .12s ease;
+}
+.task-table tr.group-header:hover td { filter: brightness(1.05); }
+
+.proj-pill {
+  transition: all .18s ease;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.proj-pill:hover { transform: translateY(-1px); box-shadow: 0 3px 8px rgba(0,0,0,.07); }
+.proj-pill.active { box-shadow: 0 4px 12px rgba(79,70,229,.25); }
+
+#bulkBar {
+  animation: slideDown .2s ease;
+  font-weight: 500;
+}
+@keyframes slideDown {
+  from { transform: translateY(-12px); opacity: 0; }
+  to   { transform: translateY(0); opacity: 1; }
+}
+
+.badge { font-weight: 600; padding: .26em .55em; letter-spacing: .01em; }
+
+.section-heading { font-size: 1.05rem; }
+.module-card { transition: transform .2s ease, box-shadow .2s ease; }
+.module-card:hover { transform: translateY(-2px); box-shadow: 0 10px 24px rgba(0,0,0,.08); }
 </style>
 {% endblock %}
 
@@ -1269,6 +1314,11 @@ function taskRowHtml(t, i) {
       : (isMs && isExpanded
          ? `<span class="badge bg-info text-white" style="font-size:.65rem">⏳ cargando...</span>`
          : '');
+    // Badge clicable para correos marcados / linkedResources
+    const emailBadge = t.source_url
+      ? `<a href="${esc(t.source_url)}" target="_blank" onclick="event.stopPropagation()" class="badge text-decoration-none" style="background:#0078d4;color:#fff;font-size:.65rem" title="Abrir en ${esc(t.source_app||'Outlook')}">📧 ${esc(t.source_app||'Email')}</a>`
+      : (t.source_app === 'Outlook'
+         ? `<span class="badge" style="background:#0078d4;color:#fff;font-size:.65rem" title="Correo marcado">📧 Correo</span>` : '');
     const checkbox = selectMode
       ? `<input type="checkbox" onclick="event.stopPropagation()" onchange="toggleRowSelect('${t.id}', this.checked)" ${selectedIds.has(t.id)?'checked':''}>`
       : `<span class="text-muted">${i+1}</span>`;
@@ -1278,6 +1328,7 @@ function taskRowHtml(t, i) {
         ${chevron} <strong>${esc(t.title)}</strong>
         <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:2px;margin-left:22px">
           ${srcBadge}
+          ${emailBadge}
           ${subsBadge}
           ${createdAgo}
         </div>

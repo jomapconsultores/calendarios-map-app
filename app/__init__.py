@@ -2489,13 +2489,20 @@ def create_app():
                     per_account.append(f'{ms_email}: error {r.status_code}')
                     continue
                 lists = r.json().get('value', [])
+                # Mapa de wellknown → nombre amigable
+                WELLKNOWN_NAME = {
+                    'flaggedEmails': '📧 Correos marcados',
+                    'defaultList':   '📌 Tareas (default)',
+                }
                 for lst in lists:
                     if _time.monotonic() > DEADLINE: partial = True; break
                     list_id    = lst['id']
-                    list_title = lst.get('displayName', 'To-Do')
+                    wk = lst.get('wellknownListName', '')
+                    list_title = WELLKNOWN_NAME.get(wk, lst.get('displayName', 'To-Do'))
+                    is_flagged_list = (wk == 'flaggedEmails')
                     # Import liviano: NO traemos subtareas en el sync masivo.
                     # Las subtareas se cargan bajo demanda al abrir cada tarea (auto-refresh-subtasks).
-                    url = f'{MS_GRAPH_URL}/me/todo/lists/{list_id}/tasks?$top=100'
+                    url = f'{MS_GRAPH_URL}/me/todo/lists/{list_id}/tasks?$top=100&$expand=linkedResources'
                     while url:
                         if _time.monotonic() > DEADLINE: partial = True; break
                         tr = req_lib.get(url, headers=headers, timeout=(10,20))
@@ -2510,6 +2517,15 @@ def create_app():
                                 skipped += 1
                                 continue
                             subs_for_new = []
+                            # linkedResources: si la tarea proviene de un correo flagged
+                            lr = (task.get('linkedResources') or [])
+                            source_url = ''
+                            source_app = ''
+                            if lr:
+                                source_url = lr[0].get('webUrl', '') or ''
+                                source_app = lr[0].get('applicationName', '') or ''
+                            elif is_flagged_list:
+                                source_app = 'Outlook'
                             due = None
                             if task.get('dueDateTime'):
                                 try: due = task['dueDateTime']['dateTime'][:10]
@@ -2536,6 +2552,8 @@ def create_app():
                                 'phase':          (list_title or 'General')[:100],
                                 'source':         'ms_todo',
                                 'source_id':      tid,
+                                'source_url':     source_url,
+                                'source_app':     source_app,
                                 'ms_email':       ms_email,
                                 'ms_list_id':     list_id,
                                 'last_synced_at': sync_iso,
