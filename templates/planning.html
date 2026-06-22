@@ -206,6 +206,9 @@ input[type=range].prog-range{accent-color:#4f46e5;width:100%}
     <option value="blocked">Bloqueado</option>
   </select>
   <button class="btn btn-primary btn-sm rounded-pill" onclick="openProjectModal(null)">+ Proyecto</button>
+  <button id="btnShowDone" class="btn btn-outline-success btn-sm rounded-pill" onclick="toggleDone()" title="Mostrar/ocultar tareas completadas">
+    ✅ Ver completadas
+  </button>
   {% if ms_connected %}
   <button class="btn btn-sm rounded-pill fw-bold" style="background:#0078d4;color:#fff;border:0"
           onclick="openImportTodoModal()" title="Importar tareas desde Microsoft To-Do">
@@ -566,6 +569,21 @@ function renderAll() {
 }
 
 let curAccount = null;
+let showDone = false;
+
+// Paleta de colores por cuenta (determinística por email)
+const ACCOUNT_PALETTE = ['#0078d4','#d83b01','#107c10','#5c2d91','#e3008c','#b4009e','#ff8c00','#00b294'];
+function colorForAccount(email) {
+  if (!email) return '#4f46e5';
+  let h = 0;
+  for (let i = 0; i < email.length; i++) h = (h * 31 + email.charCodeAt(i)) >>> 0;
+  return ACCOUNT_PALETTE[h % ACCOUNT_PALETTE.length];
+}
+function shortAccount(email) {
+  if (!email) return 'Sistema';
+  const n = email.split('@')[0];
+  return n.length > 16 ? n.slice(0,16)+'…' : n;
+}
 
 function filteredTasks() {
   let t = allTasks;
@@ -575,6 +593,7 @@ function filteredTasks() {
   } else if (curAccount) {
     t = t.filter(x => (x.ms_email || '') === curAccount);
   }
+  if (!showDone) t = t.filter(x => x.status !== 'done');
   const s = document.getElementById('filterStatus').value;
   if (s) t = t.filter(x => (x.status || 'pending') === s);
   const q = (document.getElementById('searchInput').value || '').toLowerCase();
@@ -593,21 +612,30 @@ function renderAccountPills() {
   const accounts = [...new Set(allTasks.map(t => t.ms_email).filter(Boolean))].sort();
   const hasManual = allTasks.some(t => !t.ms_email);
   if (!accounts.length && !hasManual) { c.innerHTML = ''; return; }
-  let html = `<span class="proj-pill proj-pill-all ${!curAccount?'active':''}" onclick="setAccount(null)">📋 Todas las fuentes</span>`;
+  const countBy = (pred) => allTasks.filter(t => (showDone || t.status !== 'done') && pred(t)).length;
+  let html = `<span class="proj-pill proj-pill-all ${!curAccount?'active':''}" onclick="setAccount(null)">
+    📋 Todas <span class="badge bg-secondary ms-1" style="font-size:.65rem">${countBy(()=>true)}</span>
+  </span>`;
   if (hasManual) {
+    const n = countBy(t => !t.ms_email);
     html += `<span class="proj-pill ${curAccount==='__manual__'?'active':''}"
       style="border-color:#4f46e5;${curAccount==='__manual__'?'background:#4f46e5;color:#fff':''}"
-      onclick="setAccount('__manual__')">✍️ Sistema</span>`;
+      onclick="setAccount('__manual__')">✍️ Sistema <span class="badge bg-light text-dark ms-1" style="font-size:.65rem">${n}</span></span>`;
   }
   accounts.forEach(a => {
+    const col = colorForAccount(a);
+    const n = countBy(t => t.ms_email === a);
     html += `<span class="proj-pill ${curAccount===a?'active':''}"
-      style="border-color:#0078d4;${curAccount===a?'background:#0078d4;color:#fff':''}"
-      onclick="setAccount('${a}')">📧 ${esc(a)}</span>`;
+      style="border-color:${col};${curAccount===a?'background:'+col+';color:#fff':'color:'+col}"
+      onclick="setAccount('${a}')" title="${esc(a)}">
+      📧 ${esc(shortAccount(a))} <span class="badge bg-light text-dark ms-1" style="font-size:.65rem;color:#333!important">${n}</span>
+    </span>`;
   });
   c.innerHTML = html;
 }
 
 function setAccount(em) { curAccount = em; renderAll(); }
+function toggleDone() { showDone = !showDone; document.getElementById('btnShowDone').textContent = showDone ? '👁 Ocultar completadas' : '✅ Ver completadas'; renderAll(); }
 
 // ——————————————————————————————————————————
 //  TIEMPO RELATIVO
@@ -629,7 +657,10 @@ function timeAgo(iso) {
 //  STATS
 // ——————————————————————————————————————————
 function updateStats() {
-  const t = curProject ? allTasks.filter(x => x.project_id === curProject) : allTasks;
+  // Stats sobre TODAS las tareas (no aplica el filtro showDone, para ver totales reales)
+  let t = curProject ? allTasks.filter(x => x.project_id === curProject) : allTasks;
+  if (curAccount === '__manual__') t = t.filter(x => !x.ms_email);
+  else if (curAccount) t = t.filter(x => (x.ms_email||'') === curAccount);
   const overdue = t.filter(x => x.due_date && x.status !== 'done' &&
     new Date(x.due_date) < today).length;
   document.getElementById('stTotal').textContent = t.length;
@@ -723,11 +754,12 @@ function renderList() {
                    dl !== null && dl <= 3 && t.status !== 'done' ? 'due-soon' : '';
     const daysBadge = daysBadgeHtml(dl, t.status);
     const prog = t.progress_pct || 0;
+    const accColor = colorForAccount(t.ms_email);
     const srcBadge = t.ms_email
-      ? `<span class="badge" style="background:#deebf7;color:#0078d4;font-size:.65rem" title="Microsoft To-Do · ${esc(t.ms_email)}">📋 ${esc(t.ms_email.split('@')[0])}</span>`
-      : `<span class="badge" style="background:#e0e7ff;color:#4338ca;font-size:.65rem">✍️ Sistema</span>`;
+      ? `<span class="badge" style="background:${accColor};color:#fff;font-size:.65rem" title="Microsoft To-Do · ${esc(t.ms_email)}">📋 ${esc(shortAccount(t.ms_email))}</span>`
+      : `<span class="badge" style="background:#4f46e5;color:#fff;font-size:.65rem">✍️ Sistema</span>`;
     const createdAgo = t.created_at ? `<span class="text-muted" style="font-size:.7rem" title="${esc(t.created_at)}">⏱ ${timeAgo(t.created_at)}</span>` : '';
-    return `<tr class="${rowCls}" onclick="openTask('${t.id}')" style="cursor:pointer">
+    return `<tr class="${rowCls}" onclick="openTask('${t.id}')" style="cursor:pointer;border-left:4px solid ${accColor}">
       <td class="text-muted">${i+1}</td>
       <td>
         <strong>${esc(t.title)}</strong>
@@ -799,10 +831,16 @@ function kanbanCard(t) {
   const cls = (dl !== null && dl < 0 && t.status !== 'done') ? 'overdue' :
               (dl !== null && dl <= 3 && t.status !== 'done') ? 'due-soon' : '';
   const prog = t.progress_pct || 0;
+  const accColor = colorForAccount(t.ms_email);
+  const srcLabel = t.ms_email
+    ? `<span style="background:${accColor};color:#fff;padding:1px 6px;border-radius:8px;font-size:.62rem" title="${esc(t.ms_email)}">📋 ${esc(shortAccount(t.ms_email))}</span>`
+    : `<span style="background:#4f46e5;color:#fff;padding:1px 6px;border-radius:8px;font-size:.62rem">✍️ Sistema</span>`;
   return `<div class="kanban-card ${cls}" draggable="true"
       ondragstart="onDragStart(event,'${t.id}')"
-      onclick="openTask('${t.id}')">
+      onclick="openTask('${t.id}')"
+      style="border-left:4px solid ${accColor}">
     <div class="kc-title">${esc(t.title)}</div>
+    <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:4px">${srcLabel}${t.created_at ? `<span class="text-muted" style="font-size:.62rem">⏱ ${timeAgo(t.created_at)}</span>` : ''}</div>
     ${proj ? `<div class="kc-project" style="color:${proj.color}">📁 ${esc(proj.name)}</div>` : ''}
     <div class="kc-footer">
       <span class="badge-prio bp-${t.priority||'medium'}" style="font-size:.68rem">${PRIO_LABELS[t.priority||'medium']}</span>
