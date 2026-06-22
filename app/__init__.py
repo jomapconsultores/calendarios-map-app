@@ -350,26 +350,27 @@ def _build_ms_task_body(task):
 
 def push_task_to_ms(app, task):
     """Empuja un cambio del sistema a Microsoft To-Do.
-    Solo aplica si la tarea ya tiene source='ms_todo' y ms_email + ms_list_id."""
+    Devuelve (success: bool, new_source_id: str|None). Si se crea una tarea
+    nueva en MS, new_source_id trae el ID asignado por Graph."""
     ms_email = task.get('ms_email'); list_id = task.get('ms_list_id')
-    src_id   = task.get('source_id'); src = task.get('source')
-    if src != 'ms_todo' or not (ms_email and list_id): return False
+    src_id   = task.get('source_id')
+    if not (ms_email and list_id): return (False, None)
     token = get_ms_token_for(app, ms_email)
-    if not token: return False
+    if not token: return (False, None)
     headers = {'Authorization': f'Bearer {token}','Content-Type':'application/json'}
     try:
         if src_id:
-            # Update existente
             r = req_lib.patch(f'{MS_GRAPH_URL}/me/todo/lists/{list_id}/tasks/{src_id}',
                               headers=headers, json=_build_ms_task_body(task), timeout=(5,15))
-            return r.status_code in (200, 204)
+            return (r.status_code in (200, 204), None)
         else:
-            # Create nuevo en MS
             r = req_lib.post(f'{MS_GRAPH_URL}/me/todo/lists/{list_id}/tasks',
                              headers=headers, json=_build_ms_task_body(task), timeout=(5,15))
-            return r.status_code in (200, 201)
+            if r.status_code in (200, 201):
+                return (True, r.json().get('id'))
+            return (False, None)
     except Exception:
-        return False
+        return (False, None)
 
 def delete_task_in_ms(app, task):
     ms_email = task.get('ms_email'); list_id = task.get('ms_list_id')
@@ -2069,6 +2070,36 @@ def create_app():
             rows = [t for t in rows if visible(t)]
         return jsonify(rows)
 
+    @app.route('/planning/api/ms-accounts', methods=['GET'])
+    @login_required
+    def planning_ms_accounts():
+        if not is_admin(): return jsonify([])
+        rows = app.supabase.get('ms_tokens', select='email') or []
+        return jsonify([r.get('email') for r in rows if r.get('email')])
+
+    @app.route('/planning/api/ms-lists', methods=['GET'])
+    @login_required
+    def planning_ms_lists():
+        if not is_admin(): return jsonify([])
+        email = request.args.get('email', '')
+        if not email: return jsonify([])
+        token = get_ms_token_for(app, email)
+        if not token: return jsonify([])
+        try:
+            r = req_lib.get(f'{MS_GRAPH_URL}/me/todo/lists',
+                            headers={'Authorization': f'Bearer {token}'}, timeout=(5,15))
+            if r.status_code != 200: return jsonify([])
+            lists = r.json().get('value', [])
+            return jsonify([{'id': l['id'], 'name': l.get('displayName','To-Do')} for l in lists])
+        except Exception:
+            return jsonify([])
+
+    @app.route('/planning/api/deps/<dep_id>', methods=['DELETE'])
+    @login_required
+    def planning_delete_dep(dep_id):
+        ok = app.supabase.delete('task_deps', dep_id)
+        return jsonify({'success': ok})
+
     @app.route('/planning/api/tasks', methods=['POST'])
     @login_required
     def planning_create_task():
@@ -2081,8 +2112,20 @@ def create_app():
         d.setdefault('phase', 'General')
         d.setdefault('progress_pct', 0)
         d.setdefault('alert_days', 3)
+        # Si se solicita sincronizar con MS, marcar como ms_todo
+        if d.get('ms_email') and d.get('ms_list_id'):
+            d.setdefault('source', 'ms_todo')
         r = app.supabase.insert('tasks', d)
-        return jsonify({'success': bool(r), 'task': r[0] if r else None})
+        task = r[0] if r else None
+        # Push a Microsoft si corresponde
+        if task and task.get('ms_email') and task.get('ms_list_id'):
+            ok, new_src = push_task_to_ms(app, task)
+            if ok and new_src:
+                app.supabase.update('tasks', task['id'],
+                    {'source_id': new_src,
+                     'last_synced_at': datetime.now(timezone.utc).isoformat()})
+                task['source_id'] = new_src
+        return jsonify({'success': bool(r), 'task': task})
 
     @app.route('/planning/api/tasks/<tid>', methods=['PATCH'])
     @login_required
@@ -2092,15 +2135,17 @@ def create_app():
         if d.get('status') == 'done' and not d.get('completed_date'):
             d['completed_date'] = date.today().isoformat()
         ok = app.supabase.update('tasks', tid, d)
-        # Push a Microsoft si la tarea es de origen ms_todo
         pushed = False
         if ok:
             current = app.supabase.get('tasks', {'id': tid}, select='*')
             if current:
-                pushed = push_task_to_ms(app, current[0])
+                pushed, new_src = push_task_to_ms(app, current[0])
                 if pushed:
-                    app.supabase.update('tasks', tid,
-                        {'last_synced_at': datetime.now(timezone.utc).isoformat()})
+                    upd = {'last_synced_at': datetime.now(timezone.utc).isoformat()}
+                    if new_src and not current[0].get('source_id'):
+                        upd['source_id'] = new_src
+                        upd['source']    = 'ms_todo'
+                    app.supabase.update('tasks', tid, upd)
         return jsonify({'success': ok, 'pushed_to_ms': pushed})
 
     @app.route('/planning/api/tasks/<tid>', methods=['DELETE'])
