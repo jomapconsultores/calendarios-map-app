@@ -1145,7 +1145,8 @@ function renderCurrentView() {
 // ——————————————————————————————————————————
 // groupBy se guarda por scope (planning/todo) para que cada vista recuerde su preferencia
 let groupBy = localStorage.getItem('groupBy_' + SCOPE);
-if (groupBy === null) groupBy = (SCOPE === 'todo') ? 'account' : '';
+// /todo agrupa por lista (= tarea madre) por defecto
+if (groupBy === null) groupBy = (SCOPE === 'todo') ? 'phase' : '';
 function setGroupBy(v) { groupBy = v; localStorage.setItem('groupBy_' + SCOPE, v); renderCurrentView(); }
 document.addEventListener('DOMContentLoaded', () => {
   const sel = document.getElementById('groupBy');
@@ -1189,29 +1190,43 @@ function renderList() {
       (groups[k] = groups[k] || []).push(t);
     });
     const keys = Object.keys(groups).sort();
+    const today0 = todayStr();
+    const groupIcon = {
+      phase:    '📁',
+      project:  '📂',
+      account:  '📧',
+      priority: '🎯',
+    }[groupBy] || '📋';
     tbody.innerHTML = keys.map(k => {
       const groupTasks = groups[k];
-      const groupId = 'grp_' + k.replace(/[^a-z0-9]/gi, '_');
-      const rows = groupTasks.map((t,i) => taskRowHtml(t, i)).join('');
-      return `<tr class="group-header" style="background:#eef2ff;cursor:pointer" onclick="toggleGroup('${groupId}')">
-        <td colspan="11" style="padding:8px 12px;font-weight:700">
-          <span id="${groupId}_caret">▾</span> ${esc(k)}
-          <span class="badge bg-primary ms-2">${groupTasks.length}</span>
+      const safeId = k.replace(/[^a-z0-9]/gi, '_');
+      const groupId = 'grp_' + safeId;
+      const collapsed = localStorage.getItem('groupCollapsed_'+safeId) === '1';
+      const totalN  = groupTasks.length;
+      const pendN   = groupTasks.filter(t => t.status !== 'done').length;
+      const overdueN= groupTasks.filter(t => t.due_date && t.due_date < today0 && t.status !== 'done').length;
+      const rows = collapsed ? '' : groupTasks.map((t,i) => taskRowHtml(t, i)).join('');
+      const caret = collapsed ? '▸' : '▾';
+      return `<tr class="group-header" style="background:linear-gradient(to right,#4338ca,#6366f1);color:#fff;cursor:pointer" onclick="toggleGroup('${safeId}')">
+        <td colspan="11" style="padding:10px 14px;font-weight:700;font-size:.92rem">
+          <span id="${groupId}_caret" style="display:inline-block;width:20px">${caret}</span>
+          ${groupIcon} <strong>${esc(k)}</strong>
+          <span class="badge bg-light text-dark ms-2" title="Total" style="font-size:.7rem">${totalN}</span>
+          ${pendN ? `<span class="badge bg-warning text-dark ms-1" title="Pendientes" style="font-size:.7rem">⏳ ${pendN}</span>` : ''}
+          ${overdueN ? `<span class="badge bg-danger text-white ms-1" title="Vencidas" style="font-size:.7rem">⛔ ${overdueN}</span>` : ''}
         </td>
-      </tr>` + `<tbody id="${groupId}_body">` + rows + '</tbody>';
+      </tr>` + (collapsed ? '' : `<tbody id="${groupId}_body">${rows}</tbody>`);
     }).join('');
   } else {
     tbody.innerHTML = tasks.map((t,i) => taskRowHtml(t, i)).join('');
   }
 }
 
-function toggleGroup(gid) {
-  const body = document.getElementById(gid + '_body');
-  const caret = document.getElementById(gid + '_caret');
-  if (!body) return;
-  const hidden = body.style.display === 'none';
-  body.style.display = hidden ? '' : 'none';
-  caret.textContent = hidden ? '▾' : '▸';
+function toggleGroup(safeId) {
+  const key = 'groupCollapsed_' + safeId;
+  const collapsed = localStorage.getItem(key) === '1';
+  localStorage.setItem(key, collapsed ? '0' : '1');
+  renderCurrentView();
 }
 
 function taskRowHtml(t, i) {
