@@ -26,7 +26,7 @@ GOOGLE_SCOPES = ['https://www.googleapis.com/auth/calendar']
 MS_AUTH_URL   = 'https://login.microsoftonline.com/common/oauth2/v2.0/authorize'
 MS_TOKEN_URL  = 'https://login.microsoftonline.com/common/oauth2/v2.0/token'
 MS_GRAPH_URL  = 'https://graph.microsoft.com/v1.0'
-MS_SCOPES     = 'Tasks.Read offline_access User.Read'
+MS_SCOPES     = 'Tasks.ReadWrite offline_access User.Read'
 GOOGLE_ACCOUNT_EMAIL = 'mposligua0000@gmail.com'
 
 # WebAuthn / passkeys (Face ID, huella). Import protegido: si la librería aún
