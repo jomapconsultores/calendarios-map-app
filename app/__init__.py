@@ -2248,6 +2248,23 @@ def create_app():
                 for lst in lists:
                     list_id    = lst['id']
                     list_title = lst.get('displayName', 'To-Do')
+                    def _fetch_full_checklist(t_id):
+                        """Trae TODOS los checklistItems de una tarea, paginando si hace falta."""
+                        items = []
+                        u = f'{MS_GRAPH_URL}/me/todo/lists/{list_id}/tasks/{t_id}/checklistItems?$top=200'
+                        while u:
+                            cr = req_lib.get(u, headers=headers, timeout=(5,12))
+                            if cr.status_code != 200: break
+                            cd = cr.json()
+                            items.extend(cd.get('value', []))
+                            u = cd.get('@odata.nextLink')
+                        return [{
+                            'id':   ci.get('id',''),
+                            'name': (ci.get('displayName') or '').strip(),
+                            'done': bool(ci.get('isChecked')),
+                            'checked_at': ci.get('checkedDateTime'),
+                        } for ci in items]
+
                     url = f'{MS_GRAPH_URL}/me/todo/lists/{list_id}/tasks?$top=200&$expand=checklistItems'
                     while url:
                         tr = req_lib.get(url, headers=headers, timeout=(10,25))
@@ -2258,15 +2275,33 @@ def create_app():
                             title = (task.get('title') or '').strip()
                             if not title: continue
                             tid = task.get('id', '')
+                            # Construir lista de subtareas (con fallback para casos truncados)
+                            raw_subs = task.get('checklistItems') or []
+                            if len(raw_subs) >= 20:
+                                # $expand puede truncar a 20 — pedir completas aparte
+                                subs = _fetch_full_checklist(tid)
+                            else:
+                                subs = [{
+                                    'id':   ci.get('id',''),
+                                    'name': (ci.get('displayName') or '').strip(),
+                                    'done': bool(ci.get('isChecked')),
+                                    'checked_at': ci.get('checkedDateTime'),
+                                } for ci in raw_subs]
                             if tid in existing_ids:
+                                # Actualizamos subtareas de la tarea existente si difieren
+                                try:
+                                    app.supabase._session.patch(
+                                        f"{app.supabase.url}/rest/v1/tasks?source_id=eq.{tid}",
+                                        headers={'Prefer':'return=minimal'},
+                                        json={'subtasks': subs,
+                                              'last_synced_at': sync_iso},
+                                        timeout=app.supabase._timeout)
+                                except Exception:
+                                    pass
                                 skipped += 1
                                 continue
-                            subs = [{
-                                'id':   ci.get('id',''),
-                                'name': (ci.get('displayName') or '').strip(),
-                                'done': bool(ci.get('isChecked')),
-                                'checked_at': ci.get('checkedDateTime'),
-                            } for ci in (task.get('checklistItems') or [])]
+                            # Variable interna para reutilizar abajo
+                            subs_for_new = subs
                             due = None
                             if task.get('dueDateTime'):
                                 try: due = task['dueDateTime']['dateTime'][:10]
@@ -2275,6 +2310,7 @@ def create_app():
                             if task.get('completedDateTime'):
                                 try: comp = task['completedDateTime']['dateTime'][:10]
                                 except Exception: pass
+                            subs = subs_for_new
                             # Si hay subtareas y el progreso no está en 100, calculamos progreso por subtareas
                             sub_progress = None
                             if subs:
