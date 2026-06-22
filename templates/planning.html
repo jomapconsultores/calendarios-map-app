@@ -1208,7 +1208,10 @@ async function doImportTodo() {
   const res = document.getElementById('importTodoResult');
   res.style.display = '';
   if (r.success) {
-    res.innerHTML = `<div class="alert alert-success py-2">✅ <strong>${r.imported}</strong> tareas importadas. ${r.skipped||0} ya existían.${r.errors ? ' | '+r.errors+' con error' : ''}</div>`;
+    const detailHtml = (r.detail && r.detail.length)
+      ? '<div class="small text-muted mt-2">' + r.detail.map(d => '• ' + d).join('<br>') + '</div>'
+      : '';
+    res.innerHTML = `<div class="alert alert-success py-2">✅ <strong>${r.imported}</strong> tareas importadas. ${r.skipped||0} ya existían.${r.errors ? ' | '+r.errors+' con error' : ''}${detailHtml}</div>`;
     await loadData();
   } else if (r.needs_auth) {
     res.innerHTML = `<div class="alert alert-warning py-2">🔗 <a href="/auth/microsoft" class="alert-link">Conecta Microsoft To-Do</a> primero desde Integraciones en el menú lateral.</div>`;
