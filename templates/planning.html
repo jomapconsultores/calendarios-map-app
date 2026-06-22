@@ -206,6 +206,16 @@ input[type=range].prog-range{accent-color:#4f46e5;width:100%}
     <option value="blocked">Bloqueado</option>
   </select>
   <button class="btn btn-primary btn-sm rounded-pill" onclick="openProjectModal(null)">+ Proyecto</button>
+  {% if ms_connected %}
+  <button class="btn btn-sm rounded-pill fw-bold" style="background:#0078d4;color:#fff;border:0"
+          onclick="openImportTodoModal()" title="Importar tareas desde Microsoft To-Do">
+    📋 Importar de Microsoft To-Do
+  </button>
+  {% else %}
+  <a href="/auth/microsoft" class="btn btn-outline-secondary btn-sm rounded-pill" title="Conectar Microsoft To-Do">
+    🔗 Conectar Microsoft To-Do
+  </a>
+  {% endif %}
 </div>
 
 <!-- PROJECT PILLS -->
