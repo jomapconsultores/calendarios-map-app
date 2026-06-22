@@ -240,6 +240,9 @@ input[type=range].prog-range{accent-color:#4f46e5;width:100%}
 <!-- ACCOUNT PILLS (filtro por origen) -->
 <div class="project-pills" id="accountPills" style="margin-top:-4px"></div>
 
+<!-- TIME FILTER PILLS -->
+<div class="project-pills" id="timePills" style="margin-top:-4px"></div>
+
 <!-- QUICK ADD -->
 <div class="quick-add-bar">
   <input id="qTitle" placeholder="+ Agregar tarea rápida — escribe y presiona Enter..."
@@ -685,6 +688,7 @@ async function loadData(silent) {
 function renderAll() {
   renderProjectPills();
   renderAccountPills();
+  renderTimePills();
   fillProjectSelects();
   updateStats();
   renderCurrentView();
@@ -692,6 +696,77 @@ function renderAll() {
 
 let curAccount = null;
 let showDone = false;
+let curTimeFilter = localStorage.getItem('timeFilter_' + SCOPE) || '';
+
+function setTimeFilter(v) {
+  curTimeFilter = (curTimeFilter === v) ? '' : v;  // clic en activo lo desactiva
+  localStorage.setItem('timeFilter_' + SCOPE, curTimeFilter);
+  renderAll();
+}
+
+function todayStr()    { return new Date().toISOString().split('T')[0]; }
+function daysFromToday(n) {
+  const d = new Date(); d.setDate(d.getDate() + n);
+  return d.toISOString().split('T')[0];
+}
+
+function inTimeFilter(t) {
+  if (!curTimeFilter) return true;
+  const d = t.due_date;
+  const today0 = todayStr();
+  switch (curTimeFilter) {
+    case 'overdue':   return d && d < today0 && t.status !== 'done';
+    case 'today':     return d === today0;
+    case 'tomorrow':  return d === daysFromToday(1);
+    case 'week':      return d && d >= today0 && d <= daysFromToday(7);
+    case 'no-date':   return !d;
+    case 'my-day':    {
+      // Mi día: vencidas + de hoy + alta/urgente sin completar
+      if (t.status === 'done') return false;
+      if (d && d <= today0) return true;
+      if (['high','urgent'].includes(t.priority || '')) return true;
+      return false;
+    }
+    default: return true;
+  }
+}
+
+function renderTimePills() {
+  const el = document.getElementById('timePills');
+  // Conteos (sobre tareas que ya pasaron los filtros de cuenta/proyecto)
+  let base = allTasks;
+  if (curProject) base = base.filter(x => x.project_id === curProject);
+  if (curAccount === '__manual__') base = base.filter(x => !x.ms_email);
+  else if (curAccount) base = base.filter(x => (x.ms_email||'') === curAccount);
+  if (!showDone) base = base.filter(x => x.status !== 'done');
+  const today0 = todayStr();
+  const cnt = {
+    'my-day':   base.filter(t => (t.status !== 'done' && ((t.due_date && t.due_date <= today0) || ['high','urgent'].includes(t.priority||'')))).length,
+    'overdue':  base.filter(t => t.due_date && t.due_date < today0 && t.status !== 'done').length,
+    'today':    base.filter(t => t.due_date === today0).length,
+    'tomorrow': base.filter(t => t.due_date === daysFromToday(1)).length,
+    'week':     base.filter(t => t.due_date && t.due_date >= today0 && t.due_date <= daysFromToday(7)).length,
+    'no-date':  base.filter(t => !t.due_date).length,
+  };
+  const def = [
+    {key:'',         label:'Todas',         color:'#64748b', icon:''},
+    {key:'my-day',   label:'Mi día',        color:'#4f46e5', icon:'🎯'},
+    {key:'overdue',  label:'Vencidas',      color:'#ef4444', icon:'⛔'},
+    {key:'today',    label:'Hoy',           color:'#10b981', icon:'📌'},
+    {key:'tomorrow', label:'Mañana',        color:'#0ea5e9', icon:'📅'},
+    {key:'week',     label:'Esta semana',   color:'#8b5cf6', icon:'🗓'},
+    {key:'no-date',  label:'Sin fecha',     color:'#94a3b8', icon:'∅'},
+  ];
+  el.innerHTML = def.map(d => {
+    const active = curTimeFilter === d.key;
+    const n = d.key ? cnt[d.key] : base.length;
+    return `<span class="proj-pill ${active?'active':''}"
+      style="border-color:${d.color};${active?'background:'+d.color+';color:#fff':'color:'+d.color}"
+      onclick="setTimeFilter('${d.key}')">
+      ${d.icon} ${d.label} <span class="badge bg-light text-dark ms-1" style="font-size:.65rem;color:#333!important">${n}</span>
+    </span>`;
+  }).join('');
+}
 
 // Paleta de colores por cuenta (determinística por email)
 const ACCOUNT_PALETTE = ['#0078d4','#d83b01','#107c10','#5c2d91','#e3008c','#b4009e','#ff8c00','#00b294'];
@@ -716,6 +791,7 @@ function filteredTasks() {
     t = t.filter(x => (x.ms_email || '') === curAccount);
   }
   if (!showDone) t = t.filter(x => x.status !== 'done');
+  t = t.filter(inTimeFilter);
   const s = document.getElementById('filterStatus').value;
   if (s) t = t.filter(x => (x.status || 'pending') === s);
   const q = (document.getElementById('searchInput').value || '').toLowerCase();
