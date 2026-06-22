@@ -2326,6 +2326,78 @@ def create_app():
                     app.supabase.update('tasks', tid, upd)
         return jsonify({'success': ok, 'pushed_to_ms': pushed})
 
+    @app.route('/planning/api/tasks/bulk', methods=['POST'])
+    @login_required
+    def planning_bulk_update():
+        """Body: {ids: [...], patch: {...}}. Aplica patch a varias tareas y empuja a MS si toca."""
+        body = request.get_json() or {}
+        ids = body.get('ids') or []
+        patch = body.get('patch') or {}
+        if not ids or not patch:
+            return jsonify({'success': False, 'error': 'ids y patch son obligatorios'})
+        patch['updated_at'] = datetime.now(timezone.utc).isoformat()
+        if patch.get('status') == 'done' and not patch.get('completed_date'):
+            patch['completed_date'] = date.today().isoformat()
+            patch['progress_pct']   = 100
+        # Permisos: si no es admin, valida que todas le pertenezcan
+        if not is_admin():
+            rows = app.supabase.get_in('tasks', 'id', ids, select='id,created_by,assigned_to,assigned_email,ms_email,source')
+            allowed_ms = set(get_user_ms_emails(app, current_user.id))
+            uid = str(current_user.id)
+            def own(t):
+                if t.get('source') == 'ms_todo':
+                    return (t.get('ms_email') or '') in allowed_ms
+                if t.get('created_by') == uid: return True
+                if t.get('assigned_to') == uid: return True
+                if (t.get('assigned_email') or '').lower() == (current_user.email or '').lower():
+                    return True
+                return False
+            ids = [t['id'] for t in rows if own(t)]
+            if not ids:
+                return jsonify({'success': False, 'error': 'Sin permisos'})
+        import time as _time
+        DEADLINE = _time.monotonic() + 90
+        updated = 0; pushed = 0; errors = 0; partial = False
+        for tid in ids:
+            if _time.monotonic() > DEADLINE: partial = True; break
+            ok = app.supabase.update('tasks', tid, patch)
+            if ok:
+                updated += 1
+                # Push a MS si la tarea es de To-Do
+                try:
+                    rows = app.supabase.get('tasks', {'id': tid}, select='*')
+                    if rows:
+                        pushed_ok, _ = push_task_to_ms(app, rows[0])
+                        if pushed_ok: pushed += 1
+                except Exception:
+                    pass
+            else:
+                errors += 1
+        return jsonify({'success': True, 'updated': updated, 'pushed_to_ms': pushed,
+                        'errors': errors, 'partial': partial})
+
+    @app.route('/planning/api/tasks/bulk-delete', methods=['POST'])
+    @login_required
+    def planning_bulk_delete():
+        body = request.get_json() or {}
+        ids = body.get('ids') or []
+        if not ids: return jsonify({'success': False, 'error': 'ids vacío'})
+        if not is_admin():
+            return jsonify({'success': False, 'error': 'Solo admin puede borrar en bulk'})
+        import time as _time
+        DEADLINE = _time.monotonic() + 90
+        deleted = 0; deleted_ms = 0; partial = False
+        for tid in ids:
+            if _time.monotonic() > DEADLINE: partial = True; break
+            rows = app.supabase.get('tasks', {'id': tid}, select='*')
+            task = rows[0] if rows else None
+            if app.supabase.delete('tasks', tid):
+                deleted += 1
+                if task and delete_task_in_ms(app, task):
+                    deleted_ms += 1
+        return jsonify({'success': True, 'deleted': deleted, 'deleted_in_ms': deleted_ms,
+                        'partial': partial})
+
     @app.route('/planning/api/tasks/<tid>', methods=['DELETE'])
     @login_required
     def planning_delete_task(tid):

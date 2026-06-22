@@ -219,6 +219,9 @@ input[type=range].prog-range{accent-color:#4f46e5;width:100%}
   <button id="btnShowSubs" class="btn btn-outline-warning btn-sm rounded-pill" onclick="toggleSubsAsItems()" title="Ver subtareas como ítems independientes">
     📑 Subtareas como ítems
   </button>
+  <button id="btnSelectMode" class="btn btn-outline-dark btn-sm rounded-pill" onclick="toggleSelectMode()" title="Activar selección múltiple para acciones masivas">
+    ☑ Selección múltiple
+  </button>
   {% if ms_connected %}
   <button class="btn btn-sm rounded-pill fw-bold" style="background:#0078d4;color:#fff;border:0"
           onclick="openImportTodoModal()" title="Importar tareas desde Microsoft To-Do">
@@ -243,6 +246,28 @@ input[type=range].prog-range{accent-color:#4f46e5;width:100%}
 <!-- TIME FILTER PILLS -->
 <div class="project-pills" id="timePills" style="margin-top:-4px"></div>
 
+<!-- BULK ACTION BAR -->
+<div id="bulkBar" style="display:none;position:sticky;top:0;z-index:50;background:#1e293b;color:#fff;border-radius:14px;padding:10px 16px;margin-bottom:12px;box-shadow:0 4px 12px rgba(0,0,0,.2)">
+  <div class="d-flex align-items-center gap-2 flex-wrap">
+    <strong><span id="bulkCount">0</span> seleccionada(s)</strong>
+    <div style="flex:1"></div>
+    <button class="btn btn-success btn-sm rounded-pill" onclick="bulkSetStatus('done')">✅ Hechas</button>
+    <button class="btn btn-warning btn-sm rounded-pill" onclick="bulkSetStatus('pending')">⏳ Pendientes</button>
+    <button class="btn btn-info btn-sm rounded-pill" onclick="bulkSetStatus('in_progress')">⚙️ En progreso</button>
+    <select id="bulkPriority" class="form-select form-select-sm rounded-pill" style="max-width:140px" onchange="bulkSetPriority(this.value); this.value=''">
+      <option value="">🎯 Prioridad…</option>
+      <option value="low">🟢 Baja</option>
+      <option value="medium">🟡 Media</option>
+      <option value="high">🔴 Alta</option>
+      <option value="urgent">🚨 Urgente</option>
+    </select>
+    {% if is_admin_user %}
+    <button class="btn btn-danger btn-sm rounded-pill" onclick="bulkDelete()">🗑 Eliminar</button>
+    {% endif %}
+    <button class="btn btn-outline-light btn-sm rounded-pill" onclick="bulkClear()">Cancelar</button>
+  </div>
+</div>
+
 <!-- QUICK ADD -->
 <div class="quick-add-bar">
   <input id="qTitle" placeholder="+ Agregar tarea rápida — escribe y presiona Enter..."
@@ -265,7 +290,7 @@ input[type=range].prog-range{accent-color:#4f46e5;width:100%}
     <table class="task-table">
       <thead>
         <tr>
-          <th>#</th><th>Tarea</th><th>Proyecto</th><th>Fase</th>
+          <th id="headerSelectCell"><span id="hashHeader">#</span></th><th>Tarea</th><th>Proyecto</th><th>Fase</th>
           <th>Prioridad</th><th>Asignado</th><th>Vencimiento</th>
           <th>Días</th><th>Progreso</th><th>Estado</th><th>Acciones</th>
         </tr>
@@ -840,6 +865,96 @@ function renderAccountPills() {
 function setAccount(em) { curAccount = em; renderAll(); }
 function toggleDone() { showDone = !showDone; document.getElementById('btnShowDone').textContent = showDone ? '👁 Ocultar completadas' : '✅ Ver completadas'; renderAll(); }
 
+// ——————————————————————————————————————————
+//  SELECCIÓN MÚLTIPLE
+// ——————————————————————————————————————————
+let selectMode = false;
+const selectedIds = new Set();
+
+function toggleSelectMode() {
+  selectMode = !selectMode;
+  selectedIds.clear();
+  document.getElementById('btnSelectMode').classList.toggle('btn-dark', selectMode);
+  document.getElementById('btnSelectMode').classList.toggle('btn-outline-dark', !selectMode);
+  updateBulkBar();
+  renderAll();
+}
+
+function toggleRowSelect(id, checked) {
+  if (checked) selectedIds.add(id); else selectedIds.delete(id);
+  updateBulkBar();
+}
+
+function toggleAllVisible(checked) {
+  filteredTasks().forEach(t => {
+    if (checked) selectedIds.add(t.id); else selectedIds.delete(t.id);
+  });
+  renderAll();
+}
+
+function updateBulkBar() {
+  const bar = document.getElementById('bulkBar');
+  if (!bar) return;
+  bar.style.display = selectedIds.size ? '' : 'none';
+  document.getElementById('bulkCount').textContent = selectedIds.size;
+}
+
+function bulkClear() {
+  selectedIds.clear();
+  updateBulkBar();
+  renderAll();
+}
+
+async function bulkPatch(patch) {
+  if (!selectedIds.size) return;
+  const ids = Array.from(selectedIds);
+  showToast(`⏳ Actualizando ${ids.length} tareas...`, 'info');
+  try {
+    const r = await fetch('/planning/api/tasks/bulk', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ids, patch})
+    }).then(x => x.json());
+    if (r.success) {
+      let msg = `✅ ${r.updated} actualizadas`;
+      if (r.pushed_to_ms) msg += ` (${r.pushed_to_ms} sincronizadas con MS)`;
+      if (r.partial) msg += '. Algunas pendientes — reintenta para completar.';
+      showToast(msg, 'success');
+      selectedIds.clear();
+      updateBulkBar();
+      await loadData();
+    } else {
+      showToast('❌ ' + (r.error || 'Error'), 'danger');
+    }
+  } catch(e) {
+    showToast('❌ Error de conexión', 'danger');
+  }
+}
+
+function bulkSetStatus(s) {
+  if (!confirm(`¿Marcar ${selectedIds.size} tareas como "${s}"?`)) return;
+  bulkPatch({status: s});
+}
+function bulkSetPriority(p) { if (p) bulkPatch({priority: p}); }
+
+async function bulkDelete() {
+  if (!selectedIds.size) return;
+  if (!confirm(`¿Eliminar ${selectedIds.size} tareas? Esta acción no se puede deshacer y también borrará en Microsoft.`)) return;
+  const ids = Array.from(selectedIds);
+  showToast(`⏳ Eliminando ${ids.length} tareas...`, 'info');
+  try {
+    const r = await fetch('/planning/api/tasks/bulk-delete', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ids})
+    }).then(x => x.json());
+    if (r.success) {
+      showToast(`🗑 ${r.deleted} eliminadas (${r.deleted_in_ms} también en MS)${r.partial?' — reintenta para terminar':''}`, 'warning');
+      selectedIds.clear();
+      updateBulkBar();
+      await loadData();
+    }
+  } catch(e) { showToast('❌ Error', 'danger'); }
+}
+
 let expandSubs = localStorage.getItem('expandSubs') === '1';
 function toggleSubsAsItems() {
   expandSubs = !expandSubs;
@@ -1012,6 +1127,16 @@ function renderList() {
   const tasks = expandedTasks(filteredTasks());
   const tbody = document.getElementById('taskTableBody');
   const empty = document.getElementById('listEmpty');
+  // Header en modo selección: checkbox maestro
+  const hh = document.getElementById('hashHeader');
+  if (hh) {
+    if (selectMode) {
+      const allSel = tasks.length && tasks.every(t => selectedIds.has(t.id));
+      hh.outerHTML = `<input type="checkbox" id="hashHeader" ${allSel?'checked':''} onchange="toggleAllVisible(this.checked)" title="Seleccionar todo lo visible">`;
+    } else {
+      hh.outerHTML = '<span id="hashHeader">#</span>';
+    }
+  }
   if (!tasks.length) { tbody.innerHTML=''; empty.style.display=''; return; }
   empty.style.display = 'none';
   // Agrupación
@@ -1081,8 +1206,11 @@ function taskRowHtml(t, i) {
     const subsBadge = subs.length
       ? `<span class="badge" style="background:#fde68a;color:#92400e;font-size:.65rem" title="Subtareas">📑 ${subsDone}/${subs.length}</span>`
       : '';
-    return `<tr class="${rowCls}" onclick="openTask('${t.id}')" style="cursor:pointer;border-left:4px solid ${accColor}">
-      <td class="text-muted">${i+1}</td>
+    const checkbox = selectMode
+      ? `<input type="checkbox" onclick="event.stopPropagation()" onchange="toggleRowSelect('${t.id}', this.checked)" ${selectedIds.has(t.id)?'checked':''}>`
+      : `<span class="text-muted">${i+1}</span>`;
+    return `<tr class="${rowCls}" onclick="${selectMode?`toggleRowSelect('${t.id}', !this.querySelector('input').checked); this.querySelector('input').checked = !this.querySelector('input').checked; renderAll()`:`openTask('${t.id}')`}" style="cursor:pointer;border-left:4px solid ${accColor};${selectedIds.has(t.id)?'background:#dbeafe':''}">
+      <td>${checkbox}</td>
       <td>
         <strong>${esc(t.title)}</strong>
         <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:2px">
