@@ -2279,9 +2279,16 @@ def create_app():
     def planning_import_todo():
         if not is_admin(): return jsonify({'success': False, 'error': 'Solo admin'})
         accounts = get_all_ms_tokens(app)
+        # Filtro opcional: ?email=jomap@... para sincronizar una sola cuenta
+        only_email = (request.args.get('email') or '').strip().lower()
+        if only_email:
+            accounts = [(e, t) for (e, t) in accounts if e.lower() == only_email]
         if not accounts:
             return jsonify({'success': False, 'needs_auth': True,
                 'error': 'Microsoft To-Do no está conectado. Conecta primero desde Planificación.'})
+        # Tope global de tiempo para no exceder timeout de gunicorn
+        import time as _time
+        DEADLINE = _time.monotonic() + 90
         status_map = {
             'notStarted': 'pending', 'inProgress': 'in_progress',
             'completed': 'done', 'waitingOnOthers': 'review', 'deferred': 'blocked'
@@ -2296,7 +2303,12 @@ def create_app():
         per_account = []
         sync_iso = datetime.now(timezone.utc).isoformat()
         try:
+            partial = False
             for ms_email, token in accounts:
+                if _time.monotonic() > DEADLINE:
+                    partial = True
+                    per_account.append(f'{ms_email}: pendiente (tiempo agotado, reintenta)')
+                    continue
                 headers = {'Authorization': f'Bearer {token}', 'Accept': 'application/json'}
                 imported = 0; skipped = 0; errors = 0
                 # Get all To-Do task lists for this account
@@ -2309,12 +2321,14 @@ def create_app():
                     continue
                 lists = r.json().get('value', [])
                 for lst in lists:
+                    if _time.monotonic() > DEADLINE: partial = True; break
                     list_id    = lst['id']
                     list_title = lst.get('displayName', 'To-Do')
                     # Import liviano: NO traemos subtareas en el sync masivo.
                     # Las subtareas se cargan bajo demanda al abrir cada tarea (auto-refresh-subtasks).
                     url = f'{MS_GRAPH_URL}/me/todo/lists/{list_id}/tasks?$top=100'
                     while url:
+                        if _time.monotonic() > DEADLINE: partial = True; break
                         tr = req_lib.get(url, headers=headers, timeout=(10,20))
                         if tr.status_code != 200: break
                         tdata = tr.json()
@@ -2376,7 +2390,7 @@ def create_app():
                 total_errors   += errors
             return jsonify({'success': True, 'imported': total_imported,
                             'skipped': total_skipped, 'errors': total_errors,
-                            'detail': per_account})
+                            'detail': per_account, 'partial': partial})
         except Exception as e:
             return jsonify({'success': False, 'error': str(e)[:300]})
 
