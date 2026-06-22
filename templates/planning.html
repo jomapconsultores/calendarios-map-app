@@ -216,8 +216,8 @@ input[type=range].prog-range{accent-color:#4f46e5;width:100%}
   <button id="btnShowDone" class="btn btn-outline-success btn-sm rounded-pill" onclick="toggleDone()" title="Mostrar/ocultar tareas completadas">
     ✅ Ver completadas
   </button>
-  <button id="btnShowSubs" class="btn btn-outline-warning btn-sm rounded-pill" onclick="toggleSubsAsItems()" title="Ver subtareas como ítems independientes">
-    📑 Subtareas como ítems
+  <button id="btnShowSubs" class="btn btn-outline-warning btn-sm rounded-pill" onclick="toggleSubsAsItems()" title="Expandir o colapsar todas las tareas con subtareas">
+    📑 Expandir todas
   </button>
   <button id="btnSelectMode" class="btn btn-outline-dark btn-sm rounded-pill" onclick="toggleSelectMode()" title="Activar selección múltiple para acciones masivas">
     ☑ Selección múltiple
@@ -955,31 +955,73 @@ async function bulkDelete() {
   } catch(e) { showToast('❌ Error', 'danger'); }
 }
 
+// Conjunto de IDs de tareas "madre" expandidas (persistente)
+const expandedSet = new Set(JSON.parse(localStorage.getItem('expandedTasks') || '[]'));
+function persistExpanded() {
+  localStorage.setItem('expandedTasks', JSON.stringify([...expandedSet]));
+}
+function toggleExpandRow(id) {
+  if (expandedSet.has(id)) expandedSet.delete(id);
+  else {
+    expandedSet.add(id);
+    // Si la tarea no tiene subtareas cacheadas y es ms_todo, dispara refresh en background
+    const t = allTasks.find(x => x.id === id);
+    if (t && t.source === 'ms_todo' && (!Array.isArray(t.subtasks) || t.subtasks.length === 0)) {
+      autoLoadSubtasksFor(id);
+    }
+  }
+  persistExpanded();
+  renderAll();
+}
+
+async function autoLoadSubtasksFor(id) {
+  try {
+    const r = await fetch(`/planning/api/tasks/${id}/refresh-subtasks`, {method:'POST'}).then(x=>x.json());
+    if (r.success) {
+      const idx = allTasks.findIndex(t => t.id === id);
+      if (idx >= 0) {
+        allTasks[idx].subtasks = r.subtasks || [];
+        allTasks[idx].progress_pct = r.progress;
+      }
+      renderAll();
+    }
+  } catch(e) {}
+}
+
+// Botón Expandir/Colapsar todo (sigue siendo útil con 1.000 tareas)
 let expandSubs = localStorage.getItem('expandSubs') === '1';
 function toggleSubsAsItems() {
   expandSubs = !expandSubs;
   localStorage.setItem('expandSubs', expandSubs ? '1' : '0');
+  // Aplica a todas las tareas con subtareas
+  if (expandSubs) {
+    allTasks.forEach(t => { if ((t.subtasks||[]).length) expandedSet.add(t.id); });
+  } else {
+    expandedSet.clear();
+  }
+  persistExpanded();
   const btn = document.getElementById('btnShowSubs');
-  if (btn) btn.textContent = expandSubs ? '📑 Subtareas ocultas' : '📑 Subtareas como ítems';
+  if (btn) btn.textContent = expandSubs ? '📑 Colapsar todas' : '📑 Expandir todas';
   renderAll();
 }
 document.addEventListener('DOMContentLoaded', () => {
   const btn = document.getElementById('btnShowSubs');
-  if (btn && expandSubs) btn.textContent = '📑 Subtareas ocultas';
+  if (btn && expandSubs) btn.textContent = '📑 Colapsar todas';
 });
 
-// Genera filas "virtuales" para subtareas pendientes
+// Inserta filas hijas para tareas expandidas
 function expandedTasks(tasks) {
-  if (!expandSubs) return tasks;
   const out = [];
   for (const t of tasks) {
     out.push(t);
     const subs = Array.isArray(t.subtasks) ? t.subtasks : [];
+    if (!subs.length) continue;
+    if (!expandedSet.has(t.id)) continue;
     for (const s of subs) {
       if (s.done && !showDone) continue;
       out.push({
         id: t.id + '__' + s.id,
-        title: '↳ ' + (s.name || ''),
+        title: s.name || '',
         status: s.done ? 'done' : 'pending',
         priority: t.priority,
         project_id: t.project_id,
@@ -1177,20 +1219,17 @@ function taskRowHtml(t, i) {
     const dl = daysLeft(t.due_date, t.status);
     const rowCls = dl !== null && dl < 0 && t.status !== 'done' ? 'overdue' :
                    dl !== null && dl <= 3 && t.status !== 'done' ? 'due-soon' : '';
-    // Subtarea virtual: clic abre el padre
+    // Subtarea virtual: fila hija con sangría
     if (t._isSubtask) {
-      const parent = allTasks.find(x => x.id === t._parentId);
-      const parentTitle = parent ? parent.title : '';
-      return `<tr onclick="openTask('${t._parentId}')" style="cursor:pointer;background:#fffbeb">
-        <td class="text-muted">↳</td>
-        <td colspan="3" style="padding-left:32px">
-          <span style="${t.status==='done'?'text-decoration:line-through;color:#94a3b8':''}">${esc(t.title)}</span>
-          <br><small class="text-muted">en: ${esc(parentTitle)}</small>
+      return `<tr onclick="openTask('${t._parentId}')" style="cursor:pointer;background:#fffbeb;border-left:4px solid #fbbf24">
+        <td></td>
+        <td colspan="3" style="padding-left:52px">
+          <span style="color:#92400e;font-weight:500;${t.status==='done'?'text-decoration:line-through;color:#94a3b8':''}">↳ ${esc(t.title)}</span>
         </td>
         <td colspan="5"></td>
         <td><span class="badge-status bs-${t.status}">${STATUS_LABELS[t.status]||''}</span></td>
         <td onclick="event.stopPropagation()">
-          <button class="btn-xs btn-xs-edit" onclick="toggleSubFromList('${t._parentId}','${t._subId}', ${t.status!=='done'})">${t.status==='done' ? '↺' : '✓'}</button>
+          <button class="btn-xs btn-xs-edit" title="${t.status==='done'?'Marcar pendiente':'Marcar hecha'}" onclick="toggleSubFromList('${t._parentId}','${t._subId}', ${t.status!=='done'})">${t.status==='done' ? '↺' : '✓'}</button>
         </td>
       </tr>`;
     }
@@ -1203,17 +1242,26 @@ function taskRowHtml(t, i) {
     const createdAgo = t.created_at ? `<span class="text-muted" style="font-size:.7rem" title="${esc(t.created_at)}">⏱ ${timeAgo(t.created_at)}</span>` : '';
     const subs = Array.isArray(t.subtasks) ? t.subtasks : [];
     const subsDone = subs.filter(s => s.done).length;
-    const subsBadge = subs.length
+    const isExpanded = expandedSet.has(t.id);
+    // Chevron expandible para tareas que tienen (o pueden tener) subtareas
+    const hasSubs = subs.length > 0;
+    const isMs = t.source === 'ms_todo';
+    const chevron = (hasSubs || isMs)
+      ? `<span onclick="event.stopPropagation(); toggleExpandRow('${t.id}')" style="cursor:pointer;display:inline-block;width:18px;color:#64748b;font-size:.9rem" title="Tarea madre: clic para desplegar/colapsar">${isExpanded ? '▾' : '▸'}</span>`
+      : `<span style="display:inline-block;width:18px"></span>`;
+    const subsBadge = hasSubs
       ? `<span class="badge" style="background:#fde68a;color:#92400e;font-size:.65rem" title="Subtareas">📑 ${subsDone}/${subs.length}</span>`
-      : '';
+      : (isMs && isExpanded
+         ? `<span class="badge bg-info text-white" style="font-size:.65rem">⏳ cargando...</span>`
+         : '');
     const checkbox = selectMode
       ? `<input type="checkbox" onclick="event.stopPropagation()" onchange="toggleRowSelect('${t.id}', this.checked)" ${selectedIds.has(t.id)?'checked':''}>`
       : `<span class="text-muted">${i+1}</span>`;
     return `<tr class="${rowCls}" onclick="${selectMode?`toggleRowSelect('${t.id}', !this.querySelector('input').checked); this.querySelector('input').checked = !this.querySelector('input').checked; renderAll()`:`openTask('${t.id}')`}" style="cursor:pointer;border-left:4px solid ${accColor};${selectedIds.has(t.id)?'background:#dbeafe':''}">
       <td>${checkbox}</td>
       <td>
-        <strong>${esc(t.title)}</strong>
-        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:2px">
+        ${chevron} <strong>${esc(t.title)}</strong>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:2px;margin-left:22px">
           ${srcBadge}
           ${subsBadge}
           ${createdAgo}
