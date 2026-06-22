@@ -216,6 +216,9 @@ input[type=range].prog-range{accent-color:#4f46e5;width:100%}
   <button id="btnShowDone" class="btn btn-outline-success btn-sm rounded-pill" onclick="toggleDone()" title="Mostrar/ocultar tareas completadas">
     ✅ Ver completadas
   </button>
+  <button id="btnShowSubs" class="btn btn-outline-warning btn-sm rounded-pill" onclick="toggleSubsAsItems()" title="Ver subtareas como ítems independientes">
+    📑 Subtareas como ítems
+  </button>
   {% if ms_connected %}
   <button class="btn btn-sm rounded-pill fw-bold" style="background:#0078d4;color:#fff;border:0"
           onclick="openImportTodoModal()" title="Importar tareas desde Microsoft To-Do">
@@ -299,6 +302,7 @@ input[type=range].prog-range{accent-color:#4f46e5;width:100%}
         <!-- TABS -->
         <ul class="nav nav-tabs mb-3" id="taskTabs">
           <li class="nav-item"><a class="nav-link active" data-bs-toggle="tab" href="#tabBasic">📋 Básico</a></li>
+          <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#tabSubs">📑 Subtareas <span id="tabSubsBadge" class="badge bg-secondary ms-1" style="font-size:.6rem"></span></a></li>
           <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#tabDates">📅 Fechas</a></li>
           <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#tabDeps">🔗 Dependencias</a></li>
           {% if is_admin_user %}
@@ -398,6 +402,20 @@ input[type=range].prog-range{accent-color:#4f46e5;width:100%}
                 <div class="col"><strong id="daysRemaining">—</strong><br><small class="text-muted">Días restantes</small></div>
                 <div class="col"><strong id="daysDuration">—</strong><br><small class="text-muted">Duración total</small></div>
               </div>
+            </div>
+          </div>
+
+          <!-- TAB SUBTAREAS -->
+          <div class="tab-pane fade" id="tabSubs">
+            <div class="d-flex align-items-center justify-content-between mb-2">
+              <span class="small text-muted">Subtareas de esta tarea. Marca las completadas; el progreso se actualiza solo.</span>
+              <span id="subtaskCounter" class="badge bg-primary">0/0</span>
+            </div>
+            <div id="subtasksList"></div>
+            <div class="input-group input-group-sm mt-2">
+              <input id="newSubInput" class="form-control" placeholder="+ Agregar subtarea (Enter)"
+                onkeydown="if(event.key==='Enter') addSubtask()">
+              <button class="btn btn-primary" onclick="addSubtask()">+</button>
             </div>
           </div>
 
@@ -734,6 +752,48 @@ function renderAccountPills() {
 function setAccount(em) { curAccount = em; renderAll(); }
 function toggleDone() { showDone = !showDone; document.getElementById('btnShowDone').textContent = showDone ? '👁 Ocultar completadas' : '✅ Ver completadas'; renderAll(); }
 
+let expandSubs = localStorage.getItem('expandSubs') === '1';
+function toggleSubsAsItems() {
+  expandSubs = !expandSubs;
+  localStorage.setItem('expandSubs', expandSubs ? '1' : '0');
+  const btn = document.getElementById('btnShowSubs');
+  if (btn) btn.textContent = expandSubs ? '📑 Subtareas ocultas' : '📑 Subtareas como ítems';
+  renderAll();
+}
+document.addEventListener('DOMContentLoaded', () => {
+  const btn = document.getElementById('btnShowSubs');
+  if (btn && expandSubs) btn.textContent = '📑 Subtareas ocultas';
+});
+
+// Genera filas "virtuales" para subtareas pendientes
+function expandedTasks(tasks) {
+  if (!expandSubs) return tasks;
+  const out = [];
+  for (const t of tasks) {
+    out.push(t);
+    const subs = Array.isArray(t.subtasks) ? t.subtasks : [];
+    for (const s of subs) {
+      if (s.done && !showDone) continue;
+      out.push({
+        id: t.id + '__' + s.id,
+        title: '↳ ' + (s.name || ''),
+        status: s.done ? 'done' : 'pending',
+        priority: t.priority,
+        project_id: t.project_id,
+        phase: t.phase,
+        ms_email: t.ms_email,
+        created_at: t.created_at,
+        due_date: null,
+        progress_pct: s.done ? 100 : 0,
+        _isSubtask: true,
+        _parentId: t.id,
+        _subId: s.id,
+      });
+    }
+  }
+  return out;
+}
+
 // ——————————————————————————————————————————
 //  TIEMPO RELATIVO
 // ——————————————————————————————————————————
@@ -859,7 +919,7 @@ function groupKey(t) {
 }
 
 function renderList() {
-  const tasks = filteredTasks();
+  const tasks = expandedTasks(filteredTasks());
   const tbody = document.getElementById('taskTableBody');
   const empty = document.getElementById('listEmpty');
   if (!tasks.length) { tbody.innerHTML=''; empty.style.display=''; return; }
@@ -902,6 +962,23 @@ function taskRowHtml(t, i) {
     const dl = daysLeft(t.due_date, t.status);
     const rowCls = dl !== null && dl < 0 && t.status !== 'done' ? 'overdue' :
                    dl !== null && dl <= 3 && t.status !== 'done' ? 'due-soon' : '';
+    // Subtarea virtual: clic abre el padre
+    if (t._isSubtask) {
+      const parent = allTasks.find(x => x.id === t._parentId);
+      const parentTitle = parent ? parent.title : '';
+      return `<tr onclick="openTask('${t._parentId}')" style="cursor:pointer;background:#fffbeb">
+        <td class="text-muted">↳</td>
+        <td colspan="3" style="padding-left:32px">
+          <span style="${t.status==='done'?'text-decoration:line-through;color:#94a3b8':''}">${esc(t.title)}</span>
+          <br><small class="text-muted">en: ${esc(parentTitle)}</small>
+        </td>
+        <td colspan="5"></td>
+        <td><span class="badge-status bs-${t.status}">${STATUS_LABELS[t.status]||''}</span></td>
+        <td onclick="event.stopPropagation()">
+          <button class="btn-xs btn-xs-edit" onclick="toggleSubFromList('${t._parentId}','${t._subId}', ${t.status!=='done'})">${t.status==='done' ? '↺' : '✓'}</button>
+        </td>
+      </tr>`;
+    }
     const daysBadge = daysBadgeHtml(dl, t.status);
     const prog = t.progress_pct || 0;
     const accColor = colorForAccount(t.ms_email);
@@ -909,12 +986,18 @@ function taskRowHtml(t, i) {
       ? `<span class="badge" style="background:${accColor};color:#fff;font-size:.65rem" title="Microsoft To-Do · ${esc(t.ms_email)}">📋 ${esc(shortAccount(t.ms_email))}</span>`
       : `<span class="badge" style="background:#4f46e5;color:#fff;font-size:.65rem">✍️ Sistema</span>`;
     const createdAgo = t.created_at ? `<span class="text-muted" style="font-size:.7rem" title="${esc(t.created_at)}">⏱ ${timeAgo(t.created_at)}</span>` : '';
+    const subs = Array.isArray(t.subtasks) ? t.subtasks : [];
+    const subsDone = subs.filter(s => s.done).length;
+    const subsBadge = subs.length
+      ? `<span class="badge" style="background:#fde68a;color:#92400e;font-size:.65rem" title="Subtareas">📑 ${subsDone}/${subs.length}</span>`
+      : '';
     return `<tr class="${rowCls}" onclick="openTask('${t.id}')" style="cursor:pointer;border-left:4px solid ${accColor}">
       <td class="text-muted">${i+1}</td>
       <td>
         <strong>${esc(t.title)}</strong>
         <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:2px">
           ${srcBadge}
+          ${subsBadge}
           ${createdAgo}
         </div>
       </td>
@@ -1227,6 +1310,86 @@ async function quickAdd() {
 //  TASK MODAL
 // ——————————————————————————————————————————
 // ——————————————————————————————————————————
+//  SUBTAREAS
+// ——————————————————————————————————————————
+let currentSubs = [];
+
+function renderSubtasks() {
+  const el = document.getElementById('subtasksList');
+  const total = currentSubs.length;
+  const done  = currentSubs.filter(s => s.done).length;
+  document.getElementById('subtaskCounter').textContent = `${done}/${total}`;
+  document.getElementById('tabSubsBadge').textContent = total ? `${done}/${total}` : '';
+  if (!total) { el.innerHTML = '<div class="text-muted small fst-italic py-2">Sin subtareas. Agrega una abajo.</div>'; return; }
+  el.innerHTML = currentSubs.map((s, idx) => `
+    <div class="d-flex align-items-center gap-2 py-1 border-bottom">
+      <input type="checkbox" ${s.done?'checked':''} onchange="toggleSubtask(${idx})">
+      <span style="flex:1;${s.done?'text-decoration:line-through;color:#94a3b8':''}">${esc(s.name || '(sin título)')}</span>
+      <button class="btn-xs btn-xs-del" onclick="removeSubtask(${idx})">✕</button>
+    </div>
+  `).join('');
+}
+
+async function toggleSubFromList(parentId, subId, newDone) {
+  try {
+    const r = await fetch(`/planning/api/tasks/${parentId}/subtask/${subId}`, {
+      method:'PATCH', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({done: newDone})
+    }).then(x => x.json());
+    if (r.success) {
+      const i = allTasks.findIndex(t => t.id === parentId);
+      if (i >= 0 && Array.isArray(allTasks[i].subtasks)) {
+        const s = allTasks[i].subtasks.find(s => s.id === subId);
+        if (s) { s.done = newDone; s.checked_at = newDone ? new Date().toISOString() : null; }
+        allTasks[i].progress_pct = r.progress;
+      }
+      renderAll();
+    }
+  } catch(e) {}
+}
+
+async function toggleSubtask(idx) {
+  const s = currentSubs[idx];
+  if (!s) return;
+  const newDone = !s.done;
+  s.done = newDone;
+  s.checked_at = newDone ? new Date().toISOString() : null;
+  renderSubtasks();
+  // Persistir si tiene id (viene de MS) y la tarea existe
+  if (editingTaskId && s.id) {
+    try {
+      const r = await fetch(`/planning/api/tasks/${editingTaskId}/subtask/${s.id}`, {
+        method:'PATCH', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({done: newDone})
+      }).then(x => x.json());
+      if (r.success) {
+        const i = allTasks.findIndex(t => t.id === editingTaskId);
+        if (i >= 0) {
+          allTasks[i].subtasks = currentSubs;
+          allTasks[i].progress_pct = r.progress;
+          renderAll();
+        }
+      }
+    } catch(e) {}
+  }
+}
+
+function addSubtask() {
+  const input = document.getElementById('newSubInput');
+  const name = (input.value || '').trim();
+  if (!name) return;
+  currentSubs.push({ id: '_local_'+Date.now(), name, done: false });
+  input.value = '';
+  renderSubtasks();
+}
+
+function removeSubtask(idx) {
+  if (!confirm('¿Eliminar esta subtarea?')) return;
+  currentSubs.splice(idx, 1);
+  renderSubtasks();
+}
+
+// ——————————————————————————————————————————
 //  DEPENDENCIAS
 // ——————————————————————————————————————————
 let currentDeps = [];   // [{id: dep_row_id, depends_on: task_id}]
@@ -1383,6 +1546,10 @@ function openTask(id) {
   updateDaysInfo();
   // Activate first tab
   document.querySelector('#taskTabs .nav-link').click();
+  // Cargar subtareas
+  currentSubs = t && Array.isArray(t.subtasks) ? JSON.parse(JSON.stringify(t.subtasks)) : [];
+  renderSubtasks();
+  document.getElementById('newSubInput').value = '';
   // Cargar dependencias
   loadDeps(id);
   document.getElementById('depSearch').value = '';
@@ -1474,6 +1641,7 @@ async function saveTask() {
     progress_pct: parseInt(document.getElementById('mProgress').value) || 0,
     tags: document.getElementById('mTags').value.trim(),
     notes: document.getElementById('mNotes').value.trim(),
+    subtasks: currentSubs,
   };
   // Microsoft sync (solo admin tiene este select)
   const msEmailEl = document.getElementById('mMsEmail');

@@ -2100,6 +2100,44 @@ def create_app():
         ok = app.supabase.delete('task_deps', dep_id)
         return jsonify({'success': ok})
 
+    @app.route('/planning/api/tasks/<tid>/subtask/<sid>', methods=['PATCH'])
+    @login_required
+    def planning_toggle_subtask(tid, sid):
+        """Marca/desmarca una subtarea. body: {done: true|false}"""
+        body = request.get_json() or {}
+        done = bool(body.get('done'))
+        rows = app.supabase.get('tasks', {'id': tid}, select='*')
+        if not rows: return jsonify({'success': False, 'error': 'Tarea no encontrada'})
+        task = rows[0]
+        subs = task.get('subtasks') or []
+        changed = False
+        for s in subs:
+            if s.get('id') == sid:
+                s['done'] = done
+                s['checked_at'] = datetime.now(timezone.utc).isoformat() if done else None
+                changed = True
+                break
+        if not changed: return jsonify({'success': False, 'error': 'Subtarea no encontrada'})
+        # Recalcular progreso
+        prog = int(sum(1 for s in subs if s.get('done')) * 100 / len(subs)) if subs else 0
+        upd = {'subtasks': subs, 'progress_pct': prog,
+               'updated_at': datetime.now(timezone.utc).isoformat()}
+        ok = app.supabase.update('tasks', tid, upd)
+        # Push a Microsoft si corresponde
+        pushed = False
+        if ok and task.get('source') == 'ms_todo' and task.get('ms_email') and task.get('ms_list_id') and task.get('source_id'):
+            token = get_ms_token_for(app, task['ms_email'])
+            if token:
+                try:
+                    r = req_lib.patch(
+                        f"{MS_GRAPH_URL}/me/todo/lists/{task['ms_list_id']}/tasks/{task['source_id']}/checklistItems/{sid}",
+                        headers={'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'},
+                        json={'isChecked': done}, timeout=(5,15))
+                    pushed = r.status_code in (200, 204)
+                except Exception:
+                    pass
+        return jsonify({'success': ok, 'pushed_to_ms': pushed, 'progress': prog})
+
     @app.route('/planning/api/tasks', methods=['POST'])
     @login_required
     def planning_create_task():
@@ -2210,9 +2248,9 @@ def create_app():
                 for lst in lists:
                     list_id    = lst['id']
                     list_title = lst.get('displayName', 'To-Do')
-                    url = f'{MS_GRAPH_URL}/me/todo/lists/{list_id}/tasks?$top=200'
+                    url = f'{MS_GRAPH_URL}/me/todo/lists/{list_id}/tasks?$top=200&$expand=checklistItems'
                     while url:
-                        tr = req_lib.get(url, headers=headers, timeout=(8,20))
+                        tr = req_lib.get(url, headers=headers, timeout=(10,25))
                         if tr.status_code != 200: break
                         tdata = tr.json()
                         batch = []  # acumulamos para bulk insert
@@ -2223,6 +2261,12 @@ def create_app():
                             if tid in existing_ids:
                                 skipped += 1
                                 continue
+                            subs = [{
+                                'id':   ci.get('id',''),
+                                'name': (ci.get('displayName') or '').strip(),
+                                'done': bool(ci.get('isChecked')),
+                                'checked_at': ci.get('checkedDateTime'),
+                            } for ci in (task.get('checklistItems') or [])]
                             due = None
                             if task.get('dueDateTime'):
                                 try: due = task['dueDateTime']['dateTime'][:10]
@@ -2231,6 +2275,12 @@ def create_app():
                             if task.get('completedDateTime'):
                                 try: comp = task['completedDateTime']['dateTime'][:10]
                                 except Exception: pass
+                            # Si hay subtareas y el progreso no está en 100, calculamos progreso por subtareas
+                            sub_progress = None
+                            if subs:
+                                done_n = sum(1 for s in subs if s.get('done'))
+                                if subs and done_n < len(subs):
+                                    sub_progress = int(done_n * 100 / len(subs))
                             td = {
                                 'title':          title[:300],
                                 'description':    (task.get('body') or {}).get('content', '')[:5000],
@@ -2246,7 +2296,8 @@ def create_app():
                                 'ms_list_id':     list_id,
                                 'last_synced_at': sync_iso,
                                 'created_by':     current_user.id,
-                                'progress_pct':   100 if (task.get('status') == 'completed' and comp) else 0,
+                                'progress_pct':   100 if (task.get('status') == 'completed' and comp) else (sub_progress or 0),
+                                'subtasks':       subs,
                             }
                             batch.append(td)
                             existing_ids.add(tid)
