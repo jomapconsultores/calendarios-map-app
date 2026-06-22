@@ -223,6 +223,9 @@ input[type=range].prog-range{accent-color:#4f46e5;width:100%}
   <span class="proj-pill proj-pill-all active" onclick="setProject(null)">Todos</span>
 </div>
 
+<!-- ACCOUNT PILLS (filtro por origen) -->
+<div class="project-pills" id="accountPills" style="margin-top:-4px"></div>
+
 <!-- QUICK ADD -->
 <div class="quick-add-bar">
   <input id="qTitle" placeholder="+ Agregar tarea rápida — escribe y presiona Enter..."
@@ -530,12 +533,14 @@ document.addEventListener('DOMContentLoaded', () => {
   const v = params.get('view');
   if (v && ['list','kanban','gantt','map'].includes(v)) setView(v, false);
   loadData();
+  // Polling: refrescar tareas cada 60s en silencio
+  setInterval(() => { if (!document.hidden) loadData(true); }, 60000);
 });
 
 // ——————————————————————————————————————————
 //  DATA LOADING
 // ——————————————————————————————————————————
-async function loadData() {
+async function loadData(silent) {
   try {
     const [proj, tasks] = await Promise.all([
       fetch('/planning/api/projects').then(r => r.json()),
@@ -544,7 +549,7 @@ async function loadData() {
     allProjects = Array.isArray(proj) ? proj : [];
     allTasks    = Array.isArray(tasks) ? tasks : [];
   } catch(e) {
-    allProjects = []; allTasks = [];
+    if (!silent) { allProjects = []; allTasks = []; }
   }
   renderAll();
 }
@@ -554,21 +559,70 @@ async function loadData() {
 // ——————————————————————————————————————————
 function renderAll() {
   renderProjectPills();
+  renderAccountPills();
   fillProjectSelects();
   updateStats();
   renderCurrentView();
 }
 
+let curAccount = null;
+
 function filteredTasks() {
   let t = allTasks;
   if (curProject) t = t.filter(x => x.project_id === curProject);
+  if (curAccount === '__manual__') {
+    t = t.filter(x => !x.ms_email);
+  } else if (curAccount) {
+    t = t.filter(x => (x.ms_email || '') === curAccount);
+  }
   const s = document.getElementById('filterStatus').value;
   if (s) t = t.filter(x => (x.status || 'pending') === s);
   const q = (document.getElementById('searchInput').value || '').toLowerCase();
-  if (q) t = t.filter(x => (x.title||'').toLowerCase().includes(q) ||
+  if (q) t = t.filter(x =>
+    (x.title||'').toLowerCase().includes(q) ||
     (x.description||'').toLowerCase().includes(q) ||
-    (x.assigned_to||'').toLowerCase().includes(q));
+    (x.assigned_to||'').toLowerCase().includes(q) ||
+    (x.tags||'').toLowerCase().includes(q) ||
+    (x.phase||'').toLowerCase().includes(q) ||
+    (x.ms_email||'').toLowerCase().includes(q));
   return t;
+}
+
+function renderAccountPills() {
+  const c = document.getElementById('accountPills');
+  const accounts = [...new Set(allTasks.map(t => t.ms_email).filter(Boolean))].sort();
+  const hasManual = allTasks.some(t => !t.ms_email);
+  if (!accounts.length && !hasManual) { c.innerHTML = ''; return; }
+  let html = `<span class="proj-pill proj-pill-all ${!curAccount?'active':''}" onclick="setAccount(null)">📋 Todas las fuentes</span>`;
+  if (hasManual) {
+    html += `<span class="proj-pill ${curAccount==='__manual__'?'active':''}"
+      style="border-color:#4f46e5;${curAccount==='__manual__'?'background:#4f46e5;color:#fff':''}"
+      onclick="setAccount('__manual__')">✍️ Sistema</span>`;
+  }
+  accounts.forEach(a => {
+    html += `<span class="proj-pill ${curAccount===a?'active':''}"
+      style="border-color:#0078d4;${curAccount===a?'background:#0078d4;color:#fff':''}"
+      onclick="setAccount('${a}')">📧 ${esc(a)}</span>`;
+  });
+  c.innerHTML = html;
+}
+
+function setAccount(em) { curAccount = em; renderAll(); }
+
+// ——————————————————————————————————————————
+//  TIEMPO RELATIVO
+// ——————————————————————————————————————————
+function timeAgo(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d)) return '';
+  const sec = Math.floor((Date.now() - d.getTime()) / 1000);
+  if (sec < 60)      return 'recién';
+  if (sec < 3600)    return Math.floor(sec/60)   + ' min';
+  if (sec < 86400)   return Math.floor(sec/3600) + ' h';
+  if (sec < 2592000) return Math.floor(sec/86400)+ ' d';
+  if (sec < 31536000)return Math.floor(sec/2592000)+ ' meses';
+  return Math.floor(sec/31536000) + ' años';
 }
 
 // ——————————————————————————————————————————
@@ -669,9 +723,19 @@ function renderList() {
                    dl !== null && dl <= 3 && t.status !== 'done' ? 'due-soon' : '';
     const daysBadge = daysBadgeHtml(dl, t.status);
     const prog = t.progress_pct || 0;
+    const srcBadge = t.ms_email
+      ? `<span class="badge" style="background:#deebf7;color:#0078d4;font-size:.65rem" title="Microsoft To-Do · ${esc(t.ms_email)}">📋 ${esc(t.ms_email.split('@')[0])}</span>`
+      : `<span class="badge" style="background:#e0e7ff;color:#4338ca;font-size:.65rem">✍️ Sistema</span>`;
+    const createdAgo = t.created_at ? `<span class="text-muted" style="font-size:.7rem" title="${esc(t.created_at)}">⏱ ${timeAgo(t.created_at)}</span>` : '';
     return `<tr class="${rowCls}" onclick="openTask('${t.id}')" style="cursor:pointer">
       <td class="text-muted">${i+1}</td>
-      <td><strong>${esc(t.title)}</strong>${t.tags ? `<br><small class="text-muted">${esc(t.tags)}</small>` : ''}</td>
+      <td>
+        <strong>${esc(t.title)}</strong>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:2px">
+          ${srcBadge}
+          ${createdAgo}
+        </div>
+      </td>
       <td>${proj ? `<span style="color:${proj.color};font-weight:600;font-size:.78rem">${esc(proj.name)}</span>` : '<span class="text-muted">—</span>'}</td>
       <td><span class="text-muted" style="font-size:.8rem">${esc(t.phase||'—')}</span></td>
       <td><span class="badge-prio bp-${t.priority||'medium'}">${PRIO_LABELS[t.priority]||'Media'}</span></td>

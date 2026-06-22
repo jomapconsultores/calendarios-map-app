@@ -467,6 +467,11 @@ def user_has_calendar_access(app, uid, calendar_id):
 def is_admin():
     return current_user.is_authenticated and current_user.role == 'admin'
 
+def get_user_ms_emails(app, uid):
+    """Lista de cuentas MS que el usuario tiene autorizadas (admins ven todas)."""
+    rows = app.supabase.get('ms_account_permissions', {'user_id': uid}, select='ms_email')
+    return [r['ms_email'] for r in (rows or [])]
+
 def user_can(module):
     """True si el usuario tiene acceso al módulo (admins siempre sí)."""
     if is_admin(): return True
@@ -1150,9 +1155,17 @@ def create_app():
                 'calendars':  [cal_by_id[p['calendar_id']] for p in perms_list
                                if p['calendar_id'] in cal_by_id],
             })
+        # Cuentas MS conectadas + permisos por usuario
+        ms_accounts = [t.get('email','') for t in (app.supabase.get('ms_tokens', select='email') or [])]
+        ms_perms_all = app.supabase.get('ms_account_permissions', select='user_id,ms_email') or []
+        ms_by_user = defaultdict(list)
+        for p in ms_perms_all:
+            ms_by_user[p['user_id']].append(p['ms_email'])
+        for u in users:
+            u['ms_emails'] = ms_by_user.get(u['id'], [])
         return render_template('admin_users.html', users=users, calendarios=all_cals,
                                pending=pending, pending_all=pending_all,
-                               all_modules=ALL_MODULES)
+                               all_modules=ALL_MODULES, ms_accounts=ms_accounts)
 
     # ============================================================
     #  ADMIN — DATABASE
@@ -1233,6 +1246,13 @@ def create_app():
         for cal_id in cal_ids:
             app.supabase.insert('calendar_permissions',
                 {'user_id': uid, 'calendar_id': cal_id, 'status': 'approved'})
+        # Cuentas Microsoft autorizadas
+        ms_emails = request.form.getlist('ms_emails')
+        for p in app.supabase.get('ms_account_permissions', {'user_id': uid}, select='id'):
+            app.supabase.delete('ms_account_permissions', p['id'])
+        for ms_email in ms_emails:
+            app.supabase.insert('ms_account_permissions',
+                {'user_id': uid, 'ms_email': ms_email})
         _user_cal_cache.invalidate(uid)
         flash('Usuario actualizado', 'success')
         return redirect('/admin/users')
@@ -1244,7 +1264,8 @@ def create_app():
         if uid == str(current_user.id):
             return jsonify({'success': False, 'error': 'No puedes eliminarte a ti mismo'})
         # Borrar todos los registros relacionados antes de eliminar el usuario
-        for tbl in ['calendar_permissions', 'webauthn_credentials', 'face_descriptors']:
+        for tbl in ['calendar_permissions', 'webauthn_credentials', 'face_descriptors',
+                    'ms_account_permissions']:
             for row in app.supabase.get(tbl, {'user_id': uid}, select='id'):
                 app.supabase.delete(tbl, row['id'])
         ok = app.supabase.delete('users', uid)
@@ -1959,7 +1980,22 @@ def create_app():
             rows = app.supabase.get('tasks', {'project_id': pid}, select='*')
         else:
             rows = app.supabase.get('tasks', select='*')
-        return jsonify(rows or [])
+        rows = rows or []
+        # Filtro por permisos: admin ve todo, staff solo sus tareas o las de cuentas MS autorizadas
+        if not is_admin():
+            allowed_ms = set(get_user_ms_emails(app, current_user.id))
+            uid = str(current_user.id)
+            def visible(t):
+                if t.get('source') == 'ms_todo':
+                    return (t.get('ms_email') or '') in allowed_ms
+                # Tareas manuales: ve las propias o las asignadas a ella
+                if t.get('created_by') == uid: return True
+                if t.get('assigned_to') == uid: return True
+                if (t.get('assigned_email') or '').lower() == (current_user.email or '').lower():
+                    return True
+                return False
+            rows = [t for t in rows if visible(t)]
+        return jsonify(rows)
 
     @app.route('/planning/api/tasks', methods=['POST'])
     @login_required
@@ -2069,9 +2105,10 @@ def create_app():
                                 'due_date':       due,
                                 'completed_date': comp,
                                 'tags':           f'{list_title} · {ms_email}',
-                                'phase':          'General',
+                                'phase':          list_title or 'General',
                                 'source':         'ms_todo',
                                 'source_id':      tid,
+                                'ms_email':       ms_email,
                                 'created_by':     current_user.id,
                             }
                             if td['status'] == 'done' and comp:

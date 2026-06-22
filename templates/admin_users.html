@@ -82,6 +82,23 @@
       </div>
     </div>
 
+    {% if ms_accounts %}
+    <div class="mb-3">
+      <label class="form-label">Cuentas Microsoft To-Do autorizadas:</label>
+      <small class="text-muted d-block mb-1">Las tareas de To-Do de estas cuentas serán visibles para este usuario.</small>
+      <div class="row">
+        {%for ms in ms_accounts%}
+        <div class="col-md-6">
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" name="ms_emails" value="{{ms}}" {{'checked' if ms in u.ms_emails}}>
+            <label class="form-check-label">📋 {{ms}}</label>
+          </div>
+        </div>
+        {%endfor%}
+      </div>
+    </div>
+    {% endif %}
+
     <button class="btn btn-primary rounded-pill">💾 Guardar</button>
   </form></div>
 </div></div></div>
