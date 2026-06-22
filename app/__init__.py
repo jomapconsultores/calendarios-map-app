@@ -112,6 +112,7 @@ class User(UserMixin):
 ALL_MODULES = [
     ('calendar',  '📅 Calendario'),
     ('planning',  '📋 Planificación'),
+    ('todo',      '✅ To-Do externo (Microsoft)'),
 ]
 
 
@@ -2013,7 +2014,19 @@ def create_app():
             return redirect('/dashboard')
         ms_connected = bool(get_ms_token(app))
         return render_template('planning.html', ms_connected=ms_connected,
-                               is_admin_user=is_admin())
+                               is_admin_user=is_admin(), scope='planning',
+                               page_title='Planificación', page_sub='Proyectos y tareas internas del equipo')
+
+    @app.route('/todo')
+    @login_required
+    def todo():
+        if not user_can('todo'):
+            flash('No tienes acceso al módulo To-Do externo.', 'warning')
+            return redirect('/dashboard')
+        ms_connected = bool(get_ms_token(app))
+        return render_template('planning.html', ms_connected=ms_connected,
+                               is_admin_user=is_admin(), scope='todo',
+                               page_title='To-Do externo', page_sub='Tareas sincronizadas desde Microsoft To-Do')
 
     @app.route('/planning/api/projects', methods=['GET'])
     @login_required
@@ -2048,20 +2061,30 @@ def create_app():
     @app.route('/planning/api/tasks', methods=['GET'])
     @login_required
     def planning_tasks():
-        pid = request.args.get('project_id')
+        pid    = request.args.get('project_id')
+        scope  = request.args.get('scope', 'all')   # all | planning | todo
         if pid:
             rows = app.supabase.get('tasks', {'project_id': pid}, select='*')
         else:
             rows = app.supabase.get('tasks', select='*')
         rows = rows or []
-        # Filtro por permisos: admin ve todo, staff solo sus tareas o las de cuentas MS autorizadas
+        # Filtrar por scope (planning = manual; todo = MS)
+        if scope == 'planning':
+            rows = [t for t in rows if t.get('source') != 'ms_todo']
+        elif scope == 'todo':
+            rows = [t for t in rows if t.get('source') == 'ms_todo']
+        # Permisos por usuario
         if not is_admin():
-            allowed_ms = set(get_user_ms_emails(app, current_user.id))
+            allowed_ms  = set(get_user_ms_emails(app, current_user.id))
+            has_todo    = 'todo'     in getattr(current_user, 'modules', [])
+            has_plan    = 'planning' in getattr(current_user, 'modules', [])
             uid = str(current_user.id)
             def visible(t):
                 if t.get('source') == 'ms_todo':
+                    if not has_todo: return False
                     return (t.get('ms_email') or '') in allowed_ms
-                # Tareas manuales: ve las propias o las asignadas a ella
+                # Tareas manuales
+                if not has_plan: return False
                 if t.get('created_by') == uid: return True
                 if t.get('assigned_to') == uid: return True
                 if (t.get('assigned_email') or '').lower() == (current_user.email or '').lower():

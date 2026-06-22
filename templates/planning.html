@@ -1,7 +1,7 @@
 {% extends "base.html" %}
-{% block title %}Planificación — CalendarioMAP{% endblock %}
-{% block page_title %}Planificación{% endblock %}
-{% block page_sub %}<p class="page-sub">Proyectos, tareas y seguimiento de procesos</p>{% endblock %}
+{% block title %}{{ page_title|default('Planificación') }} — CalendarioMAP{% endblock %}
+{% block page_title %}{{ page_title|default('Planificación') }}{% endblock %}
+{% block page_sub %}<p class="page-sub">{{ page_sub|default('Proyectos, tareas y seguimiento de procesos') }}</p>{% endblock %}
 
 {% block head %}
 <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
@@ -606,6 +606,7 @@ const BAR_COLORS = {
 // ——————————————————————————————————————————
 const IS_ADMIN = {{ 'true' if is_admin_user else 'false' }};
 const MS_CONNECTED = {{ 'true' if ms_connected else 'false' }};
+const SCOPE = "{{ scope|default('all') }}";  // 'planning' | 'todo' | 'all'
 const SYNC_INTERVAL_MIN = 5;  // minutos entre auto-pulls
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -668,7 +669,7 @@ async function loadData(silent) {
   try {
     const [proj, tasks] = await Promise.all([
       fetch('/planning/api/projects').then(r => r.json()),
-      fetch('/planning/api/tasks').then(r => r.json()),
+      fetch('/planning/api/tasks?scope=' + encodeURIComponent(SCOPE)).then(r => r.json()),
     ]);
     allProjects = Array.isArray(proj) ? proj : [];
     allTasks    = Array.isArray(tasks) ? tasks : [];
@@ -904,8 +905,10 @@ function renderCurrentView() {
 // ——————————————————————————————————————————
 //  LIST VIEW
 // ——————————————————————————————————————————
-let groupBy = localStorage.getItem('groupBy') || '';
-function setGroupBy(v) { groupBy = v; localStorage.setItem('groupBy', v); renderCurrentView(); }
+// groupBy se guarda por scope (planning/todo) para que cada vista recuerde su preferencia
+let groupBy = localStorage.getItem('groupBy_' + SCOPE);
+if (groupBy === null) groupBy = (SCOPE === 'todo') ? 'account' : '';
+function setGroupBy(v) { groupBy = v; localStorage.setItem('groupBy_' + SCOPE, v); renderCurrentView(); }
 document.addEventListener('DOMContentLoaded', () => {
   const sel = document.getElementById('groupBy');
   if (sel) sel.value = groupBy;
