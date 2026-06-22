@@ -314,6 +314,77 @@ def get_ms_token(app):
     return t.get('access_token')
 
 
+def get_ms_token_for(app, ms_email):
+    """Token válido (refresca si toca) para una cuenta MS específica."""
+    rows = app.supabase.get('ms_tokens', {'email': ms_email}, select='*')
+    if not rows: return None
+    t = rows[0]
+    expiry_str = t.get('expires_at')
+    if expiry_str:
+        try:
+            exp = datetime.fromisoformat(expiry_str.replace('Z', '+00:00'))
+            if datetime.now(timezone.utc) >= exp - timedelta(minutes=5):
+                return _refresh_ms_token(app, t)
+        except Exception:
+            pass
+    return t.get('access_token')
+
+
+# Mapeos de estado/prioridad para empujar a MS
+_TO_MS_STATUS = {'pending':'notStarted','in_progress':'inProgress',
+                 'review':'waitingOnOthers','done':'completed','blocked':'deferred'}
+_TO_MS_PRIO   = {'low':'low','medium':'normal','high':'high','urgent':'high'}
+
+def _build_ms_task_body(task):
+    body = {
+        'title':      task.get('title','')[:255],
+        'importance': _TO_MS_PRIO.get(task.get('priority'), 'normal'),
+        'status':     _TO_MS_STATUS.get(task.get('status','pending'), 'notStarted'),
+    }
+    if task.get('description'):
+        body['body'] = {'content': task['description'], 'contentType':'text'}
+    if task.get('due_date'):
+        body['dueDateTime'] = {'dateTime': f"{task['due_date']}T23:59:00",
+                               'timeZone': 'America/Guayaquil'}
+    return body
+
+def push_task_to_ms(app, task):
+    """Empuja un cambio del sistema a Microsoft To-Do.
+    Solo aplica si la tarea ya tiene source='ms_todo' y ms_email + ms_list_id."""
+    ms_email = task.get('ms_email'); list_id = task.get('ms_list_id')
+    src_id   = task.get('source_id'); src = task.get('source')
+    if src != 'ms_todo' or not (ms_email and list_id): return False
+    token = get_ms_token_for(app, ms_email)
+    if not token: return False
+    headers = {'Authorization': f'Bearer {token}','Content-Type':'application/json'}
+    try:
+        if src_id:
+            # Update existente
+            r = req_lib.patch(f'{MS_GRAPH_URL}/me/todo/lists/{list_id}/tasks/{src_id}',
+                              headers=headers, json=_build_ms_task_body(task), timeout=(5,15))
+            return r.status_code in (200, 204)
+        else:
+            # Create nuevo en MS
+            r = req_lib.post(f'{MS_GRAPH_URL}/me/todo/lists/{list_id}/tasks',
+                             headers=headers, json=_build_ms_task_body(task), timeout=(5,15))
+            return r.status_code in (200, 201)
+    except Exception:
+        return False
+
+def delete_task_in_ms(app, task):
+    ms_email = task.get('ms_email'); list_id = task.get('ms_list_id')
+    src_id   = task.get('source_id')
+    if task.get('source') != 'ms_todo' or not (ms_email and list_id and src_id): return False
+    token = get_ms_token_for(app, ms_email)
+    if not token: return False
+    try:
+        r = req_lib.delete(f'{MS_GRAPH_URL}/me/todo/lists/{list_id}/tasks/{src_id}',
+                           headers={'Authorization': f'Bearer {token}'}, timeout=(5,15))
+        return r.status_code in (200, 204)
+    except Exception:
+        return False
+
+
 def get_all_ms_tokens(app):
     """Return list of (email, access_token) for every connected MS account.
     Refreshes expired tokens automatically. Skips accounts whose refresh fails."""
@@ -2020,13 +2091,28 @@ def create_app():
         if d.get('status') == 'done' and not d.get('completed_date'):
             d['completed_date'] = date.today().isoformat()
         ok = app.supabase.update('tasks', tid, d)
-        return jsonify({'success': ok})
+        # Push a Microsoft si la tarea es de origen ms_todo
+        pushed = False
+        if ok:
+            current = app.supabase.get('tasks', {'id': tid}, select='*')
+            if current:
+                pushed = push_task_to_ms(app, current[0])
+                if pushed:
+                    app.supabase.update('tasks', tid,
+                        {'last_synced_at': datetime.now(timezone.utc).isoformat()})
+        return jsonify({'success': ok, 'pushed_to_ms': pushed})
 
     @app.route('/planning/api/tasks/<tid>', methods=['DELETE'])
     @login_required
     def planning_delete_task(tid):
+        # Obtener tarea antes de borrar para poder eliminarla en MS
+        rows = app.supabase.get('tasks', {'id': tid}, select='*')
+        task = rows[0] if rows else None
         ok = app.supabase.delete('tasks', tid)
-        return jsonify({'success': ok})
+        deleted_ms = False
+        if ok and task:
+            deleted_ms = delete_task_in_ms(app, task)
+        return jsonify({'success': ok, 'deleted_in_ms': deleted_ms})
 
     @app.route('/planning/api/deps/<tid>', methods=['GET'])
     @login_required
@@ -2061,12 +2147,13 @@ def create_app():
 
         total_imported = 0; total_skipped = 0; total_errors = 0
         per_account = []
+        sync_iso = datetime.now(timezone.utc).isoformat()
         try:
             for ms_email, token in accounts:
                 headers = {'Authorization': f'Bearer {token}', 'Accept': 'application/json'}
                 imported = 0; skipped = 0; errors = 0
                 # Get all To-Do task lists for this account
-                r = req_lib.get(f'{MS_GRAPH_URL}/me/todo/lists', headers=headers, timeout=(5,15))
+                r = req_lib.get(f'{MS_GRAPH_URL}/me/todo/lists', headers=headers, timeout=(8,20))
                 if r.status_code == 401:
                     per_account.append(f'{ms_email}: token expirado, reconecta')
                     continue
@@ -2077,11 +2164,12 @@ def create_app():
                 for lst in lists:
                     list_id    = lst['id']
                     list_title = lst.get('displayName', 'To-Do')
-                    url = f'{MS_GRAPH_URL}/me/todo/lists/{list_id}/tasks?$top=100'
+                    url = f'{MS_GRAPH_URL}/me/todo/lists/{list_id}/tasks?$top=200'
                     while url:
-                        tr = req_lib.get(url, headers=headers, timeout=(5,15))
+                        tr = req_lib.get(url, headers=headers, timeout=(8,20))
                         if tr.status_code != 200: break
                         tdata = tr.json()
+                        batch = []  # acumulamos para bulk insert
                         for task in tdata.get('value', []):
                             title = (task.get('title') or '').strip()
                             if not title: continue
@@ -2098,27 +2186,31 @@ def create_app():
                                 try: comp = task['completedDateTime']['dateTime'][:10]
                                 except Exception: pass
                             td = {
-                                'title':          title,
-                                'description':    (task.get('body') or {}).get('content', ''),
+                                'title':          title[:300],
+                                'description':    (task.get('body') or {}).get('content', '')[:5000],
                                 'status':         status_map.get(task.get('status','notStarted'), 'pending'),
                                 'priority':       prio_map.get(task.get('importance','normal'), 'medium'),
                                 'due_date':       due,
                                 'completed_date': comp,
                                 'tags':           f'{list_title} · {ms_email}',
-                                'phase':          list_title or 'General',
+                                'phase':          (list_title or 'General')[:100],
                                 'source':         'ms_todo',
                                 'source_id':      tid,
                                 'ms_email':       ms_email,
+                                'ms_list_id':     list_id,
+                                'last_synced_at': sync_iso,
                                 'created_by':     current_user.id,
+                                'progress_pct':   100 if (task.get('status') == 'completed' and comp) else 0,
                             }
-                            if td['status'] == 'done' and comp:
-                                td['progress_pct'] = 100
-                            try:
-                                app.supabase.insert('tasks', td)
-                                existing_ids.add(tid)
-                                imported += 1
-                            except Exception:
-                                errors += 1
+                            batch.append(td)
+                            existing_ids.add(tid)
+                        # BULK INSERT — un solo POST por página
+                        if batch:
+                            res = app.supabase.insert('tasks', batch)
+                            if res is None:
+                                errors += len(batch)
+                            else:
+                                imported += len(batch)
                         url = tdata.get('@odata.nextLink')
                 per_account.append(f'{ms_email}: +{imported} nuevas, {skipped} ya existían')
                 total_imported += imported
@@ -2128,7 +2220,7 @@ def create_app():
                             'skipped': total_skipped, 'errors': total_errors,
                             'detail': per_account})
         except Exception as e:
-            return jsonify({'success': False, 'error': str(e)})
+            return jsonify({'success': False, 'error': str(e)[:300]})
 
     @app.route('/planning/api/export-excel')
     @login_required

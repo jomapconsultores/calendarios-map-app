@@ -1304,11 +1304,17 @@ function openImportTodoModal() {
 
 async function doImportTodo() {
   const btn = document.querySelector('#importTodoModal button[onclick="doImportTodo()"]');
-  btn.disabled = true; btn.textContent = '⏳ Importando...';
-  const r = await fetch('/planning/api/import-todo', { method:'POST' }).then(x => x.json());
-  btn.disabled = false; btn.textContent = 'Importar ahora';
+  btn.disabled = true; btn.textContent = '⏳ Trayendo de Microsoft... (puede tardar 30-60s)';
   const res = document.getElementById('importTodoResult');
   res.style.display = '';
+  res.innerHTML = '<div class="alert alert-info py-2 small">⏳ Consultando listas y tareas en Microsoft 365…</div>';
+  let r;
+  try {
+    r = await fetch('/planning/api/import-todo', { method:'POST' }).then(x => x.json());
+  } catch (e) {
+    r = { success: false, error: 'Error de conexión: ' + e.message };
+  }
+  btn.disabled = false; btn.textContent = 'Importar ahora';
   if (r.success) {
     const detailHtml = (r.detail && r.detail.length)
       ? '<div class="small text-muted mt-2">' + r.detail.map(d => '• ' + d).join('<br>') + '</div>'
