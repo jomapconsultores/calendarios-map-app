@@ -17,6 +17,15 @@
     </div></div>
 
     <div class="card mt-4"><div class="card-body p-4">
+      <h5 class="section-heading">🔔 Notificaciones push</h5>
+      <p class="text-muted small">Recibe alertas en tu navegador o celular cuando tengas tareas vencidas, citas próximas o cambios sincronizados desde Microsoft. Funciona aun cuando la app está cerrada.</p>
+      <div id="pushStatus" class="alert alert-secondary py-2 small">Cargando estado…</div>
+      <button id="btnPushEnable"  class="btn btn-primary rounded-pill" style="display:none" onclick="enablePush()">🔔 Activar notificaciones</button>
+      <button id="btnPushDisable" class="btn btn-outline-danger rounded-pill" style="display:none" onclick="disablePush()">🔕 Desactivar</button>
+      <button id="btnPushTest"    class="btn btn-outline-primary rounded-pill ms-2" style="display:none" onclick="testPush()">📨 Enviar prueba</button>
+    </div></div>
+
+    <div class="card mt-4"><div class="card-body p-4">
       <h5 class="section-heading">🔑 Mis accesos</h5>
       <div class="mb-3">
         <p class="text-muted small mb-2"><strong>Módulos habilitados:</strong></p>
@@ -66,6 +75,107 @@
 {% block scripts %}
 <script>
 function bioFmt(s){ if(!s) return '—'; try { return new Date(s).toLocaleDateString('es-EC'); } catch(e){ return s; } }
+
+// ============= NOTIFICACIONES PUSH =============
+let vapidPub = null;
+
+function b64urlToUint8(b64) {
+  const pad = '='.repeat((4 - b64.length % 4) % 4);
+  const base = (b64 + pad).replace(/-/g, '+').replace(/_/g, '/');
+  const raw = atob(base);
+  const arr = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) arr[i] = raw.charCodeAt(i);
+  return arr;
+}
+
+async function refreshPushStatus() {
+  const box = document.getElementById('pushStatus');
+  const btnEn  = document.getElementById('btnPushEnable');
+  const btnDis = document.getElementById('btnPushDisable');
+  const btnTest= document.getElementById('btnPushTest');
+  if (!('Notification' in window) || !('serviceWorker' in navigator) || !('PushManager' in window)) {
+    box.className = 'alert alert-warning py-2 small';
+    box.textContent = '⚠️ Este navegador no soporta notificaciones push.';
+    return;
+  }
+  try {
+    const r = await fetch('/api/push/vapid-public').then(x => x.json());
+    if (!r.available) {
+      box.className = 'alert alert-warning py-2 small';
+      box.textContent = '⚠️ El servidor no tiene configurado el sistema de push (pywebpush). Contacta al admin.';
+      return;
+    }
+    vapidPub = r.public_key;
+    const reg = await navigator.serviceWorker.ready;
+    const sub = await reg.pushManager.getSubscription();
+    if (sub) {
+      box.className = 'alert alert-success py-2 small';
+      box.textContent = '✅ Notificaciones activas en este dispositivo.';
+      btnEn.style.display = 'none';
+      btnDis.style.display = '';
+      btnTest.style.display = '';
+    } else if (Notification.permission === 'denied') {
+      box.className = 'alert alert-warning py-2 small';
+      box.textContent = '⚠️ Bloqueaste las notificaciones en este navegador. Habilítalas en la configuración del sitio.';
+      btnEn.style.display = 'none';
+      btnDis.style.display = 'none';
+      btnTest.style.display = 'none';
+    } else {
+      box.className = 'alert alert-secondary py-2 small';
+      box.textContent = 'ℹ️ Notificaciones no activas. Pulsa el botón para habilitarlas.';
+      btnEn.style.display = '';
+      btnDis.style.display = 'none';
+      btnTest.style.display = 'none';
+    }
+  } catch(e) {
+    box.className = 'alert alert-danger py-2 small';
+    box.textContent = '❌ Error consultando estado: ' + (e.message || e);
+  }
+}
+
+async function enablePush() {
+  try {
+    const perm = await Notification.requestPermission();
+    if (perm !== 'granted') { alert('Permiso denegado'); return; }
+    const reg = await navigator.serviceWorker.ready;
+    const sub = await reg.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: b64urlToUint8(vapidPub),
+    });
+    const json = sub.toJSON();
+    const r = await fetch('/api/push/subscribe', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({subscription: json})
+    }).then(x => x.json());
+    if (r.success) await refreshPushStatus();
+    else alert('Error al guardar suscripción');
+  } catch(e) {
+    alert('❌ ' + e.message);
+  }
+}
+
+async function disablePush() {
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    const sub = await reg.pushManager.getSubscription();
+    if (sub) {
+      await fetch('/api/push/unsubscribe', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({endpoint: sub.endpoint})
+      });
+      await sub.unsubscribe();
+    }
+    await refreshPushStatus();
+  } catch(e) { alert('❌ ' + e.message); }
+}
+
+async function testPush() {
+  const r = await fetch('/api/push/test', {method:'POST'}).then(x => x.json());
+  if (r.success && r.sent) alert('📨 Prueba enviada (' + r.sent + ' dispositivos). Espera el toast del sistema.');
+  else alert('⚠️ No se envió a ningún dispositivo. ¿Activaste antes?');
+}
+
+document.addEventListener('DOMContentLoaded', refreshPushStatus);
 </script>
 {% if webauthn_available %}
 <script src="{{ url_for('static', filename='js/webauthn.js') }}"></script>

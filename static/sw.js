@@ -53,3 +53,35 @@ self.addEventListener('fetch', (e) => {
   }
   // El resto (APIs): comportamiento por defecto (red)
 });
+
+// ============================================================
+//  PUSH NOTIFICATIONS
+// ============================================================
+self.addEventListener('push', (e) => {
+  let data = {};
+  try { data = e.data ? e.data.json() : {}; } catch (err) { data = { title: 'Notificación', body: (e.data && e.data.text()) || '' }; }
+  const title = data.title || 'calendarios-map';
+  const options = {
+    body: data.body || '',
+    icon: '/static/icons/icon-192.png',
+    badge: '/static/icons/icon-192.png',
+    data: { url: data.url || '/dashboard' },
+    vibrate: [200, 100, 200],
+    tag: data.tag || 'calmap',
+    renotify: true,
+  };
+  e.waitUntil(self.registration.showNotification(title, options));
+});
+
+self.addEventListener('notificationclick', (e) => {
+  e.notification.close();
+  const target = (e.notification.data && e.notification.data.url) || '/dashboard';
+  e.waitUntil(
+    self.clients.matchAll({ type: 'window' }).then((winList) => {
+      for (const c of winList) {
+        if (c.url.includes(target) && 'focus' in c) return c.focus();
+      }
+      if (self.clients.openWindow) return self.clients.openWindow(target);
+    })
+  );
+});

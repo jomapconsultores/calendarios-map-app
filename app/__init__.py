@@ -13,6 +13,15 @@ from collections import defaultdict, OrderedDict
 import os, requests as req_lib, traceback, pytz, json, re, time, calendar as _cal, io
 from urllib.parse import quote as _url_quote
 
+# Web push (opcional: si la librería no está disponible la app sigue funcionando)
+try:
+    from pywebpush import webpush, WebPushException
+    from py_vapid import Vapid
+    import base64
+    WEB_PUSH_AVAILABLE = True
+except Exception:
+    WEB_PUSH_AVAILABLE = False
+
 try:
     import openpyxl
     from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
@@ -544,6 +553,65 @@ def get_user_ms_emails(app, uid):
     """Lista de cuentas MS que el usuario tiene autorizadas (admins ven todas)."""
     rows = app.supabase.get('ms_account_permissions', {'user_id': uid}, select='ms_email')
     return [r['ms_email'] for r in (rows or [])]
+
+# ============================================================
+#  WEB PUSH (VAPID + notificaciones)
+# ============================================================
+def _b64url(b):
+    return base64.urlsafe_b64encode(b).rstrip(b'=').decode('ascii')
+
+def get_vapid_keys(app):
+    """Devuelve (public_pem, private_pem, public_b64url_uncompressed_point).
+    Si no existen en app_config las genera y guarda."""
+    if not WEB_PUSH_AVAILABLE: return None
+    rows = app.supabase.get('app_config', {'key': 'vapid'}, select='value')
+    if rows and rows[0].get('value'):
+        try:
+            d = json.loads(rows[0]['value'])
+            return d.get('public_pem'), d.get('private_pem'), d.get('public_b64')
+        except Exception:
+            pass
+    # Generar
+    v = Vapid()
+    v.generate_keys()
+    public_pem  = v.public_pem().decode('utf-8')
+    private_pem = v.private_pem().decode('utf-8')
+    raw_pub = v.public_key.public_numbers().x.to_bytes(32,'big') + v.public_key.public_numbers().y.to_bytes(32,'big')
+    public_b64 = _b64url(b'\x04' + raw_pub)
+    payload = json.dumps({'public_pem': public_pem, 'private_pem': private_pem,
+                          'public_b64': public_b64})
+    app.supabase.insert('app_config', {'key': 'vapid', 'value': payload})
+    return public_pem, private_pem, public_b64
+
+def send_push_to_user(app, user_id, title, body, url='/dashboard'):
+    """Envía push a TODAS las suscripciones activas del usuario."""
+    if not WEB_PUSH_AVAILABLE: return 0
+    keys = get_vapid_keys(app)
+    if not keys: return 0
+    _, private_pem, _ = keys
+    subs = app.supabase.get('web_push_subscriptions', {'user_id': user_id}, select='*')
+    sent = 0
+    payload = json.dumps({'title': title, 'body': body, 'url': url})
+    for s in (subs or []):
+        try:
+            webpush(
+                subscription_info={
+                    'endpoint': s['endpoint'],
+                    'keys': {'p256dh': s['p256dh'], 'auth': s['auth']},
+                },
+                data=payload,
+                vapid_private_key=private_pem,
+                vapid_claims={'sub': 'mailto:noreply@calendarios-map.com'},
+            )
+            sent += 1
+        except WebPushException as e:
+            # 410 = suscripción expirada
+            if e.response and e.response.status_code in (404, 410):
+                app.supabase.delete('web_push_subscriptions', s['id'])
+        except Exception:
+            pass
+    return sent
+
 
 def user_can(module):
     """True si el usuario tiene acceso al módulo (admins siempre sí)."""
@@ -2169,6 +2237,100 @@ def create_app():
                 return False
             rows = [t for t in rows if visible(t)]
         return jsonify(rows)
+
+    # ============================================================
+    #  WEB PUSH — endpoints
+    # ============================================================
+    @app.route('/api/push/vapid-public', methods=['GET'])
+    @login_required
+    def push_vapid_public():
+        if not WEB_PUSH_AVAILABLE:
+            return jsonify({'available': False, 'error': 'pywebpush no instalado en el servidor'})
+        keys = get_vapid_keys(app)
+        if not keys:
+            return jsonify({'available': False})
+        return jsonify({'available': True, 'public_key': keys[2]})
+
+    @app.route('/api/push/subscribe', methods=['POST'])
+    @login_required
+    def push_subscribe():
+        body = request.get_json() or {}
+        sub = body.get('subscription') or {}
+        endpoint = sub.get('endpoint')
+        keys = sub.get('keys') or {}
+        if not endpoint or not keys.get('p256dh') or not keys.get('auth'):
+            return jsonify({'success': False, 'error': 'subscription incompleta'})
+        # Upsert por (user_id, endpoint)
+        existing = app.supabase.get('web_push_subscriptions',
+            {'user_id': current_user.id, 'endpoint': endpoint}, select='id')
+        data = {
+            'user_id':    current_user.id,
+            'endpoint':   endpoint,
+            'p256dh':     keys['p256dh'],
+            'auth':       keys['auth'],
+            'user_agent': (request.headers.get('User-Agent') or '')[:255],
+        }
+        if existing:
+            app.supabase.update('web_push_subscriptions', existing[0]['id'], data)
+        else:
+            app.supabase.insert('web_push_subscriptions', data)
+        return jsonify({'success': True})
+
+    @app.route('/api/push/unsubscribe', methods=['POST'])
+    @login_required
+    def push_unsubscribe():
+        body = request.get_json() or {}
+        endpoint = body.get('endpoint', '')
+        if endpoint:
+            rows = app.supabase.get('web_push_subscriptions',
+                {'user_id': current_user.id, 'endpoint': endpoint}, select='id')
+            for r in (rows or []):
+                app.supabase.delete('web_push_subscriptions', r['id'])
+        return jsonify({'success': True})
+
+    @app.route('/api/push/test', methods=['POST'])
+    @login_required
+    def push_test():
+        n = send_push_to_user(app, current_user.id,
+                              '🔔 Prueba de notificación',
+                              'Si ves este mensaje, las notificaciones están funcionando.',
+                              '/dashboard')
+        return jsonify({'success': True, 'sent': n})
+
+    @app.route('/api/push/notify-overdue', methods=['POST'])
+    @login_required
+    def push_notify_overdue():
+        """Disparable por el cron externo: envía notificación a cada usuario con tareas vencidas hoy."""
+        if not is_admin(): return jsonify({'success': False, 'error': 'Solo admin'})
+        today_iso = date.today().isoformat()
+        all_users = app.supabase.get('users', select='id,full_name,email,modules') or []
+        sent_total = 0
+        for u in all_users:
+            mods = (u.get('modules') or 'calendar,planning').split(',')
+            if 'planning' not in mods and 'todo' not in mods: continue
+            uid = u['id']
+            # Tareas pendientes del usuario
+            rows = app.supabase.get('tasks',
+                select='id,due_date,status,created_by,assigned_to,assigned_email,ms_email,source') or []
+            allowed_ms = set([r['ms_email'] for r in (app.supabase.get('ms_account_permissions',
+                {'user_id': uid}, select='ms_email') or []) if r.get('ms_email')])
+            overdue = []
+            for t in rows:
+                if t.get('status') == 'done': continue
+                d = t.get('due_date')
+                if not d or d >= today_iso: continue
+                if t.get('source') == 'ms_todo':
+                    if (t.get('ms_email') or '') in allowed_ms: overdue.append(t)
+                else:
+                    if (t.get('created_by') == uid or t.get('assigned_to') == uid or
+                        (t.get('assigned_email') or '').lower() == (u.get('email') or '').lower()):
+                        overdue.append(t)
+            if overdue:
+                sent_total += send_push_to_user(app, uid,
+                    f'⛔ Tienes {len(overdue)} tareas vencidas',
+                    'Abre el sistema para revisar y reorganizar tus pendientes.',
+                    '/todo?tf=overdue')
+        return jsonify({'success': True, 'sent': sent_total})
 
     @app.route('/planning/api/ms-accounts', methods=['GET'])
     @login_required
