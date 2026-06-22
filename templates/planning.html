@@ -212,8 +212,9 @@ input[type=range].prog-range{accent-color:#4f46e5;width:100%}
   {% if ms_connected %}
   <button class="btn btn-sm rounded-pill fw-bold" style="background:#0078d4;color:#fff;border:0"
           onclick="openImportTodoModal()" title="Importar tareas desde Microsoft To-Do">
-    📋 Importar de Microsoft To-Do
+    📋 Sincronizar To-Do
   </button>
+  <span id="syncStatus" class="small text-muted" style="display:inline-flex;align-items:center;gap:4px"></span>
   {% else %}
   <a href="/auth/microsoft" class="btn btn-outline-secondary btn-sm rounded-pill" title="Conectar Microsoft To-Do">
     🔗 Conectar Microsoft To-Do
@@ -531,14 +532,62 @@ const BAR_COLORS = {
 // ——————————————————————————————————————————
 //  BOOTSTRAP QUERY PARAM — open initial view
 // ——————————————————————————————————————————
+const IS_ADMIN = {{ 'true' if is_admin_user else 'false' }};
+const MS_CONNECTED = {{ 'true' if ms_connected else 'false' }};
+const SYNC_INTERVAL_MIN = 5;  // minutos entre auto-pulls
+
 document.addEventListener('DOMContentLoaded', () => {
   const params = new URLSearchParams(location.search);
   const v = params.get('view');
   if (v && ['list','kanban','gantt','map'].includes(v)) setView(v, false);
   loadData();
+  updateSyncIndicator();
   // Polling: refrescar tareas cada 60s en silencio
   setInterval(() => { if (!document.hidden) loadData(true); }, 60000);
+  // Auto-pull desde Microsoft cada SYNC_INTERVAL_MIN minutos (solo admin)
+  if (IS_ADMIN && MS_CONNECTED) {
+    setInterval(() => { if (!document.hidden) autoSyncIfNeeded(); }, 60000);
+    // Indicador cada 30s
+    setInterval(updateSyncIndicator, 30000);
+  }
 });
+
+function getLastSync() {
+  const v = localStorage.getItem('msTodoLastSync');
+  return v ? parseInt(v, 10) : 0;
+}
+function setLastSync(ts) { localStorage.setItem('msTodoLastSync', String(ts)); }
+
+function updateSyncIndicator() {
+  const el = document.getElementById('syncStatus');
+  if (!el) return;
+  const last = getLastSync();
+  if (!last) { el.innerHTML = '⏳ <span>nunca sincronizado</span>'; return; }
+  const sec = Math.floor((Date.now() - last) / 1000);
+  let txt;
+  if (sec < 60)      txt = 'hace un momento';
+  else if (sec < 3600)  txt = `hace ${Math.floor(sec/60)} min`;
+  else if (sec < 86400) txt = `hace ${Math.floor(sec/3600)} h`;
+  else                  txt = `hace ${Math.floor(sec/86400)} d`;
+  el.innerHTML = `🔄 <span>Sync ${txt}</span>`;
+}
+
+async function autoSyncIfNeeded() {
+  const last = getLastSync();
+  const elapsedMin = (Date.now() - last) / 60000;
+  if (elapsedMin < SYNC_INTERVAL_MIN) return;
+  try {
+    const r = await fetch('/planning/api/import-todo', { method:'POST' }).then(x => x.json());
+    if (r.success) {
+      setLastSync(Date.now());
+      updateSyncIndicator();
+      if ((r.imported || 0) > 0) {
+        showToast(`🔄 ${r.imported} nuevas tareas de To-Do`, 'info');
+        await loadData(true);
+      }
+    }
+  } catch (e) {}
+}
 
 // ——————————————————————————————————————————
 //  DATA LOADING
@@ -1316,6 +1365,8 @@ async function doImportTodo() {
   }
   btn.disabled = false; btn.textContent = 'Importar ahora';
   if (r.success) {
+    setLastSync(Date.now());
+    updateSyncIndicator();
     const detailHtml = (r.detail && r.detail.length)
       ? '<div class="small text-muted mt-2">' + r.detail.map(d => '• ' + d).join('<br>') + '</div>'
       : '';

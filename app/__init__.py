@@ -2011,7 +2011,8 @@ def create_app():
             flash('No tienes acceso al módulo Planificación.', 'warning')
             return redirect('/dashboard')
         ms_connected = bool(get_ms_token(app))
-        return render_template('planning.html', ms_connected=ms_connected)
+        return render_template('planning.html', ms_connected=ms_connected,
+                               is_admin_user=is_admin())
 
     @app.route('/planning/api/projects', methods=['GET'])
     @login_required
