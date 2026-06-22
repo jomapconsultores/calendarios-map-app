@@ -2311,50 +2311,22 @@ def create_app():
                 for lst in lists:
                     list_id    = lst['id']
                     list_title = lst.get('displayName', 'To-Do')
-                    def _fetch_full_checklist(t_id):
-                        """Trae TODOS los checklistItems de una tarea, paginando si hace falta."""
-                        items = []
-                        u = f'{MS_GRAPH_URL}/me/todo/lists/{list_id}/tasks/{t_id}/checklistItems?$top=200'
-                        while u:
-                            cr = req_lib.get(u, headers=headers, timeout=(5,12))
-                            if cr.status_code != 200: break
-                            cd = cr.json()
-                            items.extend(cd.get('value', []))
-                            u = cd.get('@odata.nextLink')
-                        return [{
-                            'id':   ci.get('id',''),
-                            'name': (ci.get('displayName') or '').strip(),
-                            'done': bool(ci.get('isChecked')),
-                            'checked_at': ci.get('checkedDateTime'),
-                        } for ci in items]
-
-                    url = f'{MS_GRAPH_URL}/me/todo/lists/{list_id}/tasks?$top=200&$expand=checklistItems'
+                    # Import liviano: NO traemos subtareas en el sync masivo.
+                    # Las subtareas se cargan bajo demanda al abrir cada tarea (auto-refresh-subtasks).
+                    url = f'{MS_GRAPH_URL}/me/todo/lists/{list_id}/tasks?$top=100'
                     while url:
-                        tr = req_lib.get(url, headers=headers, timeout=(10,25))
+                        tr = req_lib.get(url, headers=headers, timeout=(10,20))
                         if tr.status_code != 200: break
                         tdata = tr.json()
-                        batch = []  # acumulamos para bulk insert
+                        batch = []
                         for task in tdata.get('value', []):
                             title = (task.get('title') or '').strip()
                             if not title: continue
                             tid = task.get('id', '')
-                            # Construir lista de subtareas (con fallback para casos truncados)
-                            raw_subs = task.get('checklistItems') or []
-                            if len(raw_subs) >= 20:
-                                # $expand puede truncar a 20 — pedir completas aparte
-                                subs = _fetch_full_checklist(tid)
-                            else:
-                                subs = [{
-                                    'id':   ci.get('id',''),
-                                    'name': (ci.get('displayName') or '').strip(),
-                                    'done': bool(ci.get('isChecked')),
-                                    'checked_at': ci.get('checkedDateTime'),
-                                } for ci in raw_subs]
                             if tid in existing_ids:
                                 skipped += 1
                                 continue
-                            # Variable interna para reutilizar abajo
-                            subs_for_new = subs
+                            subs_for_new = []
                             due = None
                             if task.get('dueDateTime'):
                                 try: due = task['dueDateTime']['dateTime'][:10]

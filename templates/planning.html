@@ -1383,10 +1383,10 @@ async function toggleSubtask(idx) {
   }
 }
 
-async function refreshSubtasksFromMs() {
+async function refreshSubtasksFromMs(silent) {
   if (!editingTaskId) return;
   const btn = document.getElementById('btnRefreshSubs');
-  btn.disabled = true; btn.textContent = '⏳ Sincronizando...';
+  if (btn) { btn.disabled = true; btn.textContent = silent ? '⏳ Cargando subtareas...' : '⏳ Sincronizando...'; }
   try {
     const r = await fetch(`/planning/api/tasks/${editingTaskId}/refresh-subtasks`, {method:'POST'}).then(x=>x.json());
     if (r.success) {
@@ -1398,14 +1398,14 @@ async function refreshSubtasksFromMs() {
         allTasks[idx].progress_pct = r.progress;
       }
       renderAll();
-      showToast(`🔄 ${r.count} subtareas sincronizadas`, 'success');
-    } else {
+      if (!silent) showToast(`🔄 ${r.count} subtareas sincronizadas`, 'success');
+    } else if (!silent) {
       showToast('❌ ' + (r.error || 'Error al sincronizar'), 'danger');
     }
   } catch(e) {
-    showToast('❌ Error de conexión', 'danger');
+    if (!silent) showToast('❌ Error de conexión', 'danger');
   }
-  btn.disabled = false; btn.textContent = '🔄 Sincronizar subtareas con Microsoft To-Do';
+  if (btn) { btn.disabled = false; btn.textContent = '🔄 Sincronizar subtareas con Microsoft To-Do'; }
 }
 
 function addSubtask() {
@@ -1586,11 +1586,15 @@ function openTask(id) {
   document.getElementById('newSubInput').value = '';
   // Botón de refresh: solo si la tarea viene de MS y soy admin
   const refreshRow = document.getElementById('msSubsRefreshRow');
+  const canRefreshSubs = IS_ADMIN && t && t.source === 'ms_todo' && t.source_id && t.ms_email && t.ms_list_id;
   if (refreshRow) {
-    const canRefresh = IS_ADMIN && t && t.source === 'ms_todo' && t.source_id && t.ms_email && t.ms_list_id;
-    refreshRow.style.display = canRefresh ? '' : 'none';
-    document.getElementById('refreshSubsHint').textContent = canRefresh
+    refreshRow.style.display = canRefreshSubs ? '' : 'none';
+    document.getElementById('refreshSubsHint').textContent = canRefreshSubs
       ? 'Trae todas las subtareas (incl. más de 20) desde Microsoft.' : '';
+  }
+  // Auto-cargar subtareas en segundo plano si tarea MS y no las tenemos cacheadas
+  if (canRefreshSubs && currentSubs.length === 0 && id) {
+    setTimeout(() => refreshSubtasksFromMs(true), 200);
   }
   // Cargar dependencias
   loadDeps(id);
@@ -1831,9 +1835,14 @@ async function doImportTodo() {
   res.innerHTML = '<div class="alert alert-info py-2 small">⏳ Consultando listas y tareas en Microsoft 365…</div>';
   let r;
   try {
-    r = await fetch('/planning/api/import-todo', { method:'POST' }).then(x => x.json());
+    const resp = await fetch('/planning/api/import-todo', { method:'POST' });
+    const txt = await resp.text();
+    try { r = JSON.parse(txt); }
+    catch (jsonErr) {
+      r = { success: false, error: 'El servidor tardó demasiado o cortó la respuesta. Reintenta en un momento.' };
+    }
   } catch (e) {
-    r = { success: false, error: 'Error de conexión: ' + e.message };
+    r = { success: false, error: 'Sin conexión: ' + e.message };
   }
   btn.disabled = false; btn.textContent = 'Importar ahora';
   if (r.success) {
