@@ -83,6 +83,28 @@
   </div></div></div>
 
   <div class="col-12"><div class="card mb-3"><div class="card-body">
+    <div class="section-title" id="sec-calendars">📆 Calendarios ({{calendarios|length}})</div>
+    <div class="alert alert-info py-2 small">
+      <strong>💡 google_cal_id</strong>: ID del sub-calendario de Google al que se sincronizan las citas de esta cuenta. Usa <code>primary</code> para el calendario principal o el ID completo (ejemplo: <code>c_abc123@group.calendar.google.com</code>) para un calendario específico.
+    </div>
+    <div style="overflow-x:auto"><table class="table table-sm align-middle"><thead><tr>
+      <th>cal_id</th><th>Nombre</th><th>Email notif.</th><th>Color</th><th>Google Calendar ID</th><th>Acción</th>
+    </tr></thead><tbody>
+    {%for c in calendarios%}<tr>
+      <form method="POST" action="/admin/database/update"><input type="hidden" name="table" value="calendar_config"><input type="hidden" name="id" value="{{c.id}}">
+      <td><code>{{c.calendar_id}}</code></td>
+      <td><input name="name" class="edit-input" value="{{c.name}}" style="width:100px"></td>
+      <td><input name="email" type="email" class="edit-input" value="{{c.email or ''}}" style="width:180px"></td>
+      <td style="display:flex;align-items:center;gap:6px">
+        <input name="color" type="color" value="{{c.color or '#4285F4'}}" style="width:40px;height:28px;padding:0;border:1px solid #e2e8f0;border-radius:6px">
+      </td>
+      <td><input name="google_cal_id" class="edit-input" value="{{c.google_cal_id or 'primary'}}" placeholder="primary o c_xxx@group.calendar.google.com" style="width:280px"></td>
+      <td><button class="btn btn-warning btn-xs">💾</button></form>
+      <form method="POST" action="/admin/database/delete" style="display:inline" onsubmit="return confirm('¿Eliminar calendario {{c.name}}? Las citas asociadas quedarán huérfanas.')"><input type="hidden" name="table" value="calendar_config"><input type="hidden" name="id" value="{{c.id}}"><button class="btn btn-danger btn-xs">🗑️</button></form></td>
+    </tr>{%endfor%}</tbody></table></div>
+  </div></div></div>
+
+  <div class="col-12"><div class="card mb-3"><div class="card-body">
     <div class="section-title" id="sec-users">👥 Usuarios ({{users|length}})</div>
     <table class="table table-sm align-middle"><thead><tr><th>Nombre</th><th>Email</th><th>Rol</th><th>Acción</th></tr></thead><tbody>
     {%for u in users%}<tr>

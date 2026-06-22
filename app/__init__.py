@@ -1178,6 +1178,9 @@ def create_app():
         table = request.form.get('table'); record_id = request.form.get('id')
         data = {k: v for k, v in request.form.items() if k not in ['table', 'id']}
         if data: app.supabase.update(table, record_id, data)
+        if table == 'calendar_config':
+            _cal_cache.invalidate('all')
+            _user_cal_cache.invalidate_prefix('')
         flash('Registro actualizado', 'success')
         return redirect('/admin/database')
 
@@ -1185,7 +1188,11 @@ def create_app():
     @login_required
     def admin_db_delete():
         if not is_admin(): return jsonify({'success': False})
-        app.supabase.delete(request.form.get('table'), request.form.get('id'))
+        table = request.form.get('table')
+        app.supabase.delete(table, request.form.get('id'))
+        if table == 'calendar_config':
+            _cal_cache.invalidate('all')
+            _user_cal_cache.invalidate_prefix('')
         flash('Registro eliminado', 'success')
         return redirect('/admin/database')
 
@@ -1196,6 +1203,9 @@ def create_app():
         table = request.form.get('table')
         data = {k: v for k, v in request.form.items() if k not in ['table']}
         if data: app.supabase.insert(table, data)
+        if table == 'calendar_config':
+            _cal_cache.invalidate('all')
+            _user_cal_cache.invalidate_prefix('')
         flash('Registro creado', 'success')
         return redirect('/admin/database')
 
