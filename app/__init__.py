@@ -10,7 +10,7 @@ import google.auth.exceptions
 from googleapiclient.discovery import build
 from datetime import datetime, timedelta, timezone, date
 from collections import defaultdict, OrderedDict
-import os, requests as req_lib, traceback, pytz, json, re, time, calendar as _cal, io
+import os, requests as req_lib, traceback, pytz, json, re, time, calendar as _cal, io, threading, tempfile
 from urllib.parse import quote as _url_quote
 
 # Web push (opcional: si la librería no está disponible la app sigue funcionando)
@@ -414,6 +414,237 @@ def get_all_ms_tokens(app):
         if access:
             out.append((t.get('email', 'microsoft'), access))
     return out
+
+
+def _parse_iso_dt(s):
+    """Parsea una fecha ISO-8601 a datetime UTC consciente; None si falla."""
+    if not s: return None
+    try:
+        dt = datetime.fromisoformat(str(s).replace('Z', '+00:00'))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc)
+    except Exception:
+        return None
+
+
+# Serializa la sincronización dentro de un mismo worker para evitar que el
+# scheduler en segundo plano y un disparo manual (botón admin) inserten la
+# misma tarea a la vez y la dupliquen.
+_SYNC_LOCK = threading.Lock()
+
+
+def sync_ms_todo(app, accounts, created_by_id, deadline_seconds=90):
+    """Sincroniza Microsoft To-Do → Sistema para las cuentas dadas.
+
+    - Inserta las tareas nuevas que aún no existen en el sistema.
+    - Actualiza las tareas ya importadas cuando el lado de Microsoft cambió
+      después de nuestra última sincronización (política "gana el más reciente":
+      compara lastModifiedDateTime de Graph contra last_synced_at local).
+
+    La dirección Sistema → To-Do ya es automática (push_task_to_ms en cada edición),
+    así que aquí solo traemos los cambios hechos directamente en Microsoft To-Do.
+    Devuelve un dict con totales y detalle por cuenta.
+    """
+    with _SYNC_LOCK:
+        return _sync_ms_todo_locked(app, accounts, created_by_id, deadline_seconds)
+
+
+def _sync_ms_todo_locked(app, accounts, created_by_id, deadline_seconds=90):
+    import time as _time
+    DEADLINE = _time.monotonic() + deadline_seconds
+    status_map = {
+        'notStarted': 'pending', 'inProgress': 'in_progress',
+        'completed': 'done', 'waitingOnOthers': 'review', 'deferred': 'blocked'
+    }
+    prio_map = {'low': 'low', 'normal': 'medium', 'high': 'high'}
+    WELLKNOWN_NAME = {
+        'flaggedEmails': '📧 Correos marcados',
+        'defaultList':   '📌 Tareas (default)',
+    }
+
+    # Pre-fetch de las tareas ms_todo existentes: source_id -> fila (insertar/actualizar)
+    existing_rows = app.supabase.get('tasks', {'source': 'ms_todo'},
+        select='id,source_id,last_synced_at,progress_pct') or []
+    existing_by_src = {r['source_id']: r for r in existing_rows if r.get('source_id')}
+
+    total_imported = 0; total_updated = 0; total_skipped = 0; total_errors = 0
+    per_account = []
+    sync_iso = datetime.now(timezone.utc).isoformat()
+    partial = False
+
+    for ms_email, token in accounts:
+        if _time.monotonic() > DEADLINE:
+            partial = True
+            per_account.append(f'{ms_email}: pendiente (tiempo agotado, reintenta)')
+            continue
+        headers = {'Authorization': f'Bearer {token}', 'Accept': 'application/json'}
+        imported = 0; updated = 0; skipped = 0; errors = 0
+        r = req_lib.get(f'{MS_GRAPH_URL}/me/todo/lists', headers=headers, timeout=(8,20))
+        if r.status_code == 401:
+            per_account.append(f'{ms_email}: token expirado, reconecta'); continue
+        if r.status_code != 200:
+            per_account.append(f'{ms_email}: error {r.status_code}'); continue
+        lists = r.json().get('value', [])
+        for lst in lists:
+            if _time.monotonic() > DEADLINE: partial = True; break
+            list_id    = lst['id']
+            wk = lst.get('wellknownListName', '')
+            list_title = WELLKNOWN_NAME.get(wk, lst.get('displayName', 'To-Do'))
+            is_flagged_list = (wk == 'flaggedEmails')
+            # Import liviano: las subtareas se cargan bajo demanda al abrir cada tarea.
+            url = f'{MS_GRAPH_URL}/me/todo/lists/{list_id}/tasks?$top=100&$expand=linkedResources'
+            while url:
+                if _time.monotonic() > DEADLINE: partial = True; break
+                tr = req_lib.get(url, headers=headers, timeout=(10,20))
+                if tr.status_code != 200: break
+                tdata = tr.json()
+                batch = []
+                for task in tdata.get('value', []):
+                    title = (task.get('title') or '').strip()
+                    if not title: continue
+                    tid = task.get('id', '')
+                    # Datos comunes (sirven para insertar y para actualizar)
+                    lr = (task.get('linkedResources') or [])
+                    source_url = ''; source_app = ''
+                    if lr:
+                        source_url = lr[0].get('webUrl', '') or ''
+                        source_app = lr[0].get('applicationName', '') or ''
+                    elif is_flagged_list:
+                        source_app = 'Outlook'
+                    due = None
+                    if task.get('dueDateTime'):
+                        try: due = task['dueDateTime']['dateTime'][:10]
+                        except Exception: pass
+                    comp = None
+                    if task.get('completedDateTime'):
+                        try: comp = task['completedDateTime']['dateTime'][:10]
+                        except Exception: pass
+                    status  = status_map.get(task.get('status','notStarted'), 'pending')
+                    is_done = (task.get('status') == 'completed')
+
+                    existing = existing_by_src.get(tid)
+                    if existing:
+                        # ¿Microsoft cambió después de nuestra última sync? -> actualizar.
+                        ms_mod     = _parse_iso_dt(task.get('lastModifiedDateTime'))
+                        local_sync = _parse_iso_dt(existing.get('last_synced_at'))
+                        if ms_mod and local_sync and ms_mod <= local_sync:
+                            skipped += 1
+                            continue
+                        # No tocamos campos locales (project_id, assigned_to, notes…):
+                        # solo los que son propiedad de Microsoft To-Do.
+                        patch = {
+                            'title':          title[:300],
+                            'description':    (task.get('body') or {}).get('content', '')[:5000],
+                            'status':         status,
+                            'priority':       prio_map.get(task.get('importance','normal'), 'medium'),
+                            'due_date':       due,
+                            'completed_date': comp,
+                            'source_url':     source_url,
+                            'source_app':     source_app,
+                            'phase':          (list_title or 'General')[:100],
+                            'tags':           f'{list_title} · {ms_email}',
+                            'ms_list_id':     list_id,
+                            'last_synced_at': sync_iso,
+                        }
+                        if is_done:
+                            patch['progress_pct'] = 100
+                        elif (existing.get('progress_pct') or 0) >= 100:
+                            patch['progress_pct'] = 0
+                        if app.supabase.update('tasks', existing['id'], patch):
+                            updated += 1
+                            existing['last_synced_at'] = sync_iso
+                        else:
+                            errors += 1
+                        continue
+
+                    # Tarea nueva -> insertar
+                    td = {
+                        'title':          title[:300],
+                        'description':    (task.get('body') or {}).get('content', '')[:5000],
+                        'status':         status,
+                        'priority':       prio_map.get(task.get('importance','normal'), 'medium'),
+                        'due_date':       due,
+                        'completed_date': comp,
+                        'tags':           f'{list_title} · {ms_email}',
+                        'phase':          (list_title or 'General')[:100],
+                        'source':         'ms_todo',
+                        'source_id':      tid,
+                        'source_url':     source_url,
+                        'source_app':     source_app,
+                        'ms_email':       ms_email,
+                        'ms_list_id':     list_id,
+                        'last_synced_at': sync_iso,
+                        'created_by':     created_by_id,
+                        'progress_pct':   100 if (is_done and comp) else 0,
+                        'subtasks':       [],
+                    }
+                    batch.append(td)
+                    existing_by_src[tid] = {'id': None, 'source_id': tid,
+                                            'last_synced_at': sync_iso, 'progress_pct': 0}
+                # BULK INSERT — un solo POST por página
+                if batch:
+                    res = app.supabase.insert('tasks', batch)
+                    if res is None: errors += len(batch)
+                    else: imported += len(batch)
+                url = tdata.get('@odata.nextLink')
+        per_account.append(
+            f'{ms_email}: +{imported} nuevas, {updated} actualizadas, {skipped} sin cambios')
+        total_imported += imported; total_updated += updated
+        total_skipped  += skipped;  total_errors  += errors
+
+    return {'success': True, 'imported': total_imported, 'updated': total_updated,
+            'skipped': total_skipped, 'errors': total_errors,
+            'detail': per_account, 'partial': partial}
+
+
+def _run_todo_autosync_once(app):
+    """Una pasada de sincronización automática (sin sesión de usuario)."""
+    try:
+        accounts = get_all_ms_tokens(app)
+        if not accounts:
+            return
+        admins = app.supabase.get('users', {'role': 'admin'}, select='id') or []
+        created_by = admins[0]['id'] if admins else None
+        res = sync_ms_todo(app, accounts, created_by)
+        if res.get('imported') or res.get('updated'):
+            print(f"[todo-autosync] +{res.get('imported',0)} nuevas, "
+                  f"{res.get('updated',0)} actualizadas")
+    except Exception as e:
+        print(f'[todo-autosync] error: {e}')
+
+
+def start_todo_autosync(app, interval_min=5):
+    """Arranca un hilo que sincroniza To-Do → Sistema cada `interval_min` minutos.
+
+    Con gunicorn (varios workers) usamos un flock para que SOLO un worker corra el
+    scheduler y no se dupliquen las llamadas a Graph ni las inserciones. En Windows
+    (dev local) no hay fcntl: el scheduler no arranca y se usa el botón manual.
+    La dirección Sistema → To-Do sigue siendo inmediata en cada edición.
+    """
+    try:
+        import fcntl
+    except Exception:
+        print('[todo-autosync] fcntl no disponible (dev local): scheduler desactivado')
+        return
+    try:
+        lock_path = os.path.join(tempfile.gettempdir(), 'todo_autosync.lock')
+        lock_file = open(lock_path, 'w')
+        fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        # Mantener la referencia viva para conservar el lock durante toda la vida del worker
+        app._todo_autosync_lock = lock_file
+    except Exception:
+        # Otro worker ya tiene el lock: este no agenda nada
+        return
+
+    def _loop():
+        while True:
+            time.sleep(interval_min * 60)
+            _run_todo_autosync_once(app)
+
+    t = threading.Thread(target=_loop, name='todo-autosync', daemon=True)
+    t.start()
+    print(f'[todo-autosync] activo (cada {interval_min} min)')
 
 
 # ============================================================
@@ -2617,129 +2848,32 @@ def create_app():
         if not accounts:
             return jsonify({'success': False, 'needs_auth': True,
                 'error': 'Microsoft To-Do no está conectado. Conecta primero desde Planificación.'})
-        # Tope global de tiempo para no exceder timeout de gunicorn
-        import time as _time
-        DEADLINE = _time.monotonic() + 90
-        status_map = {
-            'notStarted': 'pending', 'inProgress': 'in_progress',
-            'completed': 'done', 'waitingOnOthers': 'review', 'deferred': 'blocked'
-        }
-        prio_map = {'low': 'low', 'normal': 'medium', 'high': 'high'}
-
-        # Pre-fetch ALL existing ms_todo source_ids once (massive speedup vs N+1)
-        existing_rows = app.supabase.get('tasks', {'source': 'ms_todo'}, select='source_id') or []
-        existing_ids = {r['source_id'] for r in existing_rows if r.get('source_id')}
-
-        total_imported = 0; total_skipped = 0; total_errors = 0
-        per_account = []
-        sync_iso = datetime.now(timezone.utc).isoformat()
         try:
-            partial = False
-            for ms_email, token in accounts:
-                if _time.monotonic() > DEADLINE:
-                    partial = True
-                    per_account.append(f'{ms_email}: pendiente (tiempo agotado, reintenta)')
-                    continue
-                headers = {'Authorization': f'Bearer {token}', 'Accept': 'application/json'}
-                imported = 0; skipped = 0; errors = 0
-                # Get all To-Do task lists for this account
-                r = req_lib.get(f'{MS_GRAPH_URL}/me/todo/lists', headers=headers, timeout=(8,20))
-                if r.status_code == 401:
-                    per_account.append(f'{ms_email}: token expirado, reconecta')
-                    continue
-                if r.status_code != 200:
-                    per_account.append(f'{ms_email}: error {r.status_code}')
-                    continue
-                lists = r.json().get('value', [])
-                # Mapa de wellknown → nombre amigable
-                WELLKNOWN_NAME = {
-                    'flaggedEmails': '📧 Correos marcados',
-                    'defaultList':   '📌 Tareas (default)',
-                }
-                for lst in lists:
-                    if _time.monotonic() > DEADLINE: partial = True; break
-                    list_id    = lst['id']
-                    wk = lst.get('wellknownListName', '')
-                    list_title = WELLKNOWN_NAME.get(wk, lst.get('displayName', 'To-Do'))
-                    is_flagged_list = (wk == 'flaggedEmails')
-                    # Import liviano: NO traemos subtareas en el sync masivo.
-                    # Las subtareas se cargan bajo demanda al abrir cada tarea (auto-refresh-subtasks).
-                    url = f'{MS_GRAPH_URL}/me/todo/lists/{list_id}/tasks?$top=100&$expand=linkedResources'
-                    while url:
-                        if _time.monotonic() > DEADLINE: partial = True; break
-                        tr = req_lib.get(url, headers=headers, timeout=(10,20))
-                        if tr.status_code != 200: break
-                        tdata = tr.json()
-                        batch = []
-                        for task in tdata.get('value', []):
-                            title = (task.get('title') or '').strip()
-                            if not title: continue
-                            tid = task.get('id', '')
-                            if tid in existing_ids:
-                                skipped += 1
-                                continue
-                            subs_for_new = []
-                            # linkedResources: si la tarea proviene de un correo flagged
-                            lr = (task.get('linkedResources') or [])
-                            source_url = ''
-                            source_app = ''
-                            if lr:
-                                source_url = lr[0].get('webUrl', '') or ''
-                                source_app = lr[0].get('applicationName', '') or ''
-                            elif is_flagged_list:
-                                source_app = 'Outlook'
-                            due = None
-                            if task.get('dueDateTime'):
-                                try: due = task['dueDateTime']['dateTime'][:10]
-                                except Exception: pass
-                            comp = None
-                            if task.get('completedDateTime'):
-                                try: comp = task['completedDateTime']['dateTime'][:10]
-                                except Exception: pass
-                            subs = subs_for_new
-                            # Si hay subtareas y el progreso no está en 100, calculamos progreso por subtareas
-                            sub_progress = None
-                            if subs:
-                                done_n = sum(1 for s in subs if s.get('done'))
-                                if subs and done_n < len(subs):
-                                    sub_progress = int(done_n * 100 / len(subs))
-                            td = {
-                                'title':          title[:300],
-                                'description':    (task.get('body') or {}).get('content', '')[:5000],
-                                'status':         status_map.get(task.get('status','notStarted'), 'pending'),
-                                'priority':       prio_map.get(task.get('importance','normal'), 'medium'),
-                                'due_date':       due,
-                                'completed_date': comp,
-                                'tags':           f'{list_title} · {ms_email}',
-                                'phase':          (list_title or 'General')[:100],
-                                'source':         'ms_todo',
-                                'source_id':      tid,
-                                'source_url':     source_url,
-                                'source_app':     source_app,
-                                'ms_email':       ms_email,
-                                'ms_list_id':     list_id,
-                                'last_synced_at': sync_iso,
-                                'created_by':     current_user.id,
-                                'progress_pct':   100 if (task.get('status') == 'completed' and comp) else (sub_progress or 0),
-                                'subtasks':       subs,
-                            }
-                            batch.append(td)
-                            existing_ids.add(tid)
-                        # BULK INSERT — un solo POST por página
-                        if batch:
-                            res = app.supabase.insert('tasks', batch)
-                            if res is None:
-                                errors += len(batch)
-                            else:
-                                imported += len(batch)
-                        url = tdata.get('@odata.nextLink')
-                per_account.append(f'{ms_email}: +{imported} nuevas, {skipped} ya existían')
-                total_imported += imported
-                total_skipped  += skipped
-                total_errors   += errors
-            return jsonify({'success': True, 'imported': total_imported,
-                            'skipped': total_skipped, 'errors': total_errors,
-                            'detail': per_account, 'partial': partial})
+            return jsonify(sync_ms_todo(app, accounts, current_user.id))
+        except Exception as e:
+            return jsonify({'success': False, 'error': str(e)[:300]})
+
+    @app.route('/planning/api/sync-todo-cron', methods=['POST', 'GET'])
+    def planning_sync_todo_cron():
+        """Sincronización automática To-Do ⇄ Sistema disparada por un cron externo.
+
+        No requiere sesión: se autentica con un secreto (header X-Cron-Secret o
+        ?secret=...). Trae a Microsoft los cambios hechos en el sistema ya se empujan
+        en cada edición; aquí jalamos los cambios hechos directamente en To-Do, aunque
+        nadie tenga la página abierta.
+        """
+        secret = app.config.get('CRON_SECRET') or ''
+        given  = request.headers.get('X-Cron-Secret') or request.args.get('secret') or ''
+        if not secret or given != secret:
+            return jsonify({'success': False, 'error': 'No autorizado'}), 401
+        accounts = get_all_ms_tokens(app)
+        if not accounts:
+            return jsonify({'success': False, 'error': 'Sin cuentas Microsoft conectadas'})
+        # created_by para las tareas nuevas: el primer admin del sistema
+        admins = app.supabase.get('users', {'role': 'admin'}, select='id') or []
+        created_by = admins[0]['id'] if admins else None
+        try:
+            return jsonify(sync_ms_todo(app, accounts, created_by))
         except Exception as e:
             return jsonify({'success': False, 'error': str(e)[:300]})
 
@@ -2898,5 +3032,9 @@ def create_app():
                 'expiry': t.get('token_expiry'), 'has_refresh_token': bool(t.get('refresh_token'))})
         return jsonify({'connected': False, 'email': t['email'],
             'message': 'Token invalido. Reconecta en /auth/google.'})
+
+    # Sincronización automática To-Do → Sistema en segundo plano (un solo worker).
+    if app.supabase:
+        start_todo_autosync(app, interval_min=5)
 
     return app

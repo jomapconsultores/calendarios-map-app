@@ -693,12 +693,11 @@ document.addEventListener('DOMContentLoaded', () => {
   }
   loadData();
   updateSyncIndicator();
-  // Polling: refrescar tareas cada 60s en silencio
+  // Polling: refrescar tareas cada 60s en silencio.
+  // El pull desde Microsoft lo hace el servidor en segundo plano cada 5 min
+  // (start_todo_autosync), así que aquí solo refrescamos la vista desde la BD.
   setInterval(() => { if (!document.hidden) loadData(true); }, 60000);
-  // Auto-pull desde Microsoft cada SYNC_INTERVAL_MIN minutos (solo admin)
   if (IS_ADMIN && MS_CONNECTED) {
-    setInterval(() => { if (!document.hidden) autoSyncIfNeeded(); }, 60000);
-    // Indicador cada 30s
     setInterval(updateSyncIndicator, 30000);
   }
 });
@@ -732,8 +731,13 @@ async function autoSyncIfNeeded() {
     if (r.success) {
       setLastSync(Date.now());
       updateSyncIndicator();
-      if ((r.imported || 0) > 0) {
-        showToast(`🔄 ${r.imported} nuevas tareas de To-Do`, 'info');
+      const nuevas = r.imported || 0, cambios = r.updated || 0;
+      if (nuevas > 0 || cambios > 0) {
+        let msg = '🔄 ';
+        if (nuevas)  msg += `${nuevas} nuevas`;
+        if (nuevas && cambios) msg += ' · ';
+        if (cambios) msg += `${cambios} actualizadas`;
+        showToast(msg + ' de To-Do', 'info');
         await loadData(true);
       }
     }
