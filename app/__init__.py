@@ -433,6 +433,15 @@ def _parse_iso_dt(s):
 # misma tarea a la vez y la dupliquen.
 _SYNC_LOCK = threading.Lock()
 
+# Filtro de ruido al importar desde Microsoft To-Do (para que el sistema quede
+# enfocado en lo accionable y no se llene de miles de tareas históricas):
+#   - IMPORT_FLAGGED_EMAILS=False -> no importar la lista "Correos marcados".
+#   - IMPORT_COMPLETED=False      -> no importar tareas que YA vienen completadas.
+# OJO: las tareas ya existentes en el sistema se SIGUEN actualizando (incluido
+# marcarlas como completadas); el filtro solo evita crear ruido nuevo.
+IMPORT_FLAGGED_EMAILS = False
+IMPORT_COMPLETED      = False
+
 
 def sync_ms_todo(app, accounts, created_by_id, deadline_seconds=90):
     """Sincroniza Microsoft To-Do → Sistema para las cuentas dadas.
@@ -492,6 +501,9 @@ def _sync_ms_todo_locked(app, accounts, created_by_id, deadline_seconds=90):
             wk = lst.get('wellknownListName', '')
             list_title = WELLKNOWN_NAME.get(wk, lst.get('displayName', 'To-Do'))
             is_flagged_list = (wk == 'flaggedEmails')
+            # Filtro de ruido: saltar por completo la lista de "Correos marcados".
+            if is_flagged_list and not IMPORT_FLAGGED_EMAILS:
+                continue
             # Import liviano: las subtareas se cargan bajo demanda al abrir cada tarea.
             url = f'{MS_GRAPH_URL}/me/todo/lists/{list_id}/tasks?$top=100&$expand=linkedResources'
             while url:
@@ -556,6 +568,13 @@ def _sync_ms_todo_locked(app, accounts, created_by_id, deadline_seconds=90):
                             existing['last_synced_at'] = sync_iso
                         else:
                             errors += 1
+                        continue
+
+                    # Filtro de ruido: no crear tareas que YA vienen completadas
+                    # (las completadas históricas no aportan; las completadas de
+                    # tareas ya existentes sí se reflejan en el bloque de arriba).
+                    if is_done and not IMPORT_COMPLETED:
+                        skipped += 1
                         continue
 
                     # Tarea nueva -> insertar

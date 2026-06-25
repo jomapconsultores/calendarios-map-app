@@ -291,6 +291,9 @@ input[type=range].prog-range{accent-color:#4f46e5;width:100%}
 <!-- TIME FILTER PILLS -->
 <div class="project-pills" id="timePills" style="margin-top:-4px"></div>
 
+<!-- PANEL DE FOCO: Vencidas / Hoy / Esta semana -->
+<div id="focusBanner" style="margin:6px 0 14px"></div>
+
 <!-- BULK ACTION BAR -->
 <div id="bulkBar" style="display:none;position:sticky;top:0;z-index:50;background:#1e293b;color:#fff;border-radius:14px;padding:10px 16px;margin-bottom:12px;box-shadow:0 4px 12px rgba(0,0,0,.2)">
   <div class="d-flex align-items-center gap-2 flex-wrap">
@@ -669,10 +672,40 @@ const STATUS_COLS = {
   done:'#10b981', blocked:'#ef4444'
 };
 const PRIO_LABELS = { low:'Baja', medium:'Media', high:'Alta', urgent:'Urgente' };
+const PRIO_ORDER  = { urgent:0, high:1, medium:2, low:3 };
 const BAR_COLORS = {
   pending:'#f59e0b', in_progress:'#4f46e5', review:'#8b5cf6',
   done:'#10b981', blocked:'#ef4444'
 };
+
+// ¿Es una tarea que en realidad es un correo marcado importado de Outlook?
+function isFlaggedEmail(t) {
+  return (t.source_app === 'Outlook') || (t.phase || '').includes('Correos marcados');
+}
+
+// Orden inteligente para que lo accionable quede arriba:
+//   1) Vencidas (sin completar)  2) Pendientes  3) Completadas (al fondo)
+// Dentro de cada bloque: por fecha de vencimiento más cercana (sin fecha al final)
+// y luego por prioridad más alta.
+function smartSort(tasks) {
+  const today0 = todayStr();
+  const rank = t => {
+    if (t.status === 'done') return 2;
+    if (t.due_date && t.due_date < today0) return 0;   // vencida
+    return 1;
+  };
+  return [...tasks].sort((a, b) => {
+    const ra = rank(a), rb = rank(b);
+    if (ra !== rb) return ra - rb;
+    if (ra === 2) return (b.completed_date || '').localeCompare(a.completed_date || '');
+    const da = a.due_date || '9999-12-31', db = b.due_date || '9999-12-31';
+    if (da !== db) return da < db ? -1 : 1;
+    const pa = PRIO_ORDER[a.priority || 'medium'] ?? 2;
+    const pb = PRIO_ORDER[b.priority || 'medium'] ?? 2;
+    if (pa !== pb) return pa - pb;
+    return (a.title || '').localeCompare(b.title || '');
+  });
+}
 
 // ——————————————————————————————————————————
 //  BOOTSTRAP QUERY PARAM — open initial view
@@ -768,13 +801,68 @@ function renderAll() {
   renderProjectPills();
   renderAccountPills();
   renderTimePills();
+  renderFocusBanner();
   fillProjectSelects();
   updateStats();
   renderCurrentView();
 }
 
+// Panel de foco: tarjetas grandes con lo accionable (vencidas / hoy / semana).
+// Clic en una tarjeta aplica ese filtro de tiempo. Además, chip para mostrar/ocultar
+// los "Correos marcados" de Outlook.
+function renderFocusBanner() {
+  const el = document.getElementById('focusBanner');
+  if (!el) return;
+  // Base: respeta cuenta/proyecto, excluye completadas y (si aplica) correos marcados.
+  let base = allTasks;
+  if (curProject) base = base.filter(x => x.project_id === curProject);
+  if (curAccount === '__manual__') base = base.filter(x => !x.ms_email);
+  else if (curAccount) base = base.filter(x => (x.ms_email || '') === curAccount);
+  base = base.filter(x => x.status !== 'done');
+  if (hideFlagged) base = base.filter(x => !isFlaggedEmail(x));
+  const today0 = todayStr(), in7 = daysFromToday(7);
+  const nOver = base.filter(t => t.due_date && t.due_date < today0).length;
+  const nToday = base.filter(t => t.due_date === today0).length;
+  const nWeek = base.filter(t => t.due_date && t.due_date >= today0 && t.due_date <= in7).length;
+
+  const card = (key, icon, label, n, color) => {
+    const active = curTimeFilter === key;
+    return `<div onclick="setTimeFilter('${key}')" title="Filtrar: ${label}"
+      style="flex:1;min-width:140px;cursor:pointer;border:1.5px solid ${color};
+      border-radius:14px;padding:12px 16px;display:flex;align-items:center;gap:12px;
+      background:${active ? color : color + '14'};color:${active ? '#fff' : color};
+      transition:.15s;box-shadow:0 1px 3px rgba(0,0,0,.06)">
+      <span style="font-size:1.6rem;line-height:1">${icon}</span>
+      <div style="line-height:1.15">
+        <div style="font-size:1.5rem;font-weight:800">${n}</div>
+        <div style="font-size:.78rem;font-weight:600;opacity:.85">${label}</div>
+      </div>
+    </div>`;
+  };
+
+  const hasFlagged = allTasks.some(isFlaggedEmail);
+  const flagChip = hasFlagged ? `<button onclick="toggleFlagged()" class="btn btn-sm rounded-pill"
+      style="border:1px solid #94a3b8;background:${hideFlagged ? '#fff' : '#e2e8f0'};color:#475569;font-size:.78rem;white-space:nowrap"
+      title="Correos marcados de Outlook">📧 ${hideFlagged ? 'Ver correos marcados' : 'Ocultar correos marcados'}</button>` : '';
+
+  el.innerHTML =
+    `<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:stretch">
+      ${card('overdue', '⛔', 'Vencidas', nOver, '#ef4444')}
+      ${card('today',   '📌', 'Para hoy', nToday, '#10b981')}
+      ${card('week',    '🗓', 'Esta semana', nWeek, '#8b5cf6')}
+    </div>` +
+    (flagChip ? `<div style="margin-top:8px;text-align:right">${flagChip}</div>` : '');
+}
+
 let curAccount = null;
 let showDone = false;
+// Ocultar "Correos marcados" de Outlook por defecto (son ruido); recordado por scope.
+let hideFlagged = (localStorage.getItem('hideFlagged_' + SCOPE) ?? '1') === '1';
+function toggleFlagged() {
+  hideFlagged = !hideFlagged;
+  localStorage.setItem('hideFlagged_' + SCOPE, hideFlagged ? '1' : '0');
+  renderAll();
+}
 let curTimeFilter = localStorage.getItem('timeFilter_' + SCOPE) || '';
 
 function setTimeFilter(v) {
@@ -870,6 +958,7 @@ function filteredTasks() {
     t = t.filter(x => (x.ms_email || '') === curAccount);
   }
   if (!showDone) t = t.filter(x => x.status !== 'done');
+  if (hideFlagged) t = t.filter(x => !isFlaggedEmail(x));
   t = t.filter(inTimeFilter);
   const s = document.getElementById('filterStatus').value;
   if (s) t = t.filter(x => (x.status || 'pending') === s);
@@ -881,7 +970,7 @@ function filteredTasks() {
     (x.tags||'').toLowerCase().includes(q) ||
     (x.phase||'').toLowerCase().includes(q) ||
     (x.ms_email||'').toLowerCase().includes(q));
-  return t;
+  return smartSort(t);
 }
 
 function renderAccountPills() {
@@ -1238,8 +1327,18 @@ function renderList() {
       const k = groupKey(t);
       (groups[k] = groups[k] || []).push(t);
     });
-    const keys = Object.keys(groups).sort();
     const today0 = todayStr();
+    // Ordenar los grupos por urgencia: primero los que tienen tareas vencidas,
+    // luego los que tienen más pendientes; alfabético como desempate.
+    const grpOverdue = k => groups[k].filter(t => t.due_date && t.due_date < today0 && t.status !== 'done').length;
+    const grpPending = k => groups[k].filter(t => t.status !== 'done').length;
+    const keys = Object.keys(groups).sort((a, b) => {
+      const oa = grpOverdue(a), ob = grpOverdue(b);
+      if (oa !== ob) return ob - oa;
+      const pa = grpPending(a), pb = grpPending(b);
+      if (pa !== pb) return pb - pa;
+      return a.localeCompare(b);
+    });
     const groupIcon = {
       phase:    '📁',
       project:  '📂',
