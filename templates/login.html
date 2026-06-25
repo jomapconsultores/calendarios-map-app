@@ -60,6 +60,7 @@
       <p class="text-center text-white-50 small mt-3 mb-0">© 2026 · Marco Antonio Posligua San Martín</p>
     </div>
   </div>
+  <script src="{{ url_for('static', filename='js/password-toggle.js') }}"></script>
   {% if webauthn_available %}<script src="{{ url_for('static', filename='js/webauthn.js') }}"></script>{% endif %}
   {% if face_login_enabled %}<script src="{{ url_for('static', filename='js/faceid.js') }}"></script>{% endif %}
   <script>
