@@ -331,8 +331,12 @@ document.addEventListener('DOMContentLoaded', function () {
     initialView: 'dayGridMonth',
     locale: 'es',
     headerToolbar: { left: 'prev,next today', center: 'title', right: 'dayGridMonth,timeGridWeek,listWeek' },
-    events: '/calendar/api/events',
+    eventSources: [
+      '/calendar/api/events',
+      { url: '/calendar/api/holidays', editable: false, startEditable: false }
+    ],
     eventClick: editAppt,
+    eventOrder: '-allDay,start',
     height: 'auto',
     eventDidMount: function(info) {
       // Tooltip on hover
@@ -350,6 +354,7 @@ document.addEventListener('DOMContentLoaded', function () {
   setupClientAC();
   loadPending();
   loadCiudades();
+  loadHolidayMap();
 
   // Day picker toggle
   document.querySelectorAll('.day-btn').forEach(function (btn) {
@@ -643,6 +648,14 @@ function quickBook(calId) { openModal(calId); }
 
 function editAppt(info) {
   let p = info.event.extendedProps;
+  // Los feriados no son citas: mostrar detalle informativo y salir
+  if (p && p.isHoliday) {
+    let ambito = p.ambito === 'local' ? ('🏙️ Feriado local' + (p.ciudad ? ' de ' + p.ciudad : '')) : '🇪🇨 Feriado nacional';
+    let real = p.trasladado ? ' · original: ' + p.fecha_real + ' (trasladado por ley)' : '';
+    let ver  = p.verificado ? '✅ oficial confirmado' : '⚠️ proyección (sin confirmar)';
+    showToast(ambito + ': ' + p.nombre + ' — ' + ver + real, p.verificado ? 'info' : 'warning');
+    return;
+  }
   editId = info.event.id;
   editParentId = p.parent_event_id || null;
   document.getElementById('fEditId').value = editId;
@@ -752,6 +765,58 @@ function saveClient() {
 }
 
 // ======== GUARDAR ========
+// ======== FERIADOS (verificación al reservar) ========
+// 'YYYY-MM-DD' -> [ { nombre, verificado, ambito, ciudad } , ... ]
+var HOLIDAY_MAP = {};
+function loadHolidayMap() {
+  var y = new Date().getFullYear();
+  fetch('/calendar/api/holidays?y_from=' + (y - 1) + '&y_to=' + (y + 2))
+    .then(function (r) { return r.json(); })
+    .then(function (list) {
+      HOLIDAY_MAP = {};
+      (list || []).forEach(function (e) {
+        var p = e.extendedProps || {};
+        (HOLIDAY_MAP[e.start] = HOLIDAY_MAP[e.start] || []).push({
+          nombre: p.nombre || e.title,
+          verificado: !!p.verificado,
+          ambito: p.ambito || 'nacional',
+          ciudad: p.ciudad || null
+        });
+      });
+    })
+    .catch(function () { /* sin conexión: se omite la advertencia */ });
+}
+
+function _isoLocal(d) {  // Date -> 'YYYY-MM-DD' en hora local (sin desfase UTC)
+  return d.getFullYear() + '-' +
+         ('0' + (d.getMonth() + 1)).slice(-2) + '-' +
+         ('0' + d.getDate()).slice(-2);
+}
+
+// Feriados aplicables a una fecha para una ciudad (nacionales + locales de esa ciudad)
+function feriadosDe(fecha, ciudad) {
+  var cu = (ciudad || '').trim().toUpperCase();
+  return (HOLIDAY_MAP[fecha] || []).filter(function (h) {
+    return h.ambito === 'nacional' || !h.ciudad || h.ciudad.toUpperCase() === cu;
+  });
+}
+
+// Devuelve true si se puede continuar; muestra confirmación si alguna fecha es feriado.
+function verificarFeriados(fechas, ciudad) {
+  var hits = [], vistos = {};
+  (fechas || []).forEach(function (f) {
+    if (!f || vistos[f]) return;
+    vistos[f] = 1;
+    feriadosDe(f, ciudad).forEach(function (h) {
+      hits.push('• ' + f + ' — ' + h.nombre + (h.ambito === 'local' && h.ciudad ? ' (' + h.ciudad + ')' : ''));
+    });
+  });
+  if (!hits.length) return true;
+  var extra = hits.length > 10 ? ('\n… y ' + (hits.length - 10) + ' más') : '';
+  return confirm('⚠️ FERIADO EN ECUADOR\n\nLa(s) siguiente(s) fecha(s) son día de descanso obligatorio:\n\n' +
+                 hits.slice(0, 10).join('\n') + extra + '\n\n¿Deseas agendar la cita de todos modos?');
+}
+
 function saveBooking() {
   let btn = document.getElementById('btnSend');
   btn.disabled = true; btn.textContent = '⏳...';
@@ -788,6 +853,30 @@ function saveBooking() {
       if (!endDate) { alert('❌ Selecciona la fecha fin de la recurrencia'); btn.disabled = false; btn.textContent = '✅ GUARDAR'; return; }
       if (endDate < date) { alert('❌ La fecha fin debe ser posterior a la fecha inicio'); btn.disabled = false; btn.textContent = '✅ GUARDAR'; return; }
     }
+  }
+
+  // Verificación de feriados de Ecuador antes de agendar (nacionales + locales de la ciudad)
+  var ciudadChk = document.getElementById('fCiudad').value.trim().toUpperCase();
+  var fechasChk;
+  if (useSessions) {
+    fechasChk = sessions.map(function (s) { return s.date; });
+  } else if (isRecurring) {
+    // Cada ocurrencia de la serie se revisa contra los feriados
+    fechasChk = genRecDates(
+      date,
+      document.getElementById('fRecFreq').value,
+      document.getElementById('fRecInterval').value,
+      getSelectedDays(),
+      getRecEndMode(),
+      document.getElementById('fRecEndDate').value,
+      document.getElementById('fRecCount').value
+    ).map(_isoLocal);
+  } else {
+    fechasChk = date ? [date] : [];
+  }
+  if (!verificarFeriados(fechasChk, ciudadChk)) {
+    btn.disabled = false; btn.textContent = '✅ GUARDAR';
+    return;
   }
 
   if (editId) {
@@ -956,6 +1045,20 @@ function showToast(msg, type) {
 </script>
 <style>
 @keyframes slideIn { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+/* Feriados de Ecuador */
+.fc .feriado-ec {
+  border: none !important;
+  font-weight: 700;
+  font-size: .72rem;
+  padding: 1px 4px;
+  border-radius: 6px;
+  cursor: help;
+}
+.fc .feriado-ec .fc-event-title { white-space: normal; }
+.fc .feriado-proj {
+  background-image: repeating-linear-gradient(45deg, rgba(255,255,255,.25) 0 6px, transparent 6px 12px);
+}
+/* nacional = rojo (color inline) · local = morado (color inline) · proyección = ámbar */
 .pend-count { font-weight: 400; color: var(--warning); }
 .pend-meta { font-size: .75rem; color: var(--gray); margin-top: 2px; }
 .pend-actions { display: flex; gap: 6px; }

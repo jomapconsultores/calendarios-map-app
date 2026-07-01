@@ -56,6 +56,8 @@ except Exception as _wa_err:  # pragma: no cover
     WEBAUTHN_AVAILABLE = False
     print(f'[webauthn] no disponible: {_wa_err}')
 
+from .feriados import feriados as _feriados_ec, feriados_rango as _feriados_rango, es_feriado as _es_feriado
+
 load_dotenv()
 os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
 TIMEZONE = pytz.timezone('America/Guayaquil')
@@ -1887,6 +1889,69 @@ def create_app():
                     'google_event_id': e.get('google_event_id', ''),
                     'is_recurring': is_rec,
                     'parent_event_id': e.get('parent_event_id', ''), 'id': e['id'],
+                },
+            })
+        return jsonify(result)
+
+    # ============================================================
+    #  API — FERIADOS ECUADOR (cálculo automático + traslados de ley)
+    # ============================================================
+    @app.route('/calendar/api/holidays')
+    @login_required
+    def api_holidays():
+        args = request.args
+        start = args.get('start')  # FullCalendar envía start/end del rango visible
+        end   = args.get('end')
+        try:
+            if start and end:
+                d0 = date.fromisoformat(start[:10])
+                d1 = date.fromisoformat(end[:10])
+                data = _feriados_rango(d0, d1)
+            else:
+                y0 = int(args.get('y_from') or args.get('year') or date.today().year)
+                y1 = int(args.get('y_to')   or args.get('year') or y0)
+                if y1 < y0:
+                    y0, y1 = y1, y0
+                y1 = min(y1, y0 + 10)  # tope defensivo
+                data = []
+                for y in range(y0, y1 + 1):
+                    data.extend(_feriados_ec(y))
+        except Exception:
+            data = _feriados_ec(date.today().year)
+
+        result = []
+        for f in data:
+            es_local = f.get('ambito') == 'local'
+            etiqueta = f['nombre'] + (' (traslado)' if f['trasladado'] else '')
+            if es_local and f.get('ciudad'):
+                etiqueta += ' — ' + f['ciudad']
+            clases = ['feriado-ec']
+            clases.append('feriado-local' if es_local else 'feriado-nac')
+            if not f['verificado']:
+                clases.append('feriado-proj')
+            # Nacional=rojo, Local=morado; proyección=ámbar
+            if not f['verificado']:
+                color = '#f59e0b'
+            else:
+                color = '#7c3aed' if es_local else '#e11d48'
+            result.append({
+                'id': 'hol-' + f['fecha'],
+                'title': ('🏙️ ' if es_local else '🇪🇨 ') + etiqueta,
+                'start': f['fecha'],
+                'allDay': True,
+                'display': 'block',
+                'editable': False,
+                'classNames': clases,
+                'color': color,
+                'extendedProps': {
+                    'isHoliday': True,
+                    'nombre': f['nombre'],
+                    'fecha_real': f['fecha_real'],
+                    'trasladado': f['trasladado'],
+                    'verificado': f['verificado'],
+                    'dia_semana': f['dia_semana'],
+                    'ambito': f.get('ambito', 'nacional'),
+                    'ciudad': f.get('ciudad'),
                 },
             })
         return jsonify(result)
