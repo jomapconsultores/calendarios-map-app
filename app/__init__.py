@@ -1922,9 +1922,12 @@ def create_app():
         result = []
         for f in data:
             es_local = f.get('ambito') == 'local'
-            etiqueta = f['nombre'] + (' (traslado)' if f['trasladado'] else '')
-            if es_local and f.get('ciudad'):
-                etiqueta += ' — ' + f['ciudad']
+            # Ámbito explícito en la etiqueta: "Nacional" o "Local (Ciudad)"
+            if es_local:
+                tipo = 'Local' + (' (' + f['ciudad'] + ')' if f.get('ciudad') else '')
+            else:
+                tipo = 'Nacional'
+            etiqueta = f['nombre'] + (' (traslado)' if f['trasladado'] else '') + ' · ' + tipo
             clases = ['feriado-ec']
             clases.append('feriado-local' if es_local else 'feriado-nac')
             if not f['verificado']:
