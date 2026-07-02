@@ -252,6 +252,7 @@ input[type=range].prog-range{accent-color:#4f46e5;width:100%}
   </select>
   <select id="groupBy" class="form-select form-select-sm" style="max-width:160px" onchange="setGroupBy(this.value)">
     <option value="">Sin agrupar</option>
+    <option value="status">Por estado</option>
     <option value="phase">Por lista / fase</option>
     <option value="project">Por proyecto</option>
     <option value="account">Por cuenta MS</option>
@@ -673,6 +674,15 @@ const STATUS_COLS = {
 };
 const PRIO_LABELS = { low:'Baja', medium:'Media', high:'Alta', urgent:'Urgente' };
 const PRIO_ORDER  = { urgent:0, high:1, medium:2, low:3 };
+// Orden fijo y lógico de los cuadros al agrupar por estado / prioridad
+const STATUS_GROUP_KEYS = ['pending','in_progress','review','blocked','done'];
+const STATUS_GROUP_ORDER = STATUS_GROUP_KEYS.map(s => STATUS_LABELS[s]);
+const PRIO_GROUP_ORDER   = ['urgent','high','medium','low'].map(p => PRIO_LABELS[p]);
+const STATUS_KEY_BY_LABEL = Object.fromEntries(
+  Object.entries(STATUS_LABELS).map(([k, v]) => [v, k]));
+const STATUS_GROUP_ICON = {
+  pending:'⏳', in_progress:'🔄', review:'👀', blocked:'⛔', done:'✅'
+};
 const BAR_COLORS = {
   pending:'#f59e0b', in_progress:'#4f46e5', review:'#8b5cf6',
   done:'#10b981', blocked:'#ef4444'
@@ -1283,8 +1293,17 @@ function renderCurrentView() {
 // ——————————————————————————————————————————
 // groupBy se guarda por scope (planning/todo) para que cada vista recuerde su preferencia
 let groupBy = localStorage.getItem('groupBy_' + SCOPE);
-// /todo agrupa por lista (= tarea madre) por defecto
-if (groupBy === null) groupBy = (SCOPE === 'todo') ? 'phase' : '';
+// El To-Do ahora se agrupa POR ESTADO por defecto (antes era 'phase').
+// Migración única: a quien tenía el default viejo ('phase' o nada) lo pasamos a
+// 'status'; si eligió otra cosa a propósito, se respeta.
+if (SCOPE === 'todo' && localStorage.getItem('todoGroupDefault_v2') !== '1') {
+  localStorage.setItem('todoGroupDefault_v2', '1');
+  if (groupBy === null || groupBy === 'phase') {
+    groupBy = 'status';
+    localStorage.setItem('groupBy_' + SCOPE, groupBy);
+  }
+}
+if (groupBy === null) groupBy = (SCOPE === 'todo') ? 'status' : '';
 function setGroupBy(v) { groupBy = v; localStorage.setItem('groupBy_' + SCOPE, v); renderCurrentView(); }
 document.addEventListener('DOMContentLoaded', () => {
   const sel = document.getElementById('groupBy');
@@ -1293,6 +1312,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
 function groupKey(t) {
   switch (groupBy) {
+    case 'status':   return STATUS_LABELS[t.status || 'pending'] || 'Pendiente';
     case 'phase':    return t.phase || 'Sin lista';
     case 'project':  {
       const p = allProjects.find(x => x.id === t.project_id);
@@ -1332,7 +1352,16 @@ function renderList() {
     // luego los que tienen más pendientes; alfabético como desempate.
     const grpOverdue = k => groups[k].filter(t => t.due_date && t.due_date < today0 && t.status !== 'done').length;
     const grpPending = k => groups[k].filter(t => t.status !== 'done').length;
+    // Estado y prioridad usan un orden lógico fijo; el resto, por urgencia.
+    const fixedOrder = groupBy === 'status' ? STATUS_GROUP_ORDER
+                     : groupBy === 'priority' ? PRIO_GROUP_ORDER : null;
     const keys = Object.keys(groups).sort((a, b) => {
+      if (fixedOrder) {
+        const ia = fixedOrder.indexOf(a), ib = fixedOrder.indexOf(b);
+        const ra = ia < 0 ? 99 : ia, rb = ib < 0 ? 99 : ib;
+        if (ra !== rb) return ra - rb;
+        return a.localeCompare(b);
+      }
       const oa = grpOverdue(a), ob = grpOverdue(b);
       if (oa !== ob) return ob - oa;
       const pa = grpPending(a), pb = grpPending(b);
@@ -1340,6 +1369,7 @@ function renderList() {
       return a.localeCompare(b);
     });
     const groupIcon = {
+      status:   '🗂',
       phase:    '📁',
       project:  '📂',
       account:  '📧',
@@ -1355,10 +1385,21 @@ function renderList() {
       const overdueN= groupTasks.filter(t => t.due_date && t.due_date < today0 && t.status !== 'done').length;
       const rows = collapsed ? '' : groupTasks.map((t,i) => taskRowHtml(t, i)).join('');
       const caret = collapsed ? '▸' : '▾';
-      return `<tr class="group-header" style="background:linear-gradient(to right,#4338ca,#6366f1);color:#fff;cursor:pointer" onclick="toggleGroup('${safeId}')">
+      // Al agrupar por estado, cada cuadro toma el color e ícono de su estado.
+      let hdrBg = 'linear-gradient(to right,#4338ca,#6366f1)';
+      let hdrIcon = groupIcon;
+      if (groupBy === 'status') {
+        const sk = STATUS_KEY_BY_LABEL[k];
+        if (sk) {
+          const c = STATUS_COLS[sk] || '#6366f1';
+          hdrBg = `linear-gradient(to right,${c},${c}cc)`;
+          hdrIcon = STATUS_GROUP_ICON[sk] || groupIcon;
+        }
+      }
+      return `<tr class="group-header" style="background:${hdrBg};color:#fff;cursor:pointer" onclick="toggleGroup('${safeId}')">
         <td colspan="11" style="padding:10px 14px;font-weight:700;font-size:.92rem">
           <span id="${groupId}_caret" style="display:inline-block;width:20px">${caret}</span>
-          ${groupIcon} <strong>${esc(k)}</strong>
+          ${hdrIcon} <strong>${esc(k)}</strong>
           <span class="badge bg-light text-dark ms-2" title="Total" style="font-size:.7rem">${totalN}</span>
           ${pendN ? `<span class="badge bg-warning text-dark ms-1" title="Pendientes" style="font-size:.7rem">⏳ ${pendN}</span>` : ''}
           ${overdueN ? `<span class="badge bg-danger text-white ms-1" title="Vencidas" style="font-size:.7rem">⛔ ${overdueN}</span>` : ''}
