@@ -190,6 +190,29 @@ class SupabaseAPI:
             print(f'[supabase.insert_ignore] {table}: {e}')
             return False
 
+    def insert_on_conflict(self, table, data, on_conflict, timeout=None):
+        """Insert que IGNORA las filas en conflicto con el índice `on_conflict`.
+
+        Evita duplicados a nivel de BD: si una fila choca (mismo source_id), se
+        omite y el resto del lote sí se inserta. Devuelve la lista de filas
+        realmente insertadas, o None si hubo error de red/servidor.
+        """
+        h = {'Prefer': 'resolution=ignore-duplicates,return=representation'}
+        try:
+            r = self._session.post(
+                f'{self.url}/rest/v1/{table}?on_conflict={on_conflict}',
+                headers=h, json=data, timeout=timeout or self._timeout)
+            if r.status_code in (200, 201):
+                body = r.json()
+                return body if isinstance(body, list) else [body]
+            if r.status_code == 204:
+                return []
+            print(f'[supabase.insert_on_conflict] {table}: HTTP {r.status_code} {r.text[:120]}')
+            return None
+        except Exception as e:
+            print(f'[supabase.insert_on_conflict] {table}: {e}')
+            return None
+
     def update(self, table, id_val, data, id_col='id'):
         h = {'Prefer': 'return=minimal'}
         try:
@@ -445,6 +468,43 @@ IMPORT_FLAGGED_EMAILS = False
 IMPORT_COMPLETED      = False
 
 
+def _prefetch_ms_todo_index(app):
+    """Devuelve (dict {source_id: fila}, ok).
+
+    Trae TODAS las tareas ya importadas de Microsoft To-Do para deduplicar. Pagina
+    con cabecera Range y usa un timeout amplio. Si la lectura falla (timeout/error),
+    ok=False: la sincronización DEBE cancelarse, porque un mapa vacío haría que todas
+    las tareas se traten como nuevas y se re-inserten (causa de los duplicados).
+    """
+    sb = app.supabase
+    url = (f"{sb.url}/rest/v1/tasks"
+           f"?select=id,source_id,last_synced_at,progress_pct&source=eq.ms_todo")
+    out = {}
+    step = 1000
+    start = 0
+    while True:
+        headers = {'Range-Unit': 'items', 'Range': f'{start}-{start + step - 1}'}
+        try:
+            r = sb._session.get(url, headers=headers, timeout=(5, 45))
+        except Exception as e:
+            print(f'[todo-sync] prefetch error: {e}')
+            return {}, False
+        if r.status_code not in (200, 206):
+            print(f'[todo-sync] prefetch HTTP {r.status_code}: {r.text[:120]}')
+            return {}, False
+        try:
+            rows = r.json()
+        except Exception:
+            return {}, False
+        for row in rows:
+            if row.get('source_id'):
+                out[row['source_id']] = row
+        if len(rows) < step:      # última página
+            break
+        start += step
+    return out, True
+
+
 def sync_ms_todo(app, accounts, created_by_id, deadline_seconds=90):
     """Sincroniza Microsoft To-Do → Sistema para las cuentas dadas.
 
@@ -474,10 +534,17 @@ def _sync_ms_todo_locked(app, accounts, created_by_id, deadline_seconds=90):
         'defaultList':   '📌 Tareas (default)',
     }
 
-    # Pre-fetch de las tareas ms_todo existentes: source_id -> fila (insertar/actualizar)
-    existing_rows = app.supabase.get('tasks', {'source': 'ms_todo'},
-        select='id,source_id,last_synced_at,progress_pct') or []
-    existing_by_src = {r['source_id']: r for r in existing_rows if r.get('source_id')}
+    # Pre-fetch de las tareas ms_todo existentes: source_id -> fila (insertar/actualizar).
+    # CRÍTICO: si no se puede leer el índice de existentes, se CANCELA la sync para no
+    # duplicar (un mapa vacío re-insertaría todas las tareas como nuevas).
+    existing_by_src, prefetch_ok = _prefetch_ms_todo_index(app)
+    if not prefetch_ok:
+        return {'success': False,
+                'error': ('No se pudo leer las tareas existentes (timeout de BD). '
+                          'Sincronización cancelada para evitar duplicados. '
+                          'Verifica que existan los índices de la tabla tasks.'),
+                'imported': 0, 'updated': 0, 'skipped': 0, 'errors': 0,
+                'detail': [], 'partial': True}
 
     total_imported = 0; total_updated = 0; total_skipped = 0; total_errors = 0
     per_account = []
@@ -603,11 +670,14 @@ def _sync_ms_todo_locked(app, accounts, created_by_id, deadline_seconds=90):
                     batch.append(td)
                     existing_by_src[tid] = {'id': None, 'source_id': tid,
                                             'last_synced_at': sync_iso, 'progress_pct': 0}
-                # BULK INSERT — un solo POST por página
+                # BULK INSERT — un solo POST por página. ON CONFLICT(source_id) ignora
+                # las que ya existan (defensa contra carreras/reintentos): nunca duplica.
                 if batch:
-                    res = app.supabase.insert('tasks', batch)
-                    if res is None: errors += len(batch)
-                    else: imported += len(batch)
+                    res = app.supabase.insert_on_conflict('tasks', batch, 'source_id')
+                    if res is None:
+                        errors += len(batch)
+                    else:
+                        imported += len(res)
                 url = tdata.get('@odata.nextLink')
         per_account.append(
             f'{ms_email}: +{imported} nuevas, {updated} actualizadas, {skipped} sin cambios')
