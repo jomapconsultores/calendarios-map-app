@@ -5,6 +5,21 @@
 
 {% block content %}
 
+<!-- Guía rápida didáctica -->
+<div class="card border-0 shadow-sm mb-3" style="background:linear-gradient(135deg,#eef2ff,#f5f3ff);border-left:4px solid #6366f1 !important">
+  <div class="card-body py-3">
+    <div class="d-flex align-items-center gap-2 mb-1">
+      <span style="font-size:1.25rem">🧭</span>
+      <strong>Guía rápida</strong>
+    </div>
+    <p class="text-muted small mb-0">
+      Los <strong>cuadros de colores</strong> muestran tus tareas por urgencia — haz clic en cualquiera para abrirlas.
+      Más abajo verás tus <strong>próximas citas</strong>. Para moverte entre módulos usa el <strong>menú lateral</strong> (icono ☰ en móvil):
+      <strong>📅 Calendario</strong> para citas, <strong>📋 Planificación</strong> para proyectos y <strong>✅ To-Do</strong> para tus tareas de Microsoft.
+    </p>
+  </div>
+</div>
+
 {% if current_user.role == 'admin' and pending %}
 <h5 class="section-heading">⏳ Solicitudes pendientes <span class="badge bg-warning text-dark">{{pending|length}}</span></h5>
 {% for p in pending %}

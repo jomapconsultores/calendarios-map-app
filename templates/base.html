@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>{% block title %}calendarios-map{% endblock %}</title>
 <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-<link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=5">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=6">
 <!-- PWA -->
 <link rel="manifest" href="/manifest.webmanifest">
 <meta name="theme-color" content="#4f46e5">
@@ -32,83 +32,90 @@
     <nav class="sidebar-nav">
       <div class="nav-section">Principal</div>
 
-      <a href="/dashboard" class="nav-link {{ 'active' if path == '/dashboard' }}">
-        <span class="nav-icon">📊</span> Panel
+      <a href="/dashboard" class="nav-link {{ 'active' if path == '/dashboard' }}" title="Resumen general del sistema">
+        <span class="nav-icon">📊</span>
+        <span class="nav-text"><span class="nav-title">Panel</span><span class="nav-desc">Resumen general</span></span>
       </a>
 
       {% if is_adm or 'calendar' in current_user.modules %}
       <div class="nav-group {{ 'open' if path.startswith('/calendar') }}">
-        <a href="/calendar" class="nav-link {{ 'active' if path == '/calendar' }}" data-toggle-group>
-          <span class="nav-icon">📅</span> Calendario
+        <a href="/calendar" class="nav-link {{ 'active' if path == '/calendar' }}" data-toggle-group title="Agenda de citas y feriados">
+          <span class="nav-icon">📅</span>
+          <span class="nav-text"><span class="nav-title">Calendario</span><span class="nav-desc">Agenda y citas</span></span>
           <span class="nav-caret">▶</span>
         </a>
         <ul class="nav-sub">
-          <li><a href="/calendar">Agenda mensual</a></li>
-          <li><a href="/calendar?action=new">Nueva cita</a></li>
-          <li><a href="/calendar?action=pending">Pendientes</a></li>
+          <li><a href="/calendar">🗓️ Agenda mensual</a></li>
+          <li><a href="/calendar?action=new">➕ Nueva cita</a></li>
+          <li><a href="/calendar?action=pending">⏳ Pendientes</a></li>
         </ul>
       </div>
       {% endif %}
 
       {% if is_adm or 'planning' in current_user.modules %}
       <div class="nav-group {{ 'open' if path.startswith('/planning') }}">
-        <a href="/planning" class="nav-link {{ 'active' if path == '/planning' }}" data-toggle-group>
-          <span class="nav-icon">📋</span> Planificación
+        <a href="/planning" class="nav-link {{ 'active' if path == '/planning' }}" data-toggle-group title="Proyectos y tareas internas del equipo">
+          <span class="nav-icon">📋</span>
+          <span class="nav-text"><span class="nav-title">Planificación</span><span class="nav-desc">Proyectos del equipo</span></span>
           <span class="nav-caret">▶</span>
         </a>
         <ul class="nav-sub">
-          <li><a href="/planning">Mis tareas</a></li>
-          <li><a href="/planning?view=kanban">Tablero Kanban</a></li>
-          <li><a href="/planning?view=gantt">Gantt</a></li>
-          <li><a href="/planning?view=map">Mapa de procesos</a></li>
+          <li><a href="/planning">📝 Mis tareas</a></li>
+          <li><a href="/planning?view=kanban">🗂️ Tablero Kanban</a></li>
+          <li><a href="/planning?view=gantt">📊 Gantt</a></li>
+          <li><a href="/planning?view=map">🗺️ Mapa de procesos</a></li>
         </ul>
       </div>
       {% endif %}
 
       {% if is_adm or 'todo' in current_user.modules %}
       <div class="nav-group {{ 'open' if path.startswith('/todo') }}">
-        <a href="/todo" class="nav-link {{ 'active' if path == '/todo' }}" data-toggle-group>
-          <span class="nav-icon">✅</span> To-Do externo
+        <a href="/todo" class="nav-link {{ 'active' if path == '/todo' }}" data-toggle-group title="Tareas sincronizadas desde Microsoft To-Do">
+          <span class="nav-icon">✅</span>
+          <span class="nav-text"><span class="nav-title">To-Do externo</span><span class="nav-desc">Tareas de Microsoft</span></span>
           <span class="nav-caret">▶</span>
         </a>
         <ul class="nav-sub">
-          <li><a href="/todo">Todas las cuentas</a></li>
-          <li><a href="/todo?view=kanban">Tablero Kanban</a></li>
+          <li><a href="/todo">📋 Todas las cuentas</a></li>
+          <li><a href="/todo?view=kanban">🗂️ Tablero Kanban</a></li>
         </ul>
       </div>
       {% endif %}
 
-      <a href="/profile" class="nav-link {{ 'active' if path == '/profile' }}">
-        <span class="nav-icon">👤</span> Mi perfil
+      <a href="/profile" class="nav-link {{ 'active' if path == '/profile' }}" title="Tu cuenta, contraseña y accesos">
+        <span class="nav-icon">👤</span>
+        <span class="nav-text"><span class="nav-title">Mi perfil</span><span class="nav-desc">Cuenta y seguridad</span></span>
       </a>
 
       {% if is_adm %}
       <div class="nav-section">Administración</div>
 
       <div class="nav-group {{ 'open' if path.startswith('/admin/users') }}">
-        <a href="/admin/users" class="nav-link {{ 'active' if path == '/admin/users' }}" data-toggle-group>
-          <span class="nav-icon">👥</span> Usuarios
+        <a href="/admin/users" class="nav-link {{ 'active' if path == '/admin/users' }}" data-toggle-group title="Gestión de usuarios y permisos">
+          <span class="nav-icon">👥</span>
+          <span class="nav-text"><span class="nav-title">Usuarios</span><span class="nav-desc">Altas y permisos</span></span>
           <span class="nav-caret">▶</span>
         </a>
         <ul class="nav-sub">
-          <li><a href="/admin/users#registrados">Registrados</a></li>
-          <li><a href="/admin/users#pending">Solicitudes</a></li>
+          <li><a href="/admin/users#registrados">👤 Registrados</a></li>
+          <li><a href="/admin/users#pending">📨 Solicitudes</a></li>
         </ul>
       </div>
 
       <div class="nav-group {{ 'open' if path.startswith('/admin/database') }}">
-        <a href="/admin/database" class="nav-link {{ 'active' if path == '/admin/database' }}" data-toggle-group>
-          <span class="nav-icon">🗄️</span> Base de datos
+        <a href="/admin/database" class="nav-link {{ 'active' if path == '/admin/database' }}" data-toggle-group title="Catálogos y datos maestros del sistema">
+          <span class="nav-icon">🗄️</span>
+          <span class="nav-text"><span class="nav-title">Base de datos</span><span class="nav-desc">Catálogos del sistema</span></span>
           <span class="nav-caret">▶</span>
         </a>
         <ul class="nav-sub">
-          <li><a href="/admin/database#sec-ciudades">Ciudades</a></li>
-          <li><a href="/admin/database#sec-titles">Títulos</a></li>
-          <li><a href="/admin/database#sec-encargados">Encargados</a></li>
-          <li><a href="/admin/database#sec-clients">Clientes</a></li>
-          <li><a href="/admin/database#sec-appointments">Citas</a></li>
-          <li><a href="/admin/database#sec-calendars">Calendarios</a></li>
-          <li><a href="/admin/database#sec-users">Usuarios</a></li>
+          <li><a href="/admin/database#sec-ciudades">🏙️ Ciudades</a></li>
+          <li><a href="/admin/database#sec-titles">🏷️ Títulos</a></li>
+          <li><a href="/admin/database#sec-encargados">🧑‍💼 Encargados</a></li>
+          <li><a href="/admin/database#sec-clients">🤝 Clientes</a></li>
+          <li><a href="/admin/database#sec-appointments">📅 Citas</a></li>
+          <li><a href="/admin/database#sec-calendars">🗓️ Calendarios</a></li>
+          <li><a href="/admin/database#sec-users">👥 Usuarios</a></li>
         </ul>
       </div>
       {% endif %}
@@ -116,18 +123,21 @@
       {% if is_adm %}
       <div class="nav-section">Integraciones</div>
       {% if google_connected_global %}
-      <a class="nav-link" style="cursor:default">
-        <span class="nav-icon">🔗</span> Google Calendar
+      <a class="nav-link" style="cursor:default" title="Google Calendar está conectado">
+        <span class="nav-icon">🔗</span>
+        <span class="nav-text"><span class="nav-title">Google Calendar</span><span class="nav-desc">Sincroniza tus citas</span></span>
         <span class="nav-pill" style="background:#dcfce7;color:#166534">Conectado</span>
       </a>
       {% else %}
-      <a href="/auth/google" class="nav-link">
-        <span class="nav-icon">🔗</span> Google Calendar
+      <a href="/auth/google" class="nav-link" title="Conectar Google Calendar para sincronizar citas">
+        <span class="nav-icon">🔗</span>
+        <span class="nav-text"><span class="nav-title">Google Calendar</span><span class="nav-desc">Sincroniza tus citas</span></span>
         <span class="nav-pill" style="background:#fee2e2;color:#991b1b">Conectar</span>
       </a>
       {% endif %}
       <a href="/auth/microsoft" class="nav-link" title="Conectar Microsoft To-Do para importar tareas">
-        <span class="nav-icon">📋</span> Microsoft To-Do
+        <span class="nav-icon">📋</span>
+        <span class="nav-text"><span class="nav-title">Microsoft To-Do</span><span class="nav-desc">Importa tus tareas</span></span>
         <span class="nav-pill" style="background:#dbeafe;color:#1e40af">Conectar</span>
       </a>
       {% endif %}
