@@ -2,7 +2,6 @@
       "relation": ["delegate_permission/common.handle_all_urls"],
       "target": {
         "namespace": "android_app",
-        "package_name": "com.onrender.calendarios_map.twa",
         "sha256_cert_fingerprints": ["01:29:30:54:08:C0:AA:6E:F7:2C:9C:1F:DF:C1:AF:BB:D6:92:54:0E:67:3E:78:B5:F8:2B:60:EE:72:B7:C7:73"]
       }
     }]
