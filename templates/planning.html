@@ -1490,7 +1490,7 @@ function taskRowHtml(t, i) {
       <td><span class="badge-status bs-${t.status||'pending'}">${STATUS_LABELS[t.status||'pending']}</span></td>
       <td onclick="event.stopPropagation()">
         <button class="btn-xs btn-xs-edit" onclick="openTask('${t.id}')">✏️</button>
-        <button class="btn-xs btn-xs-del" onclick="confirmDelete('${t.id}','${esc(t.title).replace(/'/g,"\\'")}')">🗑</button>
+        <button class="btn-xs btn-xs-del" onclick="confirmDelete('${t.id}','${esc(String(t.title||'').replace(/\\/g,'\\\\').replace(/'/g,"\\'"))}')">🗑</button>
       </td>
     </tr>`;
 }
@@ -1894,15 +1894,14 @@ function removeSubtask(idx) {
 //  DEPENDENCIAS
 // ——————————————————————————————————————————
 let currentDeps = [];   // [{id: dep_row_id, depends_on: task_id}]
+let removedDepIds = []; // ids de task_deps quitados en el modal, pendientes de borrar al guardar
 
 async function loadDeps(taskId) {
+  removedDepIds = [];
   if (!taskId) { currentDeps = []; renderDepsList(); return; }
   try {
-    const ids = await fetch(`/planning/api/deps/${taskId}`).then(r=>r.json());
-    // El endpoint actual devuelve solo array de depends_on. Para borrar necesitamos el id real.
-    // Hacemos una segunda consulta: traemos rows raw filtradas vía Supabase API directa NO -> usamos fetch al backend
-    // Pero como el row id no se expone, usamos una estrategia: borrar = re-insertar el resto.
-    currentDeps = (ids || []).map(x => ({ depends_on: x }));
+    const rows = await fetch(`/planning/api/deps/${taskId}`).then(r=>r.json());
+    currentDeps = (rows || []).map(x => ({ id: x.id, depends_on: x.depends_on }));
   } catch(e) { currentDeps = []; }
   renderDepsList();
 }
@@ -1947,21 +1946,25 @@ function addDep(taskId) {
 }
 
 function removeDep(taskId) {
+  const removed = currentDeps.find(d => d.depends_on === taskId);
+  if (removed && removed.id) removedDepIds.push(removed.id);
   currentDeps = currentDeps.filter(d => d.depends_on !== taskId);
   renderDepsList();
 }
 
 async function saveDeps(taskId) {
-  // Estrategia simple: traer estado actual del servidor, calcular diff e insertar lo nuevo.
-  // Para borrar, necesitaríamos IDs. Por ahora solo permitimos AGREGAR; el borrado se hace solo en memoria
-  // y se reflejará la próxima vez. Mejoramos endpoint para borrar.
   try {
+    for (const depId of removedDepIds) {
+      await fetch(`/planning/api/deps/${depId}`, { method: 'DELETE' });
+    }
     for (const d of currentDeps) {
+      if (d.id) continue; // ya existía en el backend, no hay que recrearla
       await fetch('/planning/api/deps', {
         method:'POST', headers:{'Content-Type':'application/json'},
         body: JSON.stringify({task_id: taskId, depends_on: d.depends_on})
       });
     }
+    removedDepIds = [];
   } catch(e) {}
 }
 
@@ -2126,7 +2129,7 @@ function showPhaseSuggestions(v) {
   const filtered = v ? phases.filter(p => p.toLowerCase().includes(v.toLowerCase())) : phases;
   if (!filtered.length || !v) { sug.style.display = 'none'; return; }
   sug.innerHTML = filtered.slice(0,8).map(p =>
-    `<div class="phase-sug-item" onclick="document.getElementById('mPhase').value='${p.replace(/'/g,"\\'")}';document.getElementById('phaseSug').style.display='none'">${p}</div>`
+    `<div class="phase-sug-item" onclick="document.getElementById('mPhase').value='${esc(String(p||'').replace(/\\/g,'\\\\').replace(/'/g,"\\'"))}';document.getElementById('phaseSug').style.display='none'">${esc(p)}</div>`
   ).join('');
   sug.style.display = '';
 }

@@ -4,7 +4,7 @@ load_dotenv()
 
 class Config:
     APP_NAME = 'calendarios-map'
-    SECRET_KEY = os.getenv('SECRET_KEY', 'dev-key-2024')
+    SECRET_KEY = os.getenv('SECRET_KEY')
     SUPABASE_URL = os.getenv('SUPABASE_URL', '')
     SUPABASE_KEY = os.getenv('SUPABASE_KEY', '')
     GOOGLE_CLIENT_ID = os.getenv('GOOGLE_CLIENT_ID', '')

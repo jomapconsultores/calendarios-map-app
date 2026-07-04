@@ -9,6 +9,8 @@ services:
     envVars:
       - key: FLASK_ENV
         value: production
+      - key: SECRET_KEY
+        generateValue: true
       - key: SUPABASE_URL
         value: https://lqdpirsfzodmbeyoivww.supabase.co
       - key: PYTHON_VERSION

@@ -180,6 +180,9 @@ document.addEventListener('DOMContentLoaded', refreshPushStatus);
 {% if webauthn_available %}
 <script src="{{ url_for('static', filename='js/webauthn.js') }}"></script>
 <script>
+function esc(s) {
+  return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
 async function waLoadList(){
   var box = document.getElementById('waList');
   try {
@@ -187,7 +190,7 @@ async function waLoadList(){
     if(!rows.length){ box.innerHTML = 'No tienes dispositivos registrados todavía.'; return; }
     box.innerHTML = rows.map(function(r){
       return '<div class="d-flex justify-content-between align-items-center border-top py-2">'
-        + '<div><strong>'+(r.nombre||'Dispositivo')+'</strong><br>'
+        + '<div><strong>'+esc(r.nombre||'Dispositivo')+'</strong><br>'
         + '<span class="text-muted">Creado '+bioFmt(r.created_at)+' · Último uso '+bioFmt(r.last_used_at)+'</span></div>'
         + '<button class="btn btn-sm btn-outline-danger rounded-pill" onclick="waDelete(\''+r.id+'\')">Quitar</button>'
         + '</div>';
@@ -213,7 +216,7 @@ async function faceLoadList(){
     if(!rows.length){ box.innerHTML = 'No tienes rostros registrados todavía.'; return; }
     box.innerHTML = rows.map(function(r){
       return '<div class="d-flex justify-content-between align-items-center border-top py-2">'
-        + '<div><strong>'+(r.nombre||'Rostro')+'</strong><br>'
+        + '<div><strong>'+esc(r.nombre||'Rostro')+'</strong><br>'
         + '<span class="text-muted">Registrado '+bioFmt(r.created_at)+'</span></div>'
         + '<button class="btn btn-sm btn-outline-danger rounded-pill" onclick="faceDelete(\''+r.id+'\')">Quitar</button>'
         + '</div>';

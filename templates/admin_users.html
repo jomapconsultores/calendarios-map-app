@@ -45,6 +45,7 @@
 <div class="modal fade" id="edit{{u.id}}" tabindex="-1"><div class="modal-dialog modal-lg"><div class="modal-content border-0 shadow">
   <div class="modal-header"><h5 class="modal-title text-white">✏️ Editar: {{u.full_name}}</h5><button class="btn-close btn-close-white" data-bs-dismiss="modal"></button></div>
   <div class="modal-body"><form method="POST" action="/admin/user/update/{{u.id}}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <div class="row mb-3">
       <div class="col-md-6"><label class="form-label">Nombre</label><input name="full_name" class="form-control" value="{{u.full_name}}"></div>
       <div class="col-md-6"><label class="form-label">Email</label><input name="email" type="email" class="form-control" value="{{u.email}}"></div>
@@ -128,11 +129,12 @@
 
 {% block scripts %}
 <script>
-function appAll(uid){fetch('/admin/approve-all/'+uid,{method:'POST'}).then(r=>r.json()).then(d=>{if(d.success)location.reload()})}
-function rejAll(uid){fetch('/admin/reject-all/'+uid,{method:'POST'}).then(r=>r.json()).then(d=>{if(d.success)location.reload()})}
+const CSRF_TOKEN = document.querySelector('meta[name="csrf-token"]').content;
+function appAll(uid){fetch('/admin/approve-all/'+uid,{method:'POST',headers:{'X-CSRFToken':CSRF_TOKEN}}).then(r=>r.json()).then(d=>{if(d.success)location.reload()})}
+function rejAll(uid){fetch('/admin/reject-all/'+uid,{method:'POST',headers:{'X-CSRFToken':CSRF_TOKEN}}).then(r=>r.json()).then(d=>{if(d.success)location.reload()})}
 function delUser(uid){
   if(!confirm('¿Eliminar este usuario? Esta acción no se puede deshacer.')) return;
-  fetch('/admin/user/delete/'+uid,{method:'POST'})
+  fetch('/admin/user/delete/'+uid,{method:'POST',headers:{'X-CSRFToken':CSRF_TOKEN}})
     .then(r=>r.json())
     .then(d=>{ if(d.success){ location.reload(); } else{ alert('❌ '+(d.error||'No se pudo eliminar')); } })
     .catch(()=>alert('❌ Error de conexión'));

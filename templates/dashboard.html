@@ -228,9 +228,10 @@
 
 {% block scripts %}
 <script>
-function appOne(pid){fetch('/admin/approve-one/'+pid,{method:'POST'}).then(r=>r.json()).then(d=>{if(d.success)location.reload()})}
-function rejOne(pid){fetch('/admin/reject-one/'+pid,{method:'POST'}).then(r=>r.json()).then(d=>{if(d.success)location.reload()})}
-function appAll(uid){fetch('/admin/approve-all/'+uid,{method:'POST'}).then(r=>r.json()).then(d=>{if(d.success)location.reload()})}
-function rejAll(uid){fetch('/admin/reject-all/'+uid,{method:'POST'}).then(r=>r.json()).then(d=>{if(d.success)location.reload()})}
+const CSRF_TOKEN = document.querySelector('meta[name="csrf-token"]').content;
+function appOne(pid){fetch('/admin/approve-one/'+pid,{method:'POST',headers:{'X-CSRFToken':CSRF_TOKEN}}).then(r=>r.json()).then(d=>{if(d.success)location.reload()})}
+function rejOne(pid){fetch('/admin/reject-one/'+pid,{method:'POST',headers:{'X-CSRFToken':CSRF_TOKEN}}).then(r=>r.json()).then(d=>{if(d.success)location.reload()})}
+function appAll(uid){fetch('/admin/approve-all/'+uid,{method:'POST',headers:{'X-CSRFToken':CSRF_TOKEN}}).then(r=>r.json()).then(d=>{if(d.success)location.reload()})}
+function rejAll(uid){fetch('/admin/reject-all/'+uid,{method:'POST',headers:{'X-CSRFToken':CSRF_TOKEN}}).then(r=>r.json()).then(d=>{if(d.success)location.reload()})}
 </script>
 {% endblock %}

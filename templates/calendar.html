@@ -584,8 +584,8 @@ function setupAutocomplete(inpId, sugId, url, defs) {
     let v = this.value.toUpperCase();
     if (v.length < 1) { sug.style.display = 'none'; return; }
     let matches = opts.filter(o => o.toUpperCase().includes(v));
-    sug.innerHTML = matches.slice(0, 6).map(m => `<div class="sug-item">${m}</div>`).join('');
-    if (v && !opts.includes(v)) sug.innerHTML += `<div class="sug-item sug-new">➕ Crear "${v}"</div>`;
+    sug.innerHTML = matches.slice(0, 6).map(m => `<div class="sug-item">${esc(m)}</div>`).join('');
+    if (v && !opts.includes(v)) sug.innerHTML += `<div class="sug-item sug-new">➕ Crear "${esc(v)}"</div>`;
     sug.style.display = 'block';
     sug.querySelectorAll('.sug-item').forEach(i => i.addEventListener('mousedown', function (e) {
       e.preventDefault();
@@ -604,8 +604,8 @@ function setupClientAC() {
     let v = this.value.toUpperCase();
     if (v.length < 1) { sug.style.display = 'none'; return; }
     let matches = clientsData.filter(c => c.name.toUpperCase().includes(v));
-    sug.innerHTML = matches.slice(0, 6).map(c => `<div class="sug-item" data-email="${c.email || ''}">${c.name}</div>`).join('');
-    if (v) sug.innerHTML += `<div class="sug-item sug-new">➕ "${v}"</div><div class="sug-item sug-new">📝 Crear completo...</div>`;
+    sug.innerHTML = matches.slice(0, 6).map(c => `<div class="sug-item" data-email="${esc(c.email || '')}">${esc(c.name)}</div>`).join('');
+    if (v) sug.innerHTML += `<div class="sug-item sug-new">➕ "${esc(v)}"</div><div class="sug-item sug-new">📝 Crear completo...</div>`;
     sug.style.display = 'block';
     sug.querySelectorAll('.sug-item').forEach(i => i.addEventListener('mousedown', function (e) {
       e.preventDefault();
@@ -939,6 +939,10 @@ function saveBooking() {
     .catch(() => { btn.disabled = false; btn.textContent = '✅ GUARDAR'; alert('❌ Error de conexión'); });
 }
 
+function esc(s) {
+  return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
 // ======== ACCIONES ========
 function deleteAppt() {
   if (!editId) return;
@@ -971,8 +975,8 @@ function loadPending() {
     } else {
       d.forEach(i => {
         h += `<div class="pend-item">
-          <strong>${i.is_recurring ? '🔁 ' : ''}${i.title}</strong>
-          <div class="pend-meta">👤 ${i.encargado || ''} · ${i.date} ${i.time}</div>
+          <strong>${i.is_recurring ? '🔁 ' : ''}${esc(i.title)}</strong>
+          <div class="pend-meta">👤 ${esc(i.encargado || '')} · ${esc(i.date)} ${esc(i.time)}</div>
           <div class="pend-actions mt-1">
             <button class="btn btn-success btn-sm" onclick="apr('${i.id}')">✓ Aprobar</button>
             <button class="btn btn-danger btn-sm" onclick="rej('${i.id}')">✕ Rechazar</button>

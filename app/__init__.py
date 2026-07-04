@@ -1,5 +1,10 @@
 from flask import Flask, render_template, request, redirect, url_for, flash, session, jsonify, send_from_directory, send_file
 from flask_login import LoginManager, login_user, logout_user, login_required, current_user, UserMixin
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
+from flask_wtf.csrf import generate_csrf, validate_csrf
+from wtforms.validators import ValidationError
+from functools import wraps
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.middleware.proxy_fix import ProxyFix
 from config.config import Config
@@ -10,8 +15,8 @@ import google.auth.exceptions
 from googleapiclient.discovery import build
 from datetime import datetime, timedelta, timezone, date
 from collections import defaultdict, OrderedDict
-import os, requests as req_lib, traceback, pytz, json, re, time, calendar as _cal, io, threading, tempfile
-from urllib.parse import quote as _url_quote
+import os, requests as req_lib, traceback, pytz, json, re, time, calendar as _cal, io, threading, tempfile, secrets
+from urllib.parse import quote as _url_quote, urlparse as _urlparse
 
 # Web push (opcional: si la librería no está disponible la app sigue funcionando)
 try:
@@ -62,10 +67,11 @@ load_dotenv()
 os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
 TIMEZONE = pytz.timezone('America/Guayaquil')
 login_manager = LoginManager()
+limiter = Limiter(key_func=get_remote_address, default_limits=[])
 
 
 # ============================================================
-#  TTL CACHE — in-process, thread-safe via GIL for CPython
+#  TTL CACHE — in-process, protegido con lock para uso multi-hilo
 # ============================================================
 class TTLCache:
     """Lightweight TTL cache with LRU eviction."""
@@ -74,34 +80,39 @@ class TTLCache:
         self._ts = {}
         self.ttl = ttl
         self.maxsize = maxsize
+        self._lock = threading.Lock()
 
     def get(self, key):
-        if key in self._data:
-            if time.monotonic() - self._ts[key] < self.ttl:
-                self._data.move_to_end(key)
-                return self._data[key], True
-            self._evict(key)
-        return None, False
+        with self._lock:
+            if key in self._data:
+                if time.monotonic() - self._ts[key] < self.ttl:
+                    self._data.move_to_end(key)
+                    return self._data[key], True
+                self._evict(key)
+            return None, False
 
     def set(self, key, value):
-        if key in self._data:
-            self._data.move_to_end(key)
-        self._data[key] = value
-        self._ts[key] = time.monotonic()
-        if len(self._data) > self.maxsize:
-            oldest = next(iter(self._data))
-            self._evict(oldest)
+        with self._lock:
+            if key in self._data:
+                self._data.move_to_end(key)
+            self._data[key] = value
+            self._ts[key] = time.monotonic()
+            if len(self._data) > self.maxsize:
+                oldest = next(iter(self._data))
+                self._evict(oldest)
 
     def _evict(self, key):
         self._data.pop(key, None)
         self._ts.pop(key, None)
 
     def invalidate(self, key):
-        self._evict(key)
+        with self._lock:
+            self._evict(key)
 
     def invalidate_prefix(self, prefix):
-        for k in [k for k in self._data if k.startswith(prefix)]:
-            self._evict(k)
+        with self._lock:
+            for k in [k for k in self._data if k.startswith(prefix)]:
+                self._evict(k)
 
 # Module-level caches (shared across requests in same worker)
 _cal_cache      = TTLCache(ttl=300)   # calendar_config — 5 min
@@ -150,7 +161,10 @@ class SupabaseAPI:
                 q += f'&{k}=eq.{v}'
         try:
             r = self._session.get(q, timeout=self._timeout)
-            return r.json() if r.status_code == 200 else []
+            if r.status_code == 200:
+                return r.json()
+            print(f'[supabase.get] {table}: HTTP {r.status_code} {r.text[:120]}')
+            return []
         except Exception as e:
             print(f'[supabase.get] {table}: {e}')
             return []
@@ -163,7 +177,10 @@ class SupabaseAPI:
         q = f'{self.url}/rest/v1/{table}?select={select}&{column}=in.({ids})'
         try:
             r = self._session.get(q, timeout=self._timeout)
-            return r.json() if r.status_code == 200 else []
+            if r.status_code == 200:
+                return r.json()
+            print(f'[supabase.get_in] {table}: HTTP {r.status_code} {r.text[:120]}')
+            return []
         except Exception as e:
             print(f'[supabase.get_in] {table}: {e}')
             return []
@@ -175,6 +192,7 @@ class SupabaseAPI:
             if r.status_code in [200, 201]:
                 body = r.json()
                 return body if isinstance(body, list) else [body]
+            print(f'[supabase.insert] {table}: HTTP {r.status_code} {r.text[:120]}')
             return None
         except Exception as e:
             print(f'[supabase.insert] {table}: {e}')
@@ -185,7 +203,10 @@ class SupabaseAPI:
         h = {'Prefer': 'resolution=ignore-duplicates,return=minimal'}
         try:
             r = self._session.post(f'{self.url}/rest/v1/{table}', headers=h, json=data, timeout=self._timeout)
-            return r.status_code in [200, 201, 204]
+            if r.status_code in [200, 201, 204]:
+                return True
+            print(f'[supabase.insert_ignore] {table}: HTTP {r.status_code} {r.text[:120]}')
+            return False
         except Exception as e:
             print(f'[supabase.insert_ignore] {table}: {e}')
             return False
@@ -219,7 +240,10 @@ class SupabaseAPI:
             r = self._session.patch(
                 f'{self.url}/rest/v1/{table}?{id_col}=eq.{id_val}',
                 headers=h, json=data, timeout=self._timeout)
-            return r.status_code in [200, 204]
+            if r.status_code in [200, 204]:
+                return True
+            print(f'[supabase.update] {table}: HTTP {r.status_code} {r.text[:120]}')
+            return False
         except Exception as e:
             print(f'[supabase.update] {table}: {e}')
             return False
@@ -230,10 +254,32 @@ class SupabaseAPI:
             r = self._session.delete(
                 f'{self.url}/rest/v1/{table}?{id_col}=eq.{id_val}',
                 headers=h, timeout=self._timeout)
-            return r.status_code in [200, 204]
+            if r.status_code in [200, 204]:
+                return True
+            print(f'[supabase.delete] {table}: HTTP {r.status_code} {r.text[:120]}')
+            return False
         except Exception as e:
             print(f'[supabase.delete] {table}: {e}')
             return False
+
+    def update_where(self, table, filters, data):
+        """PATCH condicional: solo aplica si TODAS las filas coinciden con `filters`
+        (ej. {'id': aid, 'status': 'pending'}). Devuelve las filas actualizadas
+        (lista vacía si ninguna coincidía, útil para evitar TOCTOU al 'reclamar' una fila)."""
+        q = f'{self.url}/rest/v1/{table}?' + '&'.join(f'{k}=eq.{v}' for k, v in filters.items())
+        h = {'Prefer': 'return=representation'}
+        try:
+            r = self._session.patch(q, headers=h, json=data, timeout=self._timeout)
+            if r.status_code in (200, 201):
+                body = r.json()
+                return body if isinstance(body, list) else [body]
+            if r.status_code == 204:
+                return []
+            print(f'[supabase.update_where] {table}: HTTP {r.status_code} {r.text[:120]}')
+            return []
+        except Exception as e:
+            print(f'[supabase.update_where] {table}: {e}')
+            return []
 
     def get_q(self, table, query_params=None, select='*'):
         """Query with raw PostgREST filter params, e.g. {'status': 'eq.done'}."""
@@ -242,7 +288,10 @@ class SupabaseAPI:
             q += f'&{k}={v}'
         try:
             r = self._session.get(q, timeout=self._timeout)
-            return r.json() if r.status_code == 200 else []
+            if r.status_code == 200:
+                return r.json()
+            print(f'[supabase.get_q] {table}: HTTP {r.status_code} {r.text[:120]}')
+            return []
         except Exception as e:
             print(f'[supabase.get_q] {table}: {e}')
             return []
@@ -260,6 +309,31 @@ def _sanitize(s, max_len=255):
 
 def _validate_email(email):
     return bool(re.match(r'^[^@\s]+@[^@\s]+\.[^@\s]+$', email or ''))
+
+def _xlsx_safe(v):
+    """Neutraliza inyección de fórmulas: si un valor de texto controlado por el
+    usuario empieza con =, +, -, @ (o tab/CR), Excel podría interpretarlo como
+    fórmula al abrir el archivo exportado. Se le antepone una comilla simple
+    para forzar que se trate como texto literal."""
+    if isinstance(v, str) and v[:1] in ('=', '+', '-', '@', '\t', '\r'):
+        return "'" + v
+    return v
+
+def _sanitize_hex_color(color, default='#4f46e5'):
+    """Los colores de proyecto se insertan sin escapar en atributos style en planning.html;
+    forzar que sean siempre un hex #rrggbb evita inyección de CSS/atributos."""
+    if isinstance(color, str) and re.match(r'^#[0-9a-fA-F]{6}$', color):
+        return color
+    return default
+
+def _safe_next_path(target, default='/dashboard'):
+    """Solo permite redirigir a una ruta local propia (evita open redirect)."""
+    if not target:
+        return default
+    parsed = _urlparse(target)
+    if parsed.scheme or parsed.netloc or not target.startswith('/') or target.startswith('//'):
+        return default
+    return target
 
 
 # ============================================================
@@ -308,29 +382,51 @@ def _build_google_event(apt, attendees):
 # ============================================================
 #  MICROSOFT TOKEN HELPER
 # ============================================================
+_ms_token_locks = {}
+_ms_token_locks_guard = threading.Lock()
+
+def _get_ms_token_lock(token_id):
+    with _ms_token_locks_guard:
+        lock = _ms_token_locks.get(token_id)
+        if lock is None:
+            lock = threading.Lock()
+            _ms_token_locks[token_id] = lock
+        return lock
+
 def _refresh_ms_token(app, t):
-    """Refresh a single MS token row. Returns new access_token or None."""
-    try:
-        r = req_lib.post(MS_TOKEN_URL, data={
-            'client_id':     app.config.get('MS_CLIENT_ID', ''),
-            'client_secret': app.config.get('MS_CLIENT_SECRET', ''),
-            'grant_type':    'refresh_token',
-            'refresh_token': t.get('refresh_token', ''),
-            'scope': MS_SCOPES,
-        }, timeout=(5, 15))
-        if r.status_code != 200:
+    """Refresh a single MS token row. Returns new access_token or None.
+
+    Serializado por fila (id) para que dos hilos no renueven el mismo
+    refresh_token en paralelo y se pisen entre sí (MS puede rotarlo en cada uso).
+    """
+    lock = _get_ms_token_lock(t['id'])
+    with lock:
+        # Otro hilo pudo haber refrescado esta misma fila mientras esperábamos el lock.
+        current = app.supabase.get('ms_tokens', {'id': t['id']}, select='*')
+        if current and current[0].get('access_token') != t.get('access_token'):
+            return current[0].get('access_token')
+        refresh_token = (current[0].get('refresh_token') if current else None) or t.get('refresh_token', '')
+        try:
+            r = req_lib.post(MS_TOKEN_URL, data={
+                'client_id':     app.config.get('MS_CLIENT_ID', ''),
+                'client_secret': app.config.get('MS_CLIENT_SECRET', ''),
+                'grant_type':    'refresh_token',
+                'refresh_token': refresh_token,
+                'scope': MS_SCOPES,
+            }, timeout=(5, 15))
+            if r.status_code != 200:
+                return None
+            d = r.json()
+            new_exp = (datetime.now(timezone.utc)
+                       + timedelta(seconds=d.get('expires_in', 3600))).isoformat()
+            app.supabase.update('ms_tokens', t['id'], {
+                'access_token':  d['access_token'],
+                'refresh_token': d.get('refresh_token', refresh_token),
+                'expires_at':    new_exp,
+            })
+            return d['access_token']
+        except Exception:
             return None
-        d = r.json()
-        new_exp = (datetime.now(timezone.utc)
-                   + timedelta(seconds=d.get('expires_in', 3600))).isoformat()
-        app.supabase.update('ms_tokens', t['id'], {
-            'access_token':  d['access_token'],
-            'refresh_token': d.get('refresh_token', t['refresh_token']),
-            'expires_at':    new_exp,
-        })
-        return d['access_token']
-    except Exception:
-        return None
 
 
 def get_ms_token(app):
@@ -558,6 +654,7 @@ def _sync_ms_todo_locked(app, accounts, created_by_id, deadline_seconds=90):
             continue
         headers = {'Authorization': f'Bearer {token}', 'Accept': 'application/json'}
         imported = 0; updated = 0; skipped = 0; errors = 0
+        page_error = False
         r = req_lib.get(f'{MS_GRAPH_URL}/me/todo/lists', headers=headers, timeout=(8,20))
         if r.status_code == 401:
             per_account.append(f'{ms_email}: token expirado, reconecta'); continue
@@ -578,7 +675,12 @@ def _sync_ms_todo_locked(app, accounts, created_by_id, deadline_seconds=90):
             while url:
                 if _time.monotonic() > DEADLINE: partial = True; break
                 tr = req_lib.get(url, headers=headers, timeout=(10,20))
-                if tr.status_code != 200: break
+                if tr.status_code != 200:
+                    print(f'[todo-sync] {ms_email}/{list_title}: error HTTP {tr.status_code} paginando tareas')
+                    page_error = True
+                    partial = True
+                    errors += 1
+                    break
                 tdata = tr.json()
                 batch = []
                 for task in tdata.get('value', []):
@@ -678,9 +780,18 @@ def _sync_ms_todo_locked(app, accounts, created_by_id, deadline_seconds=90):
                         errors += len(batch)
                     else:
                         imported += len(res)
+                        # Backfill del id real: si el mismo source_id reaparece más
+                        # adelante en esta misma corrida, la rama de "existing" de
+                        # arriba necesita el id real (no None) para poder actualizarlo.
+                        for row in res:
+                            src = row.get('source_id')
+                            if src and src in existing_by_src:
+                                existing_by_src[src]['id'] = row.get('id')
                 url = tdata.get('@odata.nextLink')
-        per_account.append(
-            f'{ms_email}: +{imported} nuevas, {updated} actualizadas, {skipped} sin cambios')
+        summary = f'{ms_email}: +{imported} nuevas, {updated} actualizadas, {skipped} sin cambios'
+        if page_error:
+            summary += ' (incompleto: error de red/API a mitad de paginación, reintenta)'
+        per_account.append(summary)
         total_imported += imported; total_updated += updated
         total_skipped  += skipped;  total_errors  += errors
 
@@ -791,20 +902,30 @@ def _save_token_fields(app, token_id, creds):
         app.supabase.update('google_tokens', token_id, {'token': creds.token, 'refresh_token': creds.refresh_token})
 
 def save_google_creds(app, creds):
+    """Update-si-existe / insert-si-no, para no dejar la cuenta sin token si el
+    guardado falla a mitad de camino (antes se borraba la fila antes de insertar)."""
+    existing = app.supabase.get('google_tokens', {'email': GOOGLE_ACCOUNT_EMAIL})
     refresh_token = creds.refresh_token
-    if not refresh_token:
-        prev = app.supabase.get('google_tokens', {'email': GOOGLE_ACCOUNT_EMAIL})
-        if prev and prev[0].get('refresh_token'):
-            refresh_token = prev[0]['refresh_token']
-    app.supabase.delete('google_tokens', GOOGLE_ACCOUNT_EMAIL, 'email')
+    if not refresh_token and existing and existing[0].get('refresh_token'):
+        refresh_token = existing[0]['refresh_token']
     data = {'email': GOOGLE_ACCOUNT_EMAIL, 'token': creds.token, 'refresh_token': refresh_token}
     if creds.expiry:
         data['token_expiry'] = creds.expiry.isoformat()
-    result = app.supabase.insert('google_tokens', data)
-    if not result and creds.expiry:
-        del data['token_expiry']
-        app.supabase.insert('google_tokens', data)
+    if existing:
+        ok = app.supabase.update('google_tokens', existing[0]['id'], data)
+        if not ok and creds.expiry:
+            data.pop('token_expiry', None)
+            ok = app.supabase.update('google_tokens', existing[0]['id'], data)
+    else:
+        result = app.supabase.insert('google_tokens', data)
+        if not result and creds.expiry:
+            data.pop('token_expiry', None)
+            result = app.supabase.insert('google_tokens', data)
+        ok = bool(result)
+    if not ok:
+        print(f'[save_google_creds] fallo al guardar credenciales de Google para {GOOGLE_ACCOUNT_EMAIL}')
     _google_cache.invalidate_prefix('google_status_')  # bust cache on reconnect
+    return ok
 
 
 # ============================================================
@@ -871,10 +992,71 @@ def user_has_calendar_access(app, uid, calendar_id):
 def is_admin():
     return current_user.is_authenticated and current_user.role == 'admin'
 
+def csrf_protect(view):
+    """Exige un csrf_token válido (form field o header X-CSRFToken) en rutas
+    admin sensibles. No se aplica globalmente porque el resto de la app usa
+    fetch()/JSON sin token."""
+    @wraps(view)
+    def wrapped(*args, **kwargs):
+        token = request.form.get('csrf_token') or request.headers.get('X-CSRFToken')
+        try:
+            validate_csrf(token)
+        except ValidationError:
+            if request.is_json or request.headers.get('X-CSRFToken') is not None:
+                return jsonify({'success': False, 'error': 'Sesión de seguridad expirada, recarga la página.'}), 400
+            flash('La sesión de seguridad expiró o la solicitud no es válida. Intenta de nuevo.', 'danger')
+            return redirect(request.referrer or '/dashboard')
+        return view(*args, **kwargs)
+    return wrapped
+
 def get_user_ms_emails(app, uid):
     """Lista de cuentas MS que el usuario tiene autorizadas (admins ven todas)."""
     rows = app.supabase.get('ms_account_permissions', {'user_id': uid}, select='ms_email')
     return [r['ms_email'] for r in (rows or [])]
+
+def _delete_user_cascade(app, uid):
+    """Borra las filas relacionadas (permisos, credenciales) antes del usuario,
+    para no dejar huérfanas en calendar_permissions/webauthn_credentials/etc."""
+    for tbl in ['calendar_permissions', 'webauthn_credentials', 'face_descriptors',
+                'ms_account_permissions']:
+        for row in app.supabase.get(tbl, {'user_id': uid}, select='id'):
+            app.supabase.delete(tbl, row['id'])
+    ok = app.supabase.delete('users', uid)
+    _user_cal_cache.invalidate(uid)
+    return ok
+
+def _filter_visible_tasks(app, rows, uid):
+    """Misma regla de visibilidad usada en GET /planning/api/tasks: admins ven todo;
+    el resto solo tareas MS de cuentas autorizadas o tareas manuales propias/asignadas."""
+    if is_admin():
+        return rows
+    allowed_ms = set(get_user_ms_emails(app, uid))
+    has_todo = 'todo' in getattr(current_user, 'modules', [])
+    has_plan = 'planning' in getattr(current_user, 'modules', [])
+    suid = str(uid)
+    def visible(t):
+        if t.get('source') == 'ms_todo':
+            if not has_todo: return False
+            return (t.get('ms_email') or '') in allowed_ms
+        if not has_plan: return False
+        if t.get('created_by') == suid: return True
+        if t.get('assigned_to') == suid: return True
+        if (t.get('assigned_email') or '').lower() == (current_user.email or '').lower():
+            return True
+        return False
+    return [t for t in rows if visible(t)]
+
+def _user_owns_task(app, task, uid):
+    """Misma regla de propiedad usada en planning_bulk_update: admins la evitan (is_admin() aparte)."""
+    if task.get('source') == 'ms_todo':
+        return (task.get('ms_email') or '') in set(get_user_ms_emails(app, uid))
+    if task.get('created_by') == str(uid):
+        return True
+    if task.get('assigned_to') == str(uid):
+        return True
+    if (task.get('assigned_email') or '').lower() == (current_user.email or '').lower():
+        return True
+    return False
 
 # ============================================================
 #  WEB PUSH (VAPID + notificaciones)
@@ -1070,7 +1252,11 @@ def _generate_recurrence_dates(start_d, freq, interval, weekdays,
 def create_app():
     app = Flask(__name__, template_folder='../templates', static_folder='../static')
     app.config.from_object(Config)
-    app.config['SECRET_KEY'] = app.config['SECRET_KEY'] or 'calendarios-map-secret-key-2024'
+    if not app.config['SECRET_KEY']:
+        raise RuntimeError(
+            'SECRET_KEY no está configurada. Define la variable de entorno SECRET_KEY '
+            '(clave aleatoria y secreta) antes de arrancar la aplicación.'
+        )
     app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
 
     try:
@@ -1081,6 +1267,8 @@ def create_app():
 
     login_manager.init_app(app)
     login_manager.login_view = 'login'
+    limiter.init_app(app)
+    app.jinja_env.globals['csrf_token'] = generate_csrf
 
     @app.context_processor
     def _inject_globals():
@@ -1168,6 +1356,7 @@ def create_app():
         return redirect('/dashboard') if current_user.is_authenticated else render_template('index.html')
 
     @app.route('/login', methods=['GET', 'POST'])
+    @limiter.limit('10 per minute')
     def login():
         if current_user.is_authenticated:
             return redirect('/dashboard')
@@ -1180,7 +1369,7 @@ def create_app():
             users = app.supabase.get('users', {'email': email})
             if users and check_password_hash(users[0]['password_hash'], pw):
                 login_user(User(users[0]))
-                return redirect(request.args.get('next') or '/dashboard')
+                return redirect(_safe_next_path(request.args.get('next')))
             flash('Email o contraseña incorrectos.', 'danger')
         return render_template('login.html')
 
@@ -1269,6 +1458,7 @@ def create_app():
         return app.response_class(options_to_json(opts), mimetype='application/json')
 
     @app.route('/webauthn/authenticate/complete', methods=['POST'])
+    @limiter.limit('10 per minute')
     def webauthn_auth_complete():
         guard = _wa_guard()
         if guard:
@@ -1374,6 +1564,7 @@ def create_app():
         return jsonify({'success': True})
 
     @app.route('/face/verify', methods=['POST'])
+    @limiter.limit('10 per minute')
     def face_verify():
         data = request.get_json(silent=True) or {}
         email = _sanitize(data.get('email', ''), 254).lower()
@@ -1471,12 +1662,15 @@ def create_app():
             flash('Configura MS_CLIENT_ID en las variables de entorno.', 'warning')
             return redirect(url_for('planning'))
         redirect_uri = app.config.get('MS_REDIRECT_URI') or request.host_url.rstrip('/') + '/auth/microsoft/callback'
+        state = secrets.token_urlsafe(24)
+        session['ms_state'] = state
         params = (f'?client_id={cid}'
                   f'&response_type=code'
                   f'&redirect_uri={_url_quote(redirect_uri, safe="")}'
                   f'&scope={_url_quote(MS_SCOPES, safe="")}'
                   f'&response_mode=query'
-                  f'&prompt=select_account')
+                  f'&prompt=select_account'
+                  f'&state={_url_quote(state, safe="")}')
         return redirect(MS_AUTH_URL + params)
 
     @app.route('/auth/microsoft/callback')
@@ -1490,6 +1684,10 @@ def create_app():
             return redirect(url_for('planning'))
         if not code:
             flash('No se recibió código de autorización.', 'danger')
+            return redirect(url_for('planning'))
+        expected_state = session.pop('ms_state', None)
+        if not expected_state or request.args.get('state') != expected_state:
+            flash('Sesión expirada o solicitud inválida. Intenta de nuevo.', 'warning')
             return redirect(url_for('planning'))
         redirect_uri = app.config.get('MS_REDIRECT_URI') or request.host_url.rstrip('/') + '/auth/microsoft/callback'
         try:
@@ -1574,8 +1772,10 @@ def create_app():
             scopes=GOOGLE_SCOPES, state=state)
         flow.redirect_uri = app.config['GOOGLE_REDIRECT_URI']
         flow.fetch_token(authorization_response=request.url)
-        save_google_creds(app, flow.credentials)
-        flash('Google Calendar conectado correctamente.', 'success')
+        if save_google_creds(app, flow.credentials):
+            flash('Google Calendar conectado correctamente.', 'success')
+        else:
+            flash('No se pudieron guardar las credenciales de Google. Intenta reconectar.', 'danger')
         return redirect('/dashboard')
 
     # ============================================================
@@ -1621,12 +1821,13 @@ def create_app():
         # Cuentas MS conectadas + permisos por usuario + conteos
         ms_accounts_raw = app.supabase.get('ms_tokens', select='email') or []
         ms_accounts = [t.get('email','') for t in ms_accounts_raw if t.get('email')]
-        # Contar tareas por cuenta para mostrar al admin la magnitud
-        ms_counts = {}
-        for ms in ms_accounts:
-            rows = app.supabase.get('tasks', {'ms_email': ms, 'source': 'ms_todo'},
-                                    select='id') or []
-            ms_counts[ms] = len(rows)
+        # Contar tareas por cuenta para mostrar al admin la magnitud (1 sola query, no N+1)
+        ms_counts = {ms: 0 for ms in ms_accounts}
+        ms_task_rows = app.supabase.get('tasks', {'source': 'ms_todo'}, select='ms_email') or []
+        for r in ms_task_rows:
+            ms = r.get('ms_email')
+            if ms in ms_counts:
+                ms_counts[ms] += 1
         ms_perms_all = app.supabase.get('ms_account_permissions', select='user_id,ms_email') or []
         ms_by_user = defaultdict(list)
         for p in ms_perms_all:
@@ -1641,6 +1842,9 @@ def create_app():
     # ============================================================
     #  ADMIN — DATABASE
     # ============================================================
+    ADMIN_DB_TABLES = {'ciudades', 'appointment_titles', 'encargados', 'clients',
+                        'appointments', 'calendar_config', 'users'}
+
     @app.route('/admin/database')
     @login_required
     def admin_database():
@@ -1657,9 +1861,13 @@ def create_app():
 
     @app.route('/admin/database/update', methods=['POST'])
     @login_required
+    @csrf_protect
     def admin_db_update():
         if not is_admin(): return jsonify({'success': False})
         table = request.form.get('table'); record_id = request.form.get('id')
+        if table not in ADMIN_DB_TABLES:
+            flash('Tabla no permitida.', 'danger')
+            return redirect('/admin/database')
         data = {k: v for k, v in request.form.items() if k not in ['table', 'id']}
         if data: app.supabase.update(table, record_id, data)
         if table == 'calendar_config':
@@ -1670,10 +1878,21 @@ def create_app():
 
     @app.route('/admin/database/delete', methods=['POST'])
     @login_required
+    @csrf_protect
     def admin_db_delete():
         if not is_admin(): return jsonify({'success': False})
         table = request.form.get('table')
-        app.supabase.delete(table, request.form.get('id'))
+        if table not in ADMIN_DB_TABLES:
+            flash('Tabla no permitida.', 'danger')
+            return redirect('/admin/database')
+        record_id = request.form.get('id')
+        if table == 'users':
+            if record_id == str(current_user.id):
+                flash('No puedes eliminarte a ti mismo.', 'danger')
+                return redirect('/admin/database')
+            _delete_user_cascade(app, record_id)
+        else:
+            app.supabase.delete(table, record_id)
         if table == 'calendar_config':
             _cal_cache.invalidate('all')
             _user_cal_cache.invalidate_prefix('')
@@ -1682,10 +1901,16 @@ def create_app():
 
     @app.route('/admin/database/insert', methods=['POST'])
     @login_required
+    @csrf_protect
     def admin_db_insert():
         if not is_admin(): return jsonify({'success': False})
         table = request.form.get('table')
+        if table not in ADMIN_DB_TABLES:
+            flash('Tabla no permitida.', 'danger')
+            return redirect('/admin/database')
         data = {k: v for k, v in request.form.items() if k not in ['table']}
+        if table == 'users' and data.get('password_hash'):
+            data['password_hash'] = generate_password_hash(data['password_hash'])
         if data: app.supabase.insert(table, data)
         if table == 'calendar_config':
             _cal_cache.invalidate('all')
@@ -1695,6 +1920,7 @@ def create_app():
 
     @app.route('/admin/user/update/<uid>', methods=['POST'])
     @login_required
+    @csrf_protect
     def admin_update_user(uid):
         if not is_admin(): return redirect('/dashboard')
         data = {}
@@ -1730,21 +1956,17 @@ def create_app():
 
     @app.route('/admin/user/delete/<uid>', methods=['POST'])
     @login_required
+    @csrf_protect
     def admin_delete_user(uid):
         if not is_admin(): return jsonify({'success': False, 'error': 'Sin autorización'})
         if uid == str(current_user.id):
             return jsonify({'success': False, 'error': 'No puedes eliminarte a ti mismo'})
-        # Borrar todos los registros relacionados antes de eliminar el usuario
-        for tbl in ['calendar_permissions', 'webauthn_credentials', 'face_descriptors',
-                    'ms_account_permissions']:
-            for row in app.supabase.get(tbl, {'user_id': uid}, select='id'):
-                app.supabase.delete(tbl, row['id'])
-        ok = app.supabase.delete('users', uid)
-        _user_cal_cache.invalidate(uid)
+        ok = _delete_user_cascade(app, uid)
         return jsonify({'success': ok, 'error': None if ok else 'No se pudo eliminar el usuario'})
 
     @app.route('/admin/approve-one/<pid>', methods=['POST'])
     @login_required
+    @csrf_protect
     def admin_approve_one(pid):
         if not is_admin(): return jsonify({'success': False})
         app.supabase.update('calendar_permissions', pid, {'status': 'approved'})
@@ -1753,6 +1975,7 @@ def create_app():
 
     @app.route('/admin/reject-one/<pid>', methods=['POST'])
     @login_required
+    @csrf_protect
     def admin_reject_one(pid):
         if not is_admin(): return jsonify({'success': False})
         app.supabase.update('calendar_permissions', pid, {'status': 'rejected'})
@@ -1761,6 +1984,7 @@ def create_app():
 
     @app.route('/admin/approve-all/<uid>', methods=['POST'])
     @login_required
+    @csrf_protect
     def admin_approve_all(uid):
         if not is_admin(): return jsonify({'success': False})
         for p in app.supabase.get('calendar_permissions',
@@ -1771,6 +1995,7 @@ def create_app():
 
     @app.route('/admin/reject-all/<uid>', methods=['POST'])
     @login_required
+    @csrf_protect
     def admin_reject_all(uid):
         if not is_admin(): return jsonify({'success': False})
         for p in app.supabase.get('calendar_permissions',
@@ -1805,7 +2030,7 @@ def create_app():
             all_tasks = [t for t in all_tasks if vis(t)]
         pending_all   = [t for t in all_tasks if t.get('status') != 'done']
         overdue       = [t for t in pending_all if t.get('due_date') and t['due_date'] < today_iso]
-        today_tasks   = [t for t in all_tasks  if t.get('due_date') == today_iso]
+        today_tasks   = [t for t in pending_all if t.get('due_date') == today_iso]
         week_tasks    = [t for t in pending_all if t.get('due_date') and today_iso <= t['due_date'] <= in_7d_iso]
         manual_pend   = [t for t in pending_all if t.get('source') != 'ms_todo']
         todo_pend     = [t for t in pending_all if t.get('source') == 'ms_todo']
@@ -2053,8 +2278,13 @@ def create_app():
     @app.route('/calendar/api/clients')
     @login_required
     def api_clients():
-        return jsonify([{'name': c['name'], 'email': c.get('email', '')} for c in
-            app.supabase.get('clients', select='name,email')])
+        rows = app.supabase.get('clients', select='name,email,calendar_id')
+        if not is_admin():
+            allowed = {c['calendar_id'] for c in get_user_calendars(app, current_user.id)}
+            # Los clientes sin calendar_id son heredados de antes de esta restricción:
+            # se siguen mostrando a todos para no romper el autocompletado existente.
+            rows = [c for c in rows if not c.get('calendar_id') or c['calendar_id'] in allowed]
+        return jsonify([{'name': c['name'], 'email': c.get('email', '')} for c in rows])
 
     @app.route('/calendar/api/ciudades')
     @login_required
@@ -2130,7 +2360,8 @@ def create_app():
             if tema:       app.supabase.insert_ignore('temas', {'description': tema})
             if client_name:
                 app.supabase.insert_ignore('clients',
-                    {'name': client_name, 'email': client_email, 'created_by': current_user.id})
+                    {'name': client_name, 'email': client_email, 'created_by': current_user.id,
+                     'calendar_id': cal_id})
 
             # ---- Recurring (flexible: daily/weekly/monthly/yearly) ----
             is_recurring = request.form.get('is_recurring') == 'true'
@@ -2298,6 +2529,15 @@ def create_app():
             app.supabase.update('appointments', aid, {'status': 'confirmed'})
             return jsonify({'success': True, 'message': 'Confirmada (ya sincronizada con Google)'})
 
+        # Reclamo atómico: solo una petición concurrente puede pasar de 'pending' a
+        # 'confirmed' (usamos el mismo valor de status final, sin inventar uno nuevo,
+        # para no depender de qué valores acepte un posible CHECK constraint en la BD).
+        # Evita que dos aprobaciones simultáneas creen el evento de Google dos veces.
+        claimed = app.supabase.update_where('appointments',
+            {'id': aid, 'status': 'pending'}, {'status': 'confirmed'})
+        if not claimed:
+            return jsonify({'success': False, 'error': 'Esta cita ya fue procesada por otra solicitud'})
+
         creds = get_google_creds(app)
         if not creds:
             app.supabase.update('appointments', aid, {'status': 'confirmed'})
@@ -2336,6 +2576,8 @@ def create_app():
             if _is_invalid_grant(e):
                 app.supabase.update('appointments', aid, {'status': 'confirmed'})
                 return jsonify({'success': True, 'message': 'Aprobada. Reconecta Google.'})
+            # No dejar la cita atascada en 'approving': volver a 'pending' para poder reintentar.
+            app.supabase.update('appointments', aid, {'status': 'pending'})
             return jsonify({'success': False, 'error': str(e)})
 
     @app.route('/calendar/api/reject/<aid>', methods=['POST'])
@@ -2507,6 +2749,7 @@ def create_app():
         cal_changed = new_cal_id and new_cal_id != old_cal_id
         is_confirmed = apt.get('status') == 'confirmed'
 
+        sync_warning = None
         if cal_changed and apt.get('google_event_id') and is_confirmed:
             creds = get_google_creds(app)
             if creds:
@@ -2532,9 +2775,19 @@ def create_app():
                     d['google_cal_id']   = new_gcal
                 except Exception as e:
                     print(f'[api_update_appointment] Google error: {e}')
+                    # El evento anterior ya pudo haberse borrado en Google: no dejar el
+                    # google_event_id viejo apuntando a un evento que ya no existe.
+                    d['google_event_id'] = None
+                    d['google_cal_id']   = None
+                    sync_warning = ('Se guardaron los cambios, pero falló la sincronización '
+                                     'con Google Calendar. Usa "Reparar eventos" o vuelve a '
+                                     'intentar el cambio de calendario.')
+            else:
+                sync_warning = ('Se guardó el cambio de calendario, pero Google no está '
+                                 'conectado: el evento no se movió en Google Calendar.')
 
         ok = app.supabase.update('appointments', aid, d)
-        return jsonify({'success': ok})
+        return jsonify({'success': ok, 'warning': sync_warning})
 
     # ============================================================
     #  PLANNING MODULE
@@ -2574,13 +2827,26 @@ def create_app():
         d['created_by'] = current_user.id
         d['name'] = _sanitize(d.get('name', ''), 200)
         if not d['name']: return jsonify({'success': False, 'error': 'Nombre requerido'})
+        if 'color' in d: d['color'] = _sanitize_hex_color(d.get('color'))
         r = app.supabase.insert('projects', d)
         return jsonify({'success': bool(r), 'project': r[0] if r else None})
+
+    PROJECT_EDITABLE_FIELDS = {'name', 'description', 'color', 'status', 'priority',
+                               'start_date', 'due_date', 'owner'}
 
     @app.route('/planning/api/projects/<pid>', methods=['PATCH'])
     @login_required
     def planning_update_project(pid):
-        d = request.get_json() or {}
+        body = request.get_json() or {}
+        d = {k: v for k, v in body.items() if k in PROJECT_EDITABLE_FIELDS}
+        if 'name' in d:
+            d['name'] = _sanitize(d.get('name', ''), 200)
+            if not d['name']:
+                return jsonify({'success': False, 'error': 'Nombre requerido'})
+        if 'color' in d:
+            d['color'] = _sanitize_hex_color(d.get('color'))
+        if not d:
+            return jsonify({'success': False, 'error': 'Nada que actualizar'})
         ok = app.supabase.update('projects', pid, d)
         return jsonify({'success': ok})
 
@@ -2607,23 +2873,7 @@ def create_app():
         elif scope == 'todo':
             rows = [t for t in rows if t.get('source') == 'ms_todo']
         # Permisos por usuario
-        if not is_admin():
-            allowed_ms  = set(get_user_ms_emails(app, current_user.id))
-            has_todo    = 'todo'     in getattr(current_user, 'modules', [])
-            has_plan    = 'planning' in getattr(current_user, 'modules', [])
-            uid = str(current_user.id)
-            def visible(t):
-                if t.get('source') == 'ms_todo':
-                    if not has_todo: return False
-                    return (t.get('ms_email') or '') in allowed_ms
-                # Tareas manuales
-                if not has_plan: return False
-                if t.get('created_by') == uid: return True
-                if t.get('assigned_to') == uid: return True
-                if (t.get('assigned_email') or '').lower() == (current_user.email or '').lower():
-                    return True
-                return False
-            rows = [t for t in rows if visible(t)]
+        rows = _filter_visible_tasks(app, rows, current_user.id)
         return jsonify(rows)
 
     # ============================================================
@@ -2692,14 +2942,14 @@ def create_app():
         if not is_admin(): return jsonify({'success': False, 'error': 'Solo admin'})
         today_iso = date.today().isoformat()
         all_users = app.supabase.get('users', select='id,full_name,email,modules') or []
+        # Independiente del usuario: se consulta una sola vez fuera del bucle.
+        rows = app.supabase.get('tasks',
+            select='id,due_date,status,created_by,assigned_to,assigned_email,ms_email,source') or []
         sent_total = 0
         for u in all_users:
             mods = (u.get('modules') or 'calendar,planning').split(',')
             if 'planning' not in mods and 'todo' not in mods: continue
             uid = u['id']
-            # Tareas pendientes del usuario
-            rows = app.supabase.get('tasks',
-                select='id,due_date,status,created_by,assigned_to,assigned_email,ms_email,source') or []
             allowed_ms = set([r['ms_email'] for r in (app.supabase.get('ms_account_permissions',
                 {'user_id': uid}, select='ms_email') or []) if r.get('ms_email')])
             overdue = []
@@ -2878,6 +3128,12 @@ def create_app():
     @app.route('/planning/api/tasks/<tid>', methods=['PATCH'])
     @login_required
     def planning_update_task(tid):
+        if not is_admin():
+            rows = app.supabase.get('tasks', {'id': tid},
+                select='id,created_by,assigned_to,assigned_email,ms_email,source')
+            task = rows[0] if rows else None
+            if not task or not _user_owns_task(app, task, current_user.id):
+                return jsonify({'success': False, 'error': 'Sin permisos'}), 403
         d = request.get_json() or {}
         d['updated_at'] = datetime.now(timezone.utc).isoformat()
         if d.get('status') == 'done' and not d.get('completed_date'):
@@ -2974,6 +3230,10 @@ def create_app():
         # Obtener tarea antes de borrar para poder eliminarla en MS
         rows = app.supabase.get('tasks', {'id': tid}, select='*')
         task = rows[0] if rows else None
+        if not task:
+            return jsonify({'success': False, 'error': 'No encontrada'}), 404
+        if not is_admin() and not _user_owns_task(app, task, current_user.id):
+            return jsonify({'success': False, 'error': 'Sin permisos'}), 403
         ok = app.supabase.delete('tasks', tid)
         deleted_ms = False
         if ok and task:
@@ -2983,8 +3243,8 @@ def create_app():
     @app.route('/planning/api/deps/<tid>', methods=['GET'])
     @login_required
     def planning_task_deps(tid):
-        rows = app.supabase.get('task_deps', {'task_id': tid}, select='depends_on')
-        return jsonify([r['depends_on'] for r in (rows or [])])
+        rows = app.supabase.get('task_deps', {'task_id': tid}, select='id,depends_on')
+        return jsonify(rows or [])
 
     @app.route('/planning/api/deps', methods=['POST'])
     @login_required
@@ -3042,6 +3302,7 @@ def create_app():
         pid = request.args.get('project_id')
         tasks = (app.supabase.get('tasks', {'project_id': pid}, select='*')
                  if pid else app.supabase.get('tasks', select='*'))
+        tasks = _filter_visible_tasks(app, tasks or [], current_user.id)
         projects_map = {p['id']: p['name']
                         for p in (app.supabase.get('projects', select='id,name') or [])}
         wb = openpyxl.Workbook()
@@ -3068,14 +3329,14 @@ def create_app():
                     days_left = (datetime.strptime(due_str,'%Y-%m-%d').date() - today_d).days
                 except Exception: pass
             row = [
-                projects_map.get(t.get('project_id'), ''),
-                t.get('phase',''), t.get('title',''), t.get('description',''),
+                _xlsx_safe(projects_map.get(t.get('project_id'), '')),
+                _xlsx_safe(t.get('phase','')), _xlsx_safe(t.get('title','')), _xlsx_safe(t.get('description','')),
                 t.get('status',''), t.get('priority',''),
-                t.get('assigned_to',''), t.get('assigned_email',''),
+                _xlsx_safe(t.get('assigned_to','')), _xlsx_safe(t.get('assigned_email','')),
                 t.get('start_date','')[:10] if t.get('start_date') else '',
                 due_str, days_left,
                 t.get('progress_pct',0), t.get('alert_days',3),
-                t.get('tags',''), t.get('notes',''), t.get('source',''),
+                _xlsx_safe(t.get('tags','')), _xlsx_safe(t.get('notes','')), t.get('source',''),
             ]
             for ci, val in enumerate(row, 1):
                 c = ws.cell(row=ri, column=ci, value=val)

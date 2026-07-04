@@ -13,3 +13,4 @@ webauthn>=2.1.0,<3.0.0
 openpyxl>=3.1.0
 pywebpush>=2.0.0
 py-vapid>=1.9.0
+Flask-Limiter>=4.0.0
