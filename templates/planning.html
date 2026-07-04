@@ -111,13 +111,21 @@
 .map-legend-dot{width:12px;height:12px;border-radius:3px}
 .mermaid-container svg{max-width:100%;height:auto}
 
-/* PROJECT PILLS */
+/* PROJECT PILLS (usadas por los chips de tiempo fusionados) */
 .project-pills{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px}
 .proj-pill{padding:4px 12px;border-radius:20px;font-size:.78rem;font-weight:600;cursor:pointer;
   border:1.5px solid;transition:.15s}
 .proj-pill.active{color:#fff}
 .proj-pill-all{border-color:#94a3b8;color:#64748b;background:#f8fafc}
 .proj-pill-all.active{background:#64748b;color:#fff;border-color:#64748b}
+
+/* PESTAÑA PRINCIPAL: cuentas MS en /todo, proyectos en /planning */
+.entity-tabs{display:flex;gap:4px;flex-wrap:wrap;margin-bottom:12px;border-bottom:2px solid #e2e8f0}
+.entity-tab{padding:8px 16px;border:none;border-bottom:3px solid transparent;background:transparent;
+  font-size:.85rem;font-weight:700;cursor:pointer;color:#64748b;transition:.15s;margin-bottom:-2px}
+.entity-tab:hover{color:#4f46e5;background:#f8fafc}
+.entity-tab.active{color:#4f46e5;border-bottom-color:#4f46e5}
+@media(max-width:768px){.entity-tabs{overflow-x:auto;flex-wrap:nowrap}}
 
 /* MODALS */
 .plan-modal .modal-header{background:linear-gradient(135deg,#4f46e5,#7c3aed);color:#fff}
@@ -281,19 +289,11 @@ input[type=range].prog-range{accent-color:#4f46e5;width:100%}
   {% endif %}
 </div>
 
-<!-- PROJECT PILLS -->
-<div class="project-pills" id="projectPills">
-  <span class="proj-pill proj-pill-all active" onclick="setProject(null)">Todos</span>
-</div>
+<!-- PESTAÑA PRINCIPAL: cuentas MS (/todo) o proyectos (/planning) -->
+<div class="entity-tabs" id="entityTabs"></div>
 
-<!-- ACCOUNT PILLS (filtro por origen) -->
-<div class="project-pills" id="accountPills" style="margin-top:-4px"></div>
-
-<!-- TIME FILTER PILLS -->
-<div class="project-pills" id="timePills" style="margin-top:-4px"></div>
-
-<!-- PANEL DE FOCO: Vencidas / Hoy / Esta semana -->
-<div id="focusBanner" style="margin:6px 0 14px"></div>
+<!-- FILTRO DE TIEMPO (fusiona los antiguos time-pills + panel de foco) -->
+<div id="timeFocusBar" style="margin:6px 0 14px"></div>
 
 <!-- BULK ACTION BAR -->
 <div id="bulkBar" style="display:none;position:sticky;top:0;z-index:50;background:#1e293b;color:#fff;border-radius:14px;padding:10px 16px;margin-bottom:12px;box-shadow:0 4px 12px rgba(0,0,0,.2)">
@@ -801,6 +801,10 @@ async function loadData(silent) {
   } catch(e) {
     if (!silent) { allProjects = []; allTasks = []; }
   }
+  // Si la pestaña restaurada de localStorage ya no existe (proyecto borrado / cuenta
+  // desconectada), volver a "Todas" en vez de mostrar una pestaña sin datos.
+  if (curProject && !allProjects.some(p => p.id === curProject)) curProject = null;
+  if (curAccount && curAccount !== '__manual__' && !allTasks.some(t => t.ms_email === curAccount)) curAccount = null;
   renderAll();
 }
 
@@ -808,63 +812,17 @@ async function loadData(silent) {
 //  RENDER ALL
 // ——————————————————————————————————————————
 function renderAll() {
-  renderProjectPills();
-  renderAccountPills();
-  renderTimePills();
-  renderFocusBanner();
+  renderEntityTabs();
+  renderTimeFocusBar();
   fillProjectSelects();
   updateStats();
   renderCurrentView();
 }
 
-// Panel de foco: tarjetas grandes con lo accionable (vencidas / hoy / semana).
-// Clic en una tarjeta aplica ese filtro de tiempo. Además, chip para mostrar/ocultar
-// los "Correos marcados" de Outlook.
-function renderFocusBanner() {
-  const el = document.getElementById('focusBanner');
-  if (!el) return;
-  // Base: respeta cuenta/proyecto, excluye completadas y (si aplica) correos marcados.
-  let base = allTasks;
-  if (curProject) base = base.filter(x => x.project_id === curProject);
-  if (curAccount === '__manual__') base = base.filter(x => !x.ms_email);
-  else if (curAccount) base = base.filter(x => (x.ms_email || '') === curAccount);
-  base = base.filter(x => x.status !== 'done');
-  if (hideFlagged) base = base.filter(x => !isFlaggedEmail(x));
-  const today0 = todayStr(), in7 = daysFromToday(7);
-  const nOver = base.filter(t => t.due_date && t.due_date < today0).length;
-  const nToday = base.filter(t => t.due_date === today0).length;
-  const nWeek = base.filter(t => t.due_date && t.due_date >= today0 && t.due_date <= in7).length;
-
-  const card = (key, icon, label, n, color) => {
-    const active = curTimeFilter === key;
-    return `<div onclick="setTimeFilter('${key}')" title="Filtrar: ${label}"
-      style="flex:1;min-width:140px;cursor:pointer;border:1.5px solid ${color};
-      border-radius:14px;padding:12px 16px;display:flex;align-items:center;gap:12px;
-      background:${active ? color : color + '14'};color:${active ? '#fff' : color};
-      transition:.15s;box-shadow:0 1px 3px rgba(0,0,0,.06)">
-      <span style="font-size:1.6rem;line-height:1">${icon}</span>
-      <div style="line-height:1.15">
-        <div style="font-size:1.5rem;font-weight:800">${n}</div>
-        <div style="font-size:.78rem;font-weight:600;opacity:.85">${label}</div>
-      </div>
-    </div>`;
-  };
-
-  const hasFlagged = allTasks.some(isFlaggedEmail);
-  const flagChip = hasFlagged ? `<button onclick="toggleFlagged()" class="btn btn-sm rounded-pill"
-      style="border:1px solid #94a3b8;background:${hideFlagged ? '#fff' : '#e2e8f0'};color:#475569;font-size:.78rem;white-space:nowrap"
-      title="Correos marcados de Outlook">📧 ${hideFlagged ? 'Ver correos marcados' : 'Ocultar correos marcados'}</button>` : '';
-
-  el.innerHTML =
-    `<div style="display:flex;gap:10px;flex-wrap:wrap;align-items:stretch">
-      ${card('overdue', '⛔', 'Vencidas', nOver, '#ef4444')}
-      ${card('today',   '📌', 'Para hoy', nToday, '#10b981')}
-      ${card('week',    '🗓', 'Esta semana', nWeek, '#8b5cf6')}
-    </div>` +
-    (flagChip ? `<div style="margin-top:8px;text-align:right">${flagChip}</div>` : '');
-}
-
-let curAccount = null;
+// Pestaña principal persistida por scope (cuenta MS en /todo, proyecto en /planning).
+const _savedEntityTab = localStorage.getItem('entityTab_' + SCOPE) || null;
+let curAccount = SCOPE === 'todo' ? _savedEntityTab : null;
+if (SCOPE !== 'todo' && _savedEntityTab) curProject = _savedEntityTab;
 let showDone = false;
 // Ocultar "Correos marcados" de Outlook por defecto (son ruido); recordado por scope.
 let hideFlagged = (localStorage.getItem('hideFlagged_' + SCOPE) ?? '1') === '1';
@@ -908,14 +866,17 @@ function inTimeFilter(t) {
   }
 }
 
-function renderTimePills() {
-  const el = document.getElementById('timePills');
+// Filtro de tiempo (fusiona los antiguos time-pills + panel de foco): un solo lugar
+// con los 7 filtros de tiempo y, al final, el chip de "correos marcados" de Outlook.
+function renderTimeFocusBar() {
+  const el = document.getElementById('timeFocusBar');
   // Conteos (sobre tareas que ya pasaron los filtros de cuenta/proyecto)
   let base = allTasks;
   if (curProject) base = base.filter(x => x.project_id === curProject);
   if (curAccount === '__manual__') base = base.filter(x => !x.ms_email);
   else if (curAccount) base = base.filter(x => (x.ms_email||'') === curAccount);
   if (!showDone) base = base.filter(x => x.status !== 'done');
+  if (hideFlagged) base = base.filter(x => !isFlaggedEmail(x));
   const today0 = todayStr();
   const cnt = {
     'my-day':   base.filter(t => (t.status !== 'done' && ((t.due_date && t.due_date <= today0) || ['high','urgent'].includes(t.priority||'')))).length,
@@ -934,7 +895,7 @@ function renderTimePills() {
     {key:'week',     label:'Esta semana',   color:'#8b5cf6', icon:'🗓'},
     {key:'no-date',  label:'Sin fecha',     color:'#94a3b8', icon:'∅'},
   ];
-  el.innerHTML = def.map(d => {
+  const pillsHtml = def.map(d => {
     const active = curTimeFilter === d.key;
     const n = d.key ? cnt[d.key] : base.length;
     return `<span class="proj-pill ${active?'active':''}"
@@ -943,6 +904,13 @@ function renderTimePills() {
       ${d.icon} ${d.label} <span class="badge bg-light text-dark ms-1" style="font-size:.65rem;color:#333!important">${n}</span>
     </span>`;
   }).join('');
+
+  const hasFlagged = allTasks.some(isFlaggedEmail);
+  const flagChip = hasFlagged ? `<span onclick="toggleFlagged()" class="proj-pill"
+      style="border-color:#94a3b8;background:${hideFlagged ? '#fff' : '#e2e8f0'};color:#475569"
+      title="Correos marcados de Outlook">📧 ${hideFlagged ? 'Ver correos marcados' : 'Ocultar correos marcados'}</span>` : '';
+
+  el.innerHTML = `<div class="project-pills" style="margin-bottom:0">${pillsHtml}${flagChip}</div>`;
 }
 
 // Paleta de colores por cuenta (determinística por email)
@@ -983,34 +951,53 @@ function filteredTasks() {
   return smartSort(t);
 }
 
-function renderAccountPills() {
-  const c = document.getElementById('accountPills');
-  const accounts = [...new Set(allTasks.map(t => t.ms_email).filter(Boolean))].sort();
-  const hasManual = allTasks.some(t => !t.ms_email);
-  if (!accounts.length && !hasManual) { c.innerHTML = ''; return; }
-  const countBy = (pred) => allTasks.filter(t => (showDone || t.status !== 'done') && pred(t)).length;
-  let html = `<span class="proj-pill proj-pill-all ${!curAccount?'active':''}" onclick="setAccount(null)">
-    📋 Todas <span class="badge bg-secondary ms-1" style="font-size:.65rem">${countBy(()=>true)}</span>
-  </span>`;
-  if (hasManual) {
-    const n = countBy(t => !t.ms_email);
-    html += `<span class="proj-pill ${curAccount==='__manual__'?'active':''}"
-      style="border-color:#4f46e5;${curAccount==='__manual__'?'background:#4f46e5;color:#fff':''}"
-      onclick="setAccount('__manual__')">✍️ Sistema <span class="badge bg-light text-dark ms-1" style="font-size:.65rem">${n}</span></span>`;
+// Pestaña principal: cuentas MS en /todo, proyectos en /planning. Misma barra visual
+// para ambos scopes; el eje que agrupa cambia según SCOPE (ver plan de reorganización).
+function renderEntityTabs() {
+  const c = document.getElementById('entityTabs');
+  if (SCOPE === 'todo') {
+    const accounts = [...new Set(allTasks.map(t => t.ms_email).filter(Boolean))].sort();
+    const hasManual = allTasks.some(t => !t.ms_email);
+    const countBy = (pred) => allTasks.filter(t => (showDone || t.status !== 'done') && pred(t)).length;
+    let html = `<button class="entity-tab ${!curAccount?'active':''}" onclick="setAccount(null)">
+      📋 Todas <span class="badge bg-secondary ms-1" style="font-size:.65rem">${countBy(()=>true)}</span>
+    </button>`;
+    if (hasManual) {
+      const n = countBy(t => !t.ms_email);
+      html += `<button class="entity-tab ${curAccount==='__manual__'?'active':''}"
+        style="${curAccount==='__manual__'?'color:#4f46e5;border-bottom-color:#4f46e5':''}"
+        onclick="setAccount('__manual__')">✍️ Sistema <span class="badge bg-light text-dark ms-1" style="font-size:.65rem">${n}</span></button>`;
+    }
+    accounts.forEach(a => {
+      const col = colorForAccount(a);
+      const n = countBy(t => t.ms_email === a);
+      html += `<button class="entity-tab ${curAccount===a?'active':''}"
+        style="${curAccount===a?'color:'+col+';border-bottom-color:'+col:''}"
+        onclick="setAccount('${a}')" title="${esc(a)}">
+        📧 ${esc(shortAccount(a))} <span class="badge bg-light text-dark ms-1" style="font-size:.65rem;color:#333!important">${n}</span>
+      </button>`;
+    });
+    c.innerHTML = html;
+  } else {
+    let html = `<button class="entity-tab ${!curProject?'active':''}" onclick="setProject(null)">Todos</button>`;
+    allProjects.forEach(p => {
+      html += `<button class="entity-tab ${curProject===p.id?'active':''}"
+        style="${curProject===p.id?'color:'+p.color+';border-bottom-color:'+p.color:''}"
+        onclick="setProject('${p.id}')"
+        ondblclick="openProjectModal('${p.id}')"
+        title="Doble clic para editar">
+        ${esc(p.name)}
+      </button>`;
+    });
+    c.innerHTML = html;
   }
-  accounts.forEach(a => {
-    const col = colorForAccount(a);
-    const n = countBy(t => t.ms_email === a);
-    html += `<span class="proj-pill ${curAccount===a?'active':''}"
-      style="border-color:${col};${curAccount===a?'background:'+col+';color:#fff':'color:'+col}"
-      onclick="setAccount('${a}')" title="${esc(a)}">
-      📧 ${esc(shortAccount(a))} <span class="badge bg-light text-dark ms-1" style="font-size:.65rem;color:#333!important">${n}</span>
-    </span>`;
-  });
-  c.innerHTML = html;
 }
 
-function setAccount(em) { curAccount = em; renderAll(); }
+function setAccount(em) {
+  curAccount = em;
+  localStorage.setItem('entityTab_' + SCOPE, em || '');
+  renderAll();
+}
 function toggleDone() { showDone = !showDone; document.getElementById('btnShowDone').textContent = showDone ? '👁 Ocultar completadas' : '✅ Ver completadas'; renderAll(); }
 
 // ——————————————————————————————————————————
@@ -1238,25 +1225,9 @@ function filterOverdue() {
   }, 300);
 }
 
-// ——————————————————————————————————————————
-//  PROJECT PILLS
-// ——————————————————————————————————————————
-function renderProjectPills() {
-  const c = document.getElementById('projectPills');
-  c.innerHTML = `<span class="proj-pill proj-pill-all ${!curProject?'active':''}" onclick="setProject(null)">Todos</span>`;
-  allProjects.forEach(p => {
-    c.innerHTML += `<span class="proj-pill ${curProject===p.id?'active':''}"
-      style="border-color:${p.color};${curProject===p.id?'background:'+p.color+';color:#fff':''}"
-      onclick="setProject('${p.id}')"
-      ondblclick="openProjectModal('${p.id}')"
-      title="Doble clic para editar">
-      ${esc(p.name)}
-    </span>`;
-  });
-}
-
 function setProject(id) {
   curProject = id;
+  localStorage.setItem('entityTab_' + SCOPE, id || '');
   renderAll();
 }
 
