@@ -1999,9 +1999,8 @@ def create_app():
     @csrf_protect
     def admin_approve_all(uid):
         if not is_admin(): return jsonify({'success': False})
-        for p in app.supabase.get('calendar_permissions',
-                {'user_id': uid, 'status': 'pending'}, select='id'):
-            app.supabase.update('calendar_permissions', p['id'], {'status': 'approved'})
+        app.supabase.update_where('calendar_permissions',
+            {'user_id': uid, 'status': 'pending'}, {'status': 'approved'})
         _user_cal_cache.invalidate(uid)
         return jsonify({'success': True})
 
@@ -2010,9 +2009,8 @@ def create_app():
     @csrf_protect
     def admin_reject_all(uid):
         if not is_admin(): return jsonify({'success': False})
-        for p in app.supabase.get('calendar_permissions',
-                {'user_id': uid, 'status': 'pending'}, select='id'):
-            app.supabase.update('calendar_permissions', p['id'], {'status': 'rejected'})
+        app.supabase.update_where('calendar_permissions',
+            {'user_id': uid, 'status': 'pending'}, {'status': 'rejected'})
         _user_cal_cache.invalidate(uid)
         return jsonify({'success': True})
 
@@ -2656,7 +2654,8 @@ def create_app():
         all_cals = _get_calendar_config(app)
         email_map, gcal_id_map = _make_cal_maps(all_cals)
         service = build('calendar', 'v3', credentials=creds)
-        for apt in app.supabase.get('appointments',
+        for apt in app.supabase.get_q('appointments',
+                {'status': 'eq.confirmed', 'google_event_id': 'is.null'},
                 select='id,title,encargado,tema,client_name,start_time,end_time,calendar_id,'
                        'invitados,direccion,ciudad,lugar,mapa,notes,meeting_link,status,google_event_id'):
             if apt.get('status') != 'confirmed' or apt.get('google_event_id'):
@@ -2704,7 +2703,8 @@ def create_app():
             service  = build('calendar', 'v3', credentials=creds)
             all_cals = _get_calendar_config(app)
             email_map, gcal_id_map = _make_cal_maps(all_cals)
-            apts = app.supabase.get('appointments',
+            apts = app.supabase.get_q('appointments',
+                {'status': 'eq.confirmed', 'google_event_id': 'not.is.null'},
                 select='id,title,encargado,tema,client_name,start_time,end_time,calendar_id,'
                        'invitados,direccion,ciudad,lugar,mapa,notes,meeting_link,status,'
                        'google_event_id,google_cal_id')
