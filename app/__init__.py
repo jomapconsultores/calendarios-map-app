@@ -281,6 +281,21 @@ class SupabaseAPI:
             print(f'[supabase.update_where] {table}: {e}')
             return []
 
+    def delete_where(self, table, filters):
+        """DELETE condicional en una sola query: borra todas las filas que coinciden
+        con TODOS los `filters` (ej. {'user_id': uid}), sin SELECT previo por fila."""
+        q = f'{self.url}/rest/v1/{table}?' + '&'.join(f'{k}=eq.{v}' for k, v in filters.items())
+        h = {'Prefer': 'return=minimal'}
+        try:
+            r = self._session.delete(q, headers=h, timeout=self._timeout)
+            if r.status_code in [200, 204]:
+                return True
+            print(f'[supabase.delete_where] {table}: HTTP {r.status_code} {r.text[:120]}')
+            return False
+        except Exception as e:
+            print(f'[supabase.delete_where] {table}: {e}')
+            return False
+
     def get_q(self, table, query_params=None, select='*'):
         """Query with raw PostgREST filter params, e.g. {'status': 'eq.done'}."""
         q = f'{self.url}/rest/v1/{table}?select={select}'
@@ -1019,8 +1034,7 @@ def _delete_user_cascade(app, uid):
     para no dejar huérfanas en calendar_permissions/webauthn_credentials/etc."""
     for tbl in ['calendar_permissions', 'webauthn_credentials', 'face_descriptors',
                 'ms_account_permissions']:
-        for row in app.supabase.get(tbl, {'user_id': uid}, select='id'):
-            app.supabase.delete(tbl, row['id'])
+        app.supabase.delete_where(tbl, {'user_id': uid})
     ok = app.supabase.delete('users', uid)
     _user_cal_cache.invalidate(uid)
     return ok
@@ -1938,15 +1952,13 @@ def create_app():
         app.supabase.update('users', uid, {'modules': ','.join(mod_ids)})
         # Calendarios
         cal_ids = request.form.getlist('calendars')
-        for p in app.supabase.get('calendar_permissions', {'user_id': uid}, select='id'):
-            app.supabase.delete('calendar_permissions', p['id'])
+        app.supabase.delete_where('calendar_permissions', {'user_id': uid})
         for cal_id in cal_ids:
             app.supabase.insert('calendar_permissions',
                 {'user_id': uid, 'calendar_id': cal_id, 'status': 'approved'})
         # Cuentas Microsoft autorizadas
         ms_emails = request.form.getlist('ms_emails')
-        for p in app.supabase.get('ms_account_permissions', {'user_id': uid}, select='id'):
-            app.supabase.delete('ms_account_permissions', p['id'])
+        app.supabase.delete_where('ms_account_permissions', {'user_id': uid})
         for ms_email in ms_emails:
             app.supabase.insert('ms_account_permissions',
                 {'user_id': uid, 'ms_email': ms_email})
@@ -2945,13 +2957,17 @@ def create_app():
         # Independiente del usuario: se consulta una sola vez fuera del bucle.
         rows = app.supabase.get('tasks',
             select='id,due_date,status,created_by,assigned_to,assigned_email,ms_email,source') or []
+        ms_perms_all = app.supabase.get('ms_account_permissions', select='user_id,ms_email') or []
+        ms_by_user = defaultdict(list)
+        for p in ms_perms_all:
+            if p.get('ms_email'):
+                ms_by_user[p['user_id']].append(p['ms_email'])
         sent_total = 0
         for u in all_users:
             mods = (u.get('modules') or 'calendar,planning').split(',')
             if 'planning' not in mods and 'todo' not in mods: continue
             uid = u['id']
-            allowed_ms = set([r['ms_email'] for r in (app.supabase.get('ms_account_permissions',
-                {'user_id': uid}, select='ms_email') or []) if r.get('ms_email')])
+            allowed_ms = set(ms_by_user.get(uid, []))
             overdue = []
             for t in rows:
                 if t.get('status') == 'done': continue
@@ -3213,10 +3229,11 @@ def create_app():
         import time as _time
         DEADLINE = _time.monotonic() + 90
         deleted = 0; deleted_ms = 0; partial = False
+        rows = app.supabase.get_in('tasks', 'id', ids, select='*')
+        tasks_by_id = {r['id']: r for r in rows}
         for tid in ids:
             if _time.monotonic() > DEADLINE: partial = True; break
-            rows = app.supabase.get('tasks', {'id': tid}, select='*')
-            task = rows[0] if rows else None
+            task = tasks_by_id.get(tid)
             if app.supabase.delete('tasks', tid):
                 deleted += 1
                 if task and delete_task_in_ms(app, task):
