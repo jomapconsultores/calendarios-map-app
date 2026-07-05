@@ -120,11 +120,16 @@
 .proj-pill-all.active{background:#64748b;color:#fff;border-color:#64748b}
 
 /* PESTAÑA PRINCIPAL: cuentas MS en /todo, proyectos en /planning.
-   Pestañas reales de Bootstrap (mismo look que las del modal de tareas), no pills. */
-.entity-tabs.nav-tabs{margin-bottom:14px;flex-wrap:nowrap;overflow-x:auto;overflow-y:hidden}
-.entity-tabs .nav-link{color:#64748b;font-size:.85rem;font-weight:600;cursor:pointer;white-space:nowrap}
-.entity-tabs .nav-link:hover{color:#4f46e5}
-.entity-tabs .nav-link.active{color:#4f46e5;font-weight:700}
+   Clases propias (NO .nav-link/.nav-item): esas ya las usa el sidebar global
+   (style.css) con estilo de píldora y "ganaban" el estilo aquí también. */
+.entity-tabs{display:flex;gap:2px;flex-wrap:nowrap;overflow-x:auto;overflow-y:hidden;
+  margin-bottom:14px;border-bottom:2px solid #e2e8f0}
+.etab{padding:9px 18px;border:1.5px solid transparent;border-bottom:none;
+  border-radius:10px 10px 0 0;background:transparent;font-size:.85rem;font-weight:600;
+  cursor:pointer;color:#64748b;white-space:nowrap;transition:.15s;margin-bottom:-2px}
+.etab:hover{background:#f8fafc;color:#4f46e5}
+.etab.active{background:#fff;border-color:#e2e8f0;color:#4f46e5;font-weight:700;
+  box-shadow:0 -2px 6px rgba(0,0,0,.04)}
 @media(max-width:768px){.entity-tabs{flex-wrap:nowrap}}
 
 /* MODALS */
@@ -290,7 +295,7 @@ input[type=range].prog-range{accent-color:#4f46e5;width:100%}
 </div>
 
 <!-- PESTAÑA PRINCIPAL: cuentas MS (/todo) o proyectos (/planning) -->
-<ul class="nav nav-tabs entity-tabs" id="entityTabs"></ul>
+<div class="entity-tabs" id="entityTabs"></div>
 
 <!-- FILTRO DE TIEMPO (fusiona los antiguos time-pills + panel de foco) -->
 <div id="timeFocusBar" style="margin:6px 0 14px"></div>
@@ -959,35 +964,35 @@ function renderEntityTabs() {
     const accounts = [...new Set(allTasks.map(t => t.ms_email).filter(Boolean))].sort();
     const hasManual = allTasks.some(t => !t.ms_email);
     const countBy = (pred) => allTasks.filter(t => (showDone || t.status !== 'done') && pred(t)).length;
-    let html = `<li class="nav-item"><a class="nav-link ${!curAccount?'active':''}" href="#" onclick="setAccount(null);return false">
+    let html = `<button class="etab ${!curAccount?'active':''}" onclick="setAccount(null)">
       📋 Todas <span class="badge bg-secondary ms-1" style="font-size:.65rem">${countBy(()=>true)}</span>
-    </a></li>`;
+    </button>`;
     if (hasManual) {
       const n = countBy(t => !t.ms_email);
-      html += `<li class="nav-item"><a class="nav-link ${curAccount==='__manual__'?'active':''}"
-        href="#" onclick="setAccount('__manual__');return false"
-        style="${curAccount==='__manual__'?'color:#4f46e5':''}">✍️ Sistema <span class="badge bg-light text-dark ms-1" style="font-size:.65rem">${n}</span></a></li>`;
+      html += `<button class="etab ${curAccount==='__manual__'?'active':''}"
+        onclick="setAccount('__manual__')"
+        style="${curAccount==='__manual__'?'color:#4f46e5':''}">✍️ Sistema <span class="badge bg-light text-dark ms-1" style="font-size:.65rem">${n}</span></button>`;
     }
     accounts.forEach(a => {
       const col = colorForAccount(a);
       const n = countBy(t => t.ms_email === a);
-      html += `<li class="nav-item"><a class="nav-link ${curAccount===a?'active':''}"
-        href="#" onclick="setAccount('${a}');return false" title="${esc(a)}"
+      html += `<button class="etab ${curAccount===a?'active':''}"
+        onclick="setAccount('${a}')" title="${esc(a)}"
         style="${curAccount===a?'color:'+col:''}">
         📧 ${esc(shortAccount(a))} <span class="badge bg-light text-dark ms-1" style="font-size:.65rem;color:#333!important">${n}</span>
-      </a></li>`;
+      </button>`;
     });
     c.innerHTML = html;
   } else {
-    let html = `<li class="nav-item"><a class="nav-link ${!curProject?'active':''}" href="#" onclick="setProject(null);return false">Todos</a></li>`;
+    let html = `<button class="etab ${!curProject?'active':''}" onclick="setProject(null)">Todos</button>`;
     allProjects.forEach(p => {
-      html += `<li class="nav-item"><a class="nav-link ${curProject===p.id?'active':''}"
-        href="#" onclick="setProject('${p.id}');return false"
+      html += `<button class="etab ${curProject===p.id?'active':''}"
+        onclick="setProject('${p.id}')"
         ondblclick="openProjectModal('${p.id}')"
         style="${curProject===p.id?'color:'+p.color:''}"
         title="Doble clic para editar">
         ${esc(p.name)}
-      </a></li>`;
+      </button>`;
     });
     c.innerHTML = html;
   }
