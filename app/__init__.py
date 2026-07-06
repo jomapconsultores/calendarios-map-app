@@ -3637,9 +3637,11 @@ def create_app():
                 'proyecto': '_project_name',
             }
             headers = [alias.get(h, h) for h in raw_headers]
-            # Build project name map
+            # Build project name map -- solo proyectos que el usuario puede ver (rol activo),
+            # igual que planning_create_task/planning_update_task; si no, el import podría
+            # asignar tareas a un proyecto fuera de su rol con solo adivinar el nombre.
             proj_by_name = {p['name'].lower(): p['id']
-                            for p in (app.supabase.get('projects', select='id,name') or [])}
+                            for p in get_user_projects(app, current_user.id)}
             imported = 0; errors = 0
             for row in ws.iter_rows(min_row=2, values_only=True):
                 if all(v is None or str(v).strip() == '' for v in row): continue
