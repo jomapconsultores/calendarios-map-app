@@ -38,7 +38,7 @@
         <span class="nav-text"><span class="nav-title">Panel</span><span class="nav-desc">Resumen general</span></span>
       </a>
 
-      {% if is_adm or 'calendar' in current_user.modules %}
+      {% if is_adm or 'calendar' in active_modules %}
       <div class="nav-group {{ 'open' if path.startswith('/calendar') }}">
         <a href="/calendar" class="nav-link {{ 'active' if path == '/calendar' }}" data-toggle-group title="Agenda de citas y feriados">
           <span class="nav-icon">📅</span>
@@ -53,7 +53,7 @@
       </div>
       {% endif %}
 
-      {% if is_adm or 'planning' in current_user.modules %}
+      {% if is_adm or 'planning' in active_modules %}
       <div class="nav-group {{ 'open' if path.startswith('/planning') }}">
         <a href="/planning" class="nav-link {{ 'active' if path == '/planning' }}" data-toggle-group title="Proyectos y tareas internas del equipo">
           <span class="nav-icon">📋</span>
@@ -69,7 +69,7 @@
       </div>
       {% endif %}
 
-      {% if is_adm or 'todo' in current_user.modules %}
+      {% if is_adm or 'todo' in active_modules %}
       <div class="nav-group {{ 'open' if path.startswith('/todo') }}">
         <a href="/todo" class="nav-link {{ 'active' if path == '/todo' }}" data-toggle-group title="Tareas sincronizadas desde Microsoft To-Do">
           <span class="nav-icon">✅</span>
@@ -100,6 +100,17 @@
         <ul class="nav-sub">
           <li><a href="/admin/users#registrados">👤 Registrados</a></li>
           <li><a href="/admin/users#pending">📨 Solicitudes</a></li>
+        </ul>
+      </div>
+
+      <div class="nav-group {{ 'open' if path.startswith('/admin/roles') }}">
+        <a href="/admin/roles" class="nav-link {{ 'active' if path == '/admin/roles' }}" data-toggle-group title="Roles de negocio: módulos, calendarios, proyectos y cuentas MS que otorga cada uno">
+          <span class="nav-icon">🎛️</span>
+          <span class="nav-text"><span class="nav-title">Roles</span><span class="nav-desc">Permisos por rol</span></span>
+          <span class="nav-caret">▶</span>
+        </a>
+        <ul class="nav-sub">
+          <li><a href="/admin/roles">🎛️ Catálogo de roles</a></li>
         </ul>
       </div>
 
@@ -174,6 +185,17 @@
           {% endif %}
         {% endif %}
         {% endblock %}
+        {% if user_roles_list|length > 1 %}
+        <form method="POST" action="/account/active-role" class="role-switcher-form" style="margin:0">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <select name="role_id" class="form-select form-select-sm" style="max-width:200px"
+                  title="Cambiar de rol activo" onchange="this.form.submit()">
+            {% for r in user_roles_list %}
+            <option value="{{ r.id }}" {{ 'selected' if r.id == active_role_id }}>{{ r.name }}</option>
+            {% endfor %}
+          </select>
+        </form>
+        {% endif %}
         <a href="/profile" class="topbar-user" title="Mi perfil">
           <span class="topbar-name">{{ current_user.full_name }}</span>
           <span class="topbar-role">{{ 'Administrador' if is_adm else 'Staff' }}</span>

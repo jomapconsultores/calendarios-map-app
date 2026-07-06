@@ -30,7 +30,7 @@
       <div class="mb-3">
         <p class="text-muted small mb-2"><strong>Módulos habilitados:</strong></p>
         {%for mid, mlabel in all_modules%}
-          {%if mid in current_user.modules%}
+          {%if mid in active_modules%}
           <span class="badge bg-primary me-1 mb-1" style="font-size:.8rem">{{mlabel}}</span>
           {%else%}
           <span class="badge bg-secondary bg-opacity-25 text-secondary me-1 mb-1" style="font-size:.8rem">{{mlabel}}</span>

@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, redirect, url_for, flash, session, jsonify, send_from_directory, send_file
+from flask import Flask, render_template, request, redirect, url_for, flash, session, jsonify, send_from_directory, send_file, g, current_app
 from flask_login import LoginManager, login_user, logout_user, login_required, current_user, UserMixin
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
@@ -118,6 +118,8 @@ class TTLCache:
 _cal_cache      = TTLCache(ttl=300)   # calendar_config — 5 min
 _user_cal_cache = TTLCache(ttl=10)    # user calendars  — 10 s (corto: multi-worker safe)
 _google_cache   = TTLCache(ttl=120)   # google status   — 2 min
+_role_cache       = TTLCache(ttl=300)  # grants de un rol (modules/calendarios/proyectos/cuentas MS) — 5 min
+_user_roles_cache = TTLCache(ttl=10)   # roles asignados a un usuario — 10 s
 
 
 # ============================================================
@@ -158,7 +160,7 @@ class SupabaseAPI:
         q = f'{self.url}/rest/v1/{table}?select={select}'
         if filters:
             for k, v in filters.items():
-                q += f'&{k}=eq.{v}'
+                q += f'&{k}=eq.{_url_quote(str(v), safe="")}'
         try:
             r = self._session.get(q, timeout=self._timeout)
             if r.status_code == 200:
@@ -173,7 +175,7 @@ class SupabaseAPI:
         """Single query WHERE column IN (values)."""
         if not values:
             return []
-        ids = ','.join(str(v) for v in values)
+        ids = ','.join(_url_quote(str(v), safe='') for v in values)
         q = f'{self.url}/rest/v1/{table}?select={select}&{column}=in.({ids})'
         try:
             r = self._session.get(q, timeout=self._timeout)
@@ -238,7 +240,7 @@ class SupabaseAPI:
         h = {'Prefer': 'return=minimal'}
         try:
             r = self._session.patch(
-                f'{self.url}/rest/v1/{table}?{id_col}=eq.{id_val}',
+                f'{self.url}/rest/v1/{table}?{id_col}=eq.{_url_quote(str(id_val), safe="")}',
                 headers=h, json=data, timeout=self._timeout)
             if r.status_code in [200, 204]:
                 return True
@@ -252,7 +254,7 @@ class SupabaseAPI:
         h = {'Prefer': 'return=minimal'}
         try:
             r = self._session.delete(
-                f'{self.url}/rest/v1/{table}?{id_col}=eq.{id_val}',
+                f'{self.url}/rest/v1/{table}?{id_col}=eq.{_url_quote(str(id_val), safe="")}',
                 headers=h, timeout=self._timeout)
             if r.status_code in [200, 204]:
                 return True
@@ -266,7 +268,8 @@ class SupabaseAPI:
         """PATCH condicional: solo aplica si TODAS las filas coinciden con `filters`
         (ej. {'id': aid, 'status': 'pending'}). Devuelve las filas actualizadas
         (lista vacía si ninguna coincidía, útil para evitar TOCTOU al 'reclamar' una fila)."""
-        q = f'{self.url}/rest/v1/{table}?' + '&'.join(f'{k}=eq.{v}' for k, v in filters.items())
+        q = f'{self.url}/rest/v1/{table}?' + '&'.join(
+            f'{k}=eq.{_url_quote(str(v), safe="")}' for k, v in filters.items())
         h = {'Prefer': 'return=representation'}
         try:
             r = self._session.patch(q, headers=h, json=data, timeout=self._timeout)
@@ -973,24 +976,127 @@ def _build_attendees(apt, email_map):
         _add(GOOGLE_ACCOUNT_EMAIL)
     return attendees
 
-def get_user_calendars(app, uid):
-    """Cached user calendars (90 s)."""
-    val, hit = _user_cal_cache.get(uid)
-    if hit:
-        return val
-    perms = app.supabase.get('calendar_permissions',
-        {'user_id': uid, 'status': 'approved'}, select='calendar_id')
-    cal_ids = {p['calendar_id'] for p in perms}
-    all_cals = _get_calendar_config(app)
-    result = [c for c in all_cals if c['calendar_id'] in cal_ids]
-    _user_cal_cache.set(uid, result)
-    return result
-
-def user_has_calendar_access(app, uid, calendar_id):
-    return any(c['calendar_id'] == calendar_id for c in get_user_calendars(app, uid))
-
 def is_admin():
     return current_user.is_authenticated and current_user.role == 'admin'
+
+# ============================================================
+#  ROLES MULTIPLES — un usuario puede tener varios roles de negocio
+#  (ej. "Encargado de Cuenca", "Auditor"), cada uno con su propio paquete de
+#  modulos + calendarios + proyectos + cuentas MS. Reemplaza el modelo directo
+#  de users.modules/calendar_permissions/ms_account_permissions como fuente de
+#  autorizacion (esas tablas se conservan como respaldo, ver migrations/014-015).
+# ============================================================
+def get_user_roles(app, uid):
+    """Roles asignados a un usuario: [{id, name, description}]."""
+    val, hit = _user_roles_cache.get(uid)
+    if hit:
+        return val
+    rows = app.supabase.get('user_roles', {'user_id': uid}, select='role_id')
+    role_ids = [r['role_id'] for r in (rows or [])]
+    result = app.supabase.get_in('roles', 'id', role_ids, select='id,name,description') if role_ids else []
+    _user_roles_cache.set(uid, result)
+    return result
+
+def role_grants(app, role_id):
+    """{modules, calendar_ids, project_ids, ms_emails} otorgados por un rol."""
+    val, hit = _role_cache.get(role_id)
+    if hit:
+        return val
+    role = app.supabase.get('roles', {'id': role_id}, select='modules')
+    modules = [m.strip() for m in (role[0].get('modules') or '').split(',') if m.strip()] if role else []
+    cals  = app.supabase.get('role_calendars',   {'role_id': role_id}, select='calendar_id')
+    projs = app.supabase.get('role_projects',    {'role_id': role_id}, select='project_id')
+    msacc = app.supabase.get('role_ms_accounts', {'role_id': role_id}, select='ms_email')
+    result = {
+        'modules':      modules,
+        'calendar_ids': {c['calendar_id'] for c in (cals or [])},
+        'project_ids':  {p['project_id']  for p in (projs or [])},
+        'ms_emails':    {m['ms_email']    for m in (msacc or [])},
+    }
+    _role_cache.set(role_id, result)
+    return result
+
+def get_active_role_id(app, uid):
+    """Rol activo del usuario, memoizado por request. Si la elección guardada
+    ya no le pertenece (rol borrado/reasignado), cae al primero de sus roles."""
+    if hasattr(g, '_active_role_id'):
+        return g._active_role_id
+    roles = get_user_roles(app, uid)
+    if not roles:
+        g._active_role_id = None
+        return None
+    role_ids = {r['id'] for r in roles}
+    choice = session.get('active_role_id')
+    if choice not in role_ids:
+        choice = roles[0]['id']
+        session['active_role_id'] = choice
+    g._active_role_id = choice
+    return choice
+
+def get_active_role_grants(app, uid):
+    rid = get_active_role_id(app, uid)
+    if not rid:
+        return {'modules': [], 'calendar_ids': set(), 'project_ids': set(), 'ms_emails': set()}
+    return role_grants(app, rid)
+
+def get_user_calendars(app, uid):
+    """Calendarios visibles según el rol activo (admins ven todos)."""
+    if is_admin():
+        return _get_calendar_config(app)
+    grants = get_active_role_grants(app, uid)
+    all_cals = _get_calendar_config(app)
+    return [c for c in all_cals if c['calendar_id'] in grants['calendar_ids']]
+
+def user_has_calendar_access(app, uid, calendar_id):
+    if is_admin():
+        return True
+    return calendar_id in get_active_role_grants(app, uid)['calendar_ids']
+
+def get_user_projects(app, uid):
+    """Proyectos visibles según el rol activo (admins ven todos)."""
+    if is_admin():
+        return app.supabase.get('projects', select='*') or []
+    ids = list(get_active_role_grants(app, uid)['project_ids'])
+    return app.supabase.get_in('projects', 'id', ids, select='*') if ids else []
+
+def user_has_project_access(app, uid, project_id):
+    if is_admin():
+        return True
+    return project_id in get_active_role_grants(app, uid)['project_ids']
+
+def _grant_calendar_via_role(app, uid, calendar_id):
+    """Aprobar una solicitud de /register ya no alcanza con marcar calendar_permissions
+    como 'approved' (esa tabla dejó de ser autoritativa) — crea o extiende un rol
+    personal del usuario ("Acceso - {nombre}") que le da el módulo 'calendar' + ese
+    calendario, y se lo asigna, para que 'Aprobar' siga otorgando acceso real."""
+    user = app.supabase.get('users', {'id': uid}, select='full_name')
+    full_name = user[0]['full_name'] if user else uid
+    role_name = f'Acceso - {full_name}'
+    role_id = None
+    for ur in (app.supabase.get('user_roles', {'user_id': uid}, select='role_id') or []):
+        r = app.supabase.get('roles', {'id': ur['role_id']}, select='id,name,modules,created_by')
+        # Coincide por nombre Y por haber sido generado por este mismo flujo --
+        # evita reusar/mutar un rol creado a mano por el admin que casualmente
+        # tenga el mismo nombre "Acceso - {nombre}".
+        if r and r[0]['name'] == role_name and r[0].get('created_by') == 'admin_approve':
+            role_id = r[0]['id']
+            mods = {m for m in (r[0].get('modules') or '').split(',') if m}
+            if 'calendar' not in mods:
+                mods.add('calendar')
+                app.supabase.update('roles', role_id, {'modules': ','.join(mods)})
+            break
+    if not role_id:
+        created = app.supabase.insert('roles', {
+            'name': role_name,
+            'description': 'Rol generado al aprobar una solicitud de acceso a calendario.',
+            'modules': 'calendar', 'created_by': 'admin_approve'})
+        role_id = created[0]['id'] if created else None
+        if role_id:
+            app.supabase.insert('user_roles', {'user_id': uid, 'role_id': role_id})
+    if role_id:
+        app.supabase.insert_ignore('role_calendars', {'role_id': role_id, 'calendar_id': calendar_id})
+        _role_cache.invalidate(role_id)
+        _user_roles_cache.invalidate(uid)
 
 def csrf_protect(view):
     """Exige un csrf_token válido (form field o header X-CSRFToken) en rutas
@@ -1010,53 +1116,66 @@ def csrf_protect(view):
     return wrapped
 
 def get_user_ms_emails(app, uid):
-    """Lista de cuentas MS que el usuario tiene autorizadas (admins ven todas)."""
-    rows = app.supabase.get('ms_account_permissions', {'user_id': uid}, select='ms_email')
-    return [r['ms_email'] for r in (rows or [])]
+    """Cuentas MS autorizadas según el rol activo (admins ven todas)."""
+    if is_admin():
+        return [t['email'] for t in (app.supabase.get('ms_tokens', select='email') or []) if t.get('email')]
+    return list(get_active_role_grants(app, uid)['ms_emails'])
 
 def _delete_user_cascade(app, uid):
     """Borra las filas relacionadas (permisos, credenciales) antes del usuario,
     para no dejar huérfanas en calendar_permissions/webauthn_credentials/etc."""
     for tbl in ['calendar_permissions', 'webauthn_credentials', 'face_descriptors',
-                'ms_account_permissions']:
+                'ms_account_permissions', 'user_roles']:
         for row in app.supabase.get(tbl, {'user_id': uid}, select='id'):
             app.supabase.delete(tbl, row['id'])
     ok = app.supabase.delete('users', uid)
     _user_cal_cache.invalidate(uid)
     return ok
 
+def _project_allowed(app, task, uid):
+    """Chequeo adicional de alcance por proyecto: solo aplica si la tarea tiene
+    project_id (nunca oculta tareas manuales sueltas que ya eran visibles por
+    dueño/asignado — es aditivo, no retroactivo). Admins bypasean vía is_admin()
+    en el llamador."""
+    pid = task.get('project_id')
+    if not pid:
+        return True
+    return pid in get_active_role_grants(app, uid)['project_ids']
+
 def _filter_visible_tasks(app, rows, uid):
     """Misma regla de visibilidad usada en GET /planning/api/tasks: admins ven todo;
-    el resto solo tareas MS de cuentas autorizadas o tareas manuales propias/asignadas."""
+    el resto solo tareas MS de cuentas autorizadas o tareas manuales propias/asignadas,
+    y si la tarea pertenece a un proyecto, ese proyecto debe estar en el rol activo."""
     if is_admin():
         return rows
     allowed_ms = set(get_user_ms_emails(app, uid))
-    has_todo = 'todo' in getattr(current_user, 'modules', [])
-    has_plan = 'planning' in getattr(current_user, 'modules', [])
+    grants = get_active_role_grants(app, uid)
+    has_todo = 'todo' in grants['modules']
+    has_plan = 'planning' in grants['modules']
     suid = str(uid)
     def visible(t):
         if t.get('source') == 'ms_todo':
             if not has_todo: return False
-            return (t.get('ms_email') or '') in allowed_ms
+            if (t.get('ms_email') or '') not in allowed_ms: return False
+            return _project_allowed(app, t, uid)
         if not has_plan: return False
-        if t.get('created_by') == suid: return True
-        if t.get('assigned_to') == suid: return True
-        if (t.get('assigned_email') or '').lower() == (current_user.email or '').lower():
-            return True
-        return False
+        owns = (t.get('created_by') == suid or t.get('assigned_to') == suid or
+                (t.get('assigned_email') or '').lower() == (current_user.email or '').lower())
+        if not owns: return False
+        return _project_allowed(app, t, uid)
     return [t for t in rows if visible(t)]
 
 def _user_owns_task(app, task, uid):
     """Misma regla de propiedad usada en planning_bulk_update: admins la evitan (is_admin() aparte)."""
     if task.get('source') == 'ms_todo':
-        return (task.get('ms_email') or '') in set(get_user_ms_emails(app, uid))
-    if task.get('created_by') == str(uid):
-        return True
-    if task.get('assigned_to') == str(uid):
-        return True
-    if (task.get('assigned_email') or '').lower() == (current_user.email or '').lower():
-        return True
-    return False
+        if (task.get('ms_email') or '') not in set(get_user_ms_emails(app, uid)):
+            return False
+        return _project_allowed(app, task, uid)
+    owns = (task.get('created_by') == str(uid) or task.get('assigned_to') == str(uid) or
+            (task.get('assigned_email') or '').lower() == (current_user.email or '').lower())
+    if not owns:
+        return False
+    return _project_allowed(app, task, uid)
 
 # ============================================================
 #  WEB PUSH (VAPID + notificaciones)
@@ -1118,9 +1237,9 @@ def send_push_to_user(app, user_id, title, body, url='/dashboard'):
 
 
 def user_can(module):
-    """True si el usuario tiene acceso al módulo (admins siempre sí)."""
+    """True si el módulo está en el rol activo del usuario (admins siempre sí)."""
     if is_admin(): return True
-    return module in getattr(current_user, 'modules', [])
+    return module in get_active_role_grants(current_app, current_user.id)['modules']
 
 
 # ============================================================
@@ -1346,7 +1465,19 @@ def create_app():
                     _google_cache.set(cache_key, (connected, needs_reauth))
         except Exception:
             pass
-        return {'google_connected_global': connected, 'google_needs_reauth': needs_reauth}
+        user_roles_list = []
+        active_role_id = None
+        active_modules = []
+        if current_user.is_authenticated and app.supabase:
+            try:
+                user_roles_list = get_user_roles(app, current_user.id)
+                active_role_id = get_active_role_id(app, current_user.id)
+                active_modules = get_active_role_grants(app, current_user.id)['modules'] if not is_admin() else [m[0] for m in ALL_MODULES]
+            except Exception:
+                pass
+        return {'google_connected_global': connected, 'google_needs_reauth': needs_reauth,
+                'user_roles_list': user_roles_list, 'active_role_id': active_role_id,
+                'active_modules': active_modules}
 
     # ============================================================
     #  PUBLIC ROUTES
@@ -1368,10 +1499,28 @@ def create_app():
                 return render_template('login.html')
             users = app.supabase.get('users', {'email': email})
             if users and check_password_hash(users[0]['password_hash'], pw):
-                login_user(User(users[0]))
+                u = users[0]
+                login_user(User(u))
+                roles = get_user_roles(app, u['id'])
+                role_ids = {r['id'] for r in roles}
+                stored = u.get('active_role_id')
+                session['active_role_id'] = stored if stored in role_ids else (roles[0]['id'] if roles else None)
                 return redirect(_safe_next_path(request.args.get('next')))
             flash('Email o contraseña incorrectos.', 'danger')
         return render_template('login.html')
+
+    @app.route('/account/active-role', methods=['POST'])
+    @login_required
+    @csrf_protect
+    def set_active_role():
+        role_id = request.form.get('role_id')
+        valid_ids = {r['id'] for r in get_user_roles(app, current_user.id)}
+        if role_id not in valid_ids:
+            flash('Rol inválido.', 'danger')
+            return redirect(request.referrer or '/dashboard')
+        session['active_role_id'] = role_id
+        app.supabase.update('users', current_user.id, {'active_role_id': role_id})
+        return redirect(request.referrer or '/dashboard')
 
     # ============================================================
     #  WEBAUTHN — Face ID / huella (passkeys)
@@ -1786,26 +1935,17 @@ def create_app():
     def admin_users():
         if not is_admin():
             return redirect('/dashboard')
-        # 3 queries total (users, calendar_config, all permissions)
-        users     = app.supabase.get('users', select='id,email,full_name,role,modules,created_at')
+        users     = app.supabase.get('users', select='id,email,full_name,role,created_at')
         all_cals  = _get_calendar_config(app)
         all_perms = app.supabase.get('calendar_permissions',
                         select='id,user_id,calendar_id,status')
         cal_by_id = {c['calendar_id']: c for c in all_cals}
-        # Group permissions in Python
-        approved_by_user = defaultdict(list)
-        pending_perms    = defaultdict(list)
-        for p in all_perms:
-            if p['status'] == 'approved':
-                approved_by_user[p['user_id']].append(p['calendar_id'])
-            elif p['status'] == 'pending':
-                pending_perms[p['user_id']].append(p)
-        # Attach calendars to each user
-        for u in users:
-            u['calendars'] = [cal_by_id[cid] for cid in approved_by_user.get(u['id'], [])
-                              if cid in cal_by_id]
         user_by_id = {u['id']: u for u in users}
-        # Build pending list
+        # Solicitudes pendientes (calendar_permissions sigue siendo donde /register las deja)
+        pending_perms = defaultdict(list)
+        for p in all_perms:
+            if p['status'] == 'pending':
+                pending_perms[p['user_id']].append(p)
         pending = []; pending_all = []
         for uid, perms_list in pending_perms.items():
             for p in perms_list:
@@ -1818,26 +1958,113 @@ def create_app():
                 'calendars':  [cal_by_id[p['calendar_id']] for p in perms_list
                                if p['calendar_id'] in cal_by_id],
             })
-        # Cuentas MS conectadas + permisos por usuario + conteos
-        ms_accounts_raw = app.supabase.get('ms_tokens', select='email') or []
-        ms_accounts = [t.get('email','') for t in ms_accounts_raw if t.get('email')]
-        # Contar tareas por cuenta para mostrar al admin la magnitud (1 sola query, no N+1)
-        ms_counts = {ms: 0 for ms in ms_accounts}
-        ms_task_rows = app.supabase.get('tasks', {'source': 'ms_todo'}, select='ms_email') or []
-        for r in ms_task_rows:
-            ms = r.get('ms_email')
-            if ms in ms_counts:
-                ms_counts[ms] += 1
-        ms_perms_all = app.supabase.get('ms_account_permissions', select='user_id,ms_email') or []
-        ms_by_user = defaultdict(list)
-        for p in ms_perms_all:
-            ms_by_user[p['user_id']].append(p['ms_email'])
+        # Roles: catálogo completo + cuáles tiene cada usuario
+        all_roles = app.supabase.get('roles', select='id,name') or []
+        user_roles_all = app.supabase.get('user_roles', select='user_id,role_id') or []
+        roles_by_user = defaultdict(set)
+        for ur in user_roles_all:
+            roles_by_user[ur['user_id']].add(ur['role_id'])
         for u in users:
-            u['ms_emails'] = ms_by_user.get(u['id'], [])
+            u['role_ids'] = roles_by_user.get(u['id'], set())
         return render_template('admin_users.html', users=users, calendarios=all_cals,
                                pending=pending, pending_all=pending_all,
-                               all_modules=ALL_MODULES, ms_accounts=ms_accounts,
-                               ms_counts=ms_counts)
+                               all_roles=all_roles)
+
+    # ============================================================
+    #  ADMIN — ROLES (catálogo de roles: módulos + calendarios + proyectos + cuentas MS)
+    # ============================================================
+    @app.route('/admin/roles')
+    @login_required
+    def admin_roles():
+        if not is_admin():
+            return redirect('/dashboard')
+        roles = app.supabase.get('roles', select='id,name,description,modules,created_at') or []
+        all_cals = _get_calendar_config(app)
+        all_projects = app.supabase.get('projects', select='id,name') or []
+        ms_accounts = [t.get('email','') for t in (app.supabase.get('ms_tokens', select='email') or []) if t.get('email')]
+        cal_ids   = app.supabase.get('role_calendars',   select='role_id,calendar_id') or []
+        proj_ids  = app.supabase.get('role_projects',    select='role_id,project_id') or []
+        ms_ids    = app.supabase.get('role_ms_accounts', select='role_id,ms_email') or []
+        cals_by_role = defaultdict(set); projs_by_role = defaultdict(set); ms_by_role = defaultdict(set)
+        for r in cal_ids:  cals_by_role[r['role_id']].add(r['calendar_id'])
+        for r in proj_ids: projs_by_role[r['role_id']].add(r['project_id'])
+        for r in ms_ids:   ms_by_role[r['role_id']].add(r['ms_email'])
+        user_roles_all = app.supabase.get('user_roles', select='user_id,role_id') or []
+        users_by_role = defaultdict(int)
+        for ur in user_roles_all:
+            users_by_role[ur['role_id']] += 1
+        for r in roles:
+            r['modules_list']  = [m for m in (r.get('modules') or '').split(',') if m]
+            r['calendar_ids']  = cals_by_role.get(r['id'], set())
+            r['project_ids']   = projs_by_role.get(r['id'], set())
+            r['ms_emails']     = ms_by_role.get(r['id'], set())
+            r['user_count']    = users_by_role.get(r['id'], 0)
+        return render_template('admin_roles.html', roles=roles, calendarios=all_cals,
+                               projects=all_projects, ms_accounts=ms_accounts, all_modules=ALL_MODULES)
+
+    @app.route('/admin/roles/create', methods=['POST'])
+    @login_required
+    @csrf_protect
+    def admin_roles_create():
+        if not is_admin(): return jsonify({'success': False})
+        name = _sanitize(request.form.get('name', ''), 150)
+        if not name:
+            flash('El rol necesita un nombre.', 'danger')
+            return redirect('/admin/roles')
+        data = {
+            'name': name,
+            'description': _sanitize(request.form.get('description', ''), 500),
+            'modules': ','.join(request.form.getlist('modules')),
+            'created_by': str(current_user.id),
+        }
+        created = app.supabase.insert('roles', data)
+        role_id = created[0]['id'] if created else None
+        if role_id:
+            for cid in request.form.getlist('calendars'):
+                app.supabase.insert_ignore('role_calendars', {'role_id': role_id, 'calendar_id': cid})
+            for pid in request.form.getlist('projects'):
+                app.supabase.insert_ignore('role_projects', {'role_id': role_id, 'project_id': pid})
+            for ms in request.form.getlist('ms_accounts'):
+                app.supabase.insert_ignore('role_ms_accounts', {'role_id': role_id, 'ms_email': ms})
+        flash('Rol creado', 'success')
+        return redirect('/admin/roles')
+
+    @app.route('/admin/roles/update/<rid>', methods=['POST'])
+    @login_required
+    @csrf_protect
+    def admin_roles_update(rid):
+        if not is_admin(): return jsonify({'success': False})
+        name = _sanitize(request.form.get('name', ''), 150)
+        if not name:
+            flash('El rol necesita un nombre.', 'danger')
+            return redirect('/admin/roles')
+        app.supabase.update('roles', rid, {
+            'name': name,
+            'description': _sanitize(request.form.get('description', ''), 500),
+            'modules': ','.join(request.form.getlist('modules')),
+        })
+        for tbl, field, values in (
+            ('role_calendars',   'calendar_id', request.form.getlist('calendars')),
+            ('role_projects',    'project_id',  request.form.getlist('projects')),
+            ('role_ms_accounts', 'ms_email',    request.form.getlist('ms_accounts')),
+        ):
+            for row in app.supabase.get(tbl, {'role_id': rid}, select='id'):
+                app.supabase.delete(tbl, row['id'])
+            for v in values:
+                app.supabase.insert_ignore(tbl, {'role_id': rid, field: v})
+        _role_cache.invalidate(rid)
+        flash('Rol actualizado', 'success')
+        return redirect('/admin/roles')
+
+    @app.route('/admin/roles/delete/<rid>', methods=['POST'])
+    @login_required
+    @csrf_protect
+    def admin_roles_delete(rid):
+        if not is_admin(): return jsonify({'success': False})
+        app.supabase.delete('roles', rid)
+        _role_cache.invalidate(rid)
+        flash('Rol eliminado', 'success')
+        return redirect('/admin/roles')
 
     # ============================================================
     #  ADMIN — DATABASE
@@ -1933,23 +2160,13 @@ def create_app():
         if request.form.get('role'):
             data['role'] = request.form.get('role')
         if data: app.supabase.update('users', uid, data)
-        # Módulos
-        mod_ids = request.form.getlist('modules')
-        app.supabase.update('users', uid, {'modules': ','.join(mod_ids)})
-        # Calendarios
-        cal_ids = request.form.getlist('calendars')
-        for p in app.supabase.get('calendar_permissions', {'user_id': uid}, select='id'):
-            app.supabase.delete('calendar_permissions', p['id'])
-        for cal_id in cal_ids:
-            app.supabase.insert('calendar_permissions',
-                {'user_id': uid, 'calendar_id': cal_id, 'status': 'approved'})
-        # Cuentas Microsoft autorizadas
-        ms_emails = request.form.getlist('ms_emails')
-        for p in app.supabase.get('ms_account_permissions', {'user_id': uid}, select='id'):
-            app.supabase.delete('ms_account_permissions', p['id'])
-        for ms_email in ms_emails:
-            app.supabase.insert('ms_account_permissions',
-                {'user_id': uid, 'ms_email': ms_email})
+        # Roles asignados
+        role_ids = request.form.getlist('roles')
+        for p in app.supabase.get('user_roles', {'user_id': uid}, select='id'):
+            app.supabase.delete('user_roles', p['id'])
+        for rid in role_ids:
+            app.supabase.insert('user_roles', {'user_id': uid, 'role_id': rid})
+        _user_roles_cache.invalidate(uid)
         _user_cal_cache.invalidate(uid)
         flash('Usuario actualizado', 'success')
         return redirect('/admin/users')
@@ -1969,7 +2186,10 @@ def create_app():
     @csrf_protect
     def admin_approve_one(pid):
         if not is_admin(): return jsonify({'success': False})
+        rows = app.supabase.get('calendar_permissions', {'id': pid}, select='id,user_id,calendar_id')
         app.supabase.update('calendar_permissions', pid, {'status': 'approved'})
+        if rows:
+            _grant_calendar_via_role(app, rows[0]['user_id'], rows[0]['calendar_id'])
         _user_cal_cache.invalidate_prefix('')  # any user might be affected
         return jsonify({'success': True})
 
@@ -1988,8 +2208,9 @@ def create_app():
     def admin_approve_all(uid):
         if not is_admin(): return jsonify({'success': False})
         for p in app.supabase.get('calendar_permissions',
-                {'user_id': uid, 'status': 'pending'}, select='id'):
+                {'user_id': uid, 'status': 'pending'}, select='id,calendar_id'):
             app.supabase.update('calendar_permissions', p['id'], {'status': 'approved'})
+            _grant_calendar_via_role(app, uid, p['calendar_id'])
         _user_cal_cache.invalidate(uid)
         return jsonify({'success': True})
 
@@ -2011,23 +2232,10 @@ def create_app():
         """Calcula las cifras-tarjeta del panel para el usuario logueado."""
         today_iso = date.today().isoformat()
         in_7d_iso = (date.today() + timedelta(days=7)).isoformat()
-        # Tareas: aplica los mismos permisos que /planning/api/tasks
-        all_tasks = app.supabase.get('tasks', select='id,status,due_date,priority,source,ms_email,created_by,assigned_to,assigned_email,subtasks') or []
-        if not is_admin():
-            allowed_ms = set(get_user_ms_emails(app, current_user.id))
-            has_todo   = 'todo'     in getattr(current_user, 'modules', [])
-            has_plan   = 'planning' in getattr(current_user, 'modules', [])
-            uid = str(current_user.id)
-            def vis(t):
-                if t.get('source') == 'ms_todo':
-                    return has_todo and (t.get('ms_email') or '') in allowed_ms
-                if not has_plan: return False
-                if t.get('created_by') == uid: return True
-                if t.get('assigned_to') == uid: return True
-                if (t.get('assigned_email') or '').lower() == (current_user.email or '').lower():
-                    return True
-                return False
-            all_tasks = [t for t in all_tasks if vis(t)]
+        # Tareas: aplica los mismos permisos que /planning/api/tasks (rol activo + proyecto)
+        all_tasks = app.supabase.get('tasks',
+            select='id,status,due_date,priority,source,ms_email,created_by,assigned_to,assigned_email,subtasks,project_id') or []
+        all_tasks = _filter_visible_tasks(app, all_tasks, current_user.id)
         pending_all   = [t for t in all_tasks if t.get('status') != 'done']
         overdue       = [t for t in pending_all if t.get('due_date') and t['due_date'] < today_iso]
         today_tasks   = [t for t in pending_all if t.get('due_date') == today_iso]
@@ -2817,18 +3025,26 @@ def create_app():
     @app.route('/planning/api/projects', methods=['GET'])
     @login_required
     def planning_projects():
-        rows = app.supabase.get('projects', select='*')
-        return jsonify(rows or [])
+        return jsonify(get_user_projects(app, current_user.id))
 
     @app.route('/planning/api/projects', methods=['POST'])
     @login_required
     def planning_create_project():
+        if not user_can('planning'):
+            return jsonify({'success': False, 'error': 'Sin acceso al módulo Planificación'})
         d = request.get_json() or {}
         d['created_by'] = current_user.id
         d['name'] = _sanitize(d.get('name', ''), 200)
         if not d['name']: return jsonify({'success': False, 'error': 'Nombre requerido'})
         if 'color' in d: d['color'] = _sanitize_hex_color(d.get('color'))
         r = app.supabase.insert('projects', d)
+        if r and not is_admin():
+            # Otorgar el proyecto recién creado al rol activo del creador: si no,
+            # el control de acceso por proyecto le ocultaría su propio proyecto.
+            rid = get_active_role_id(app, current_user.id)
+            if rid:
+                app.supabase.insert_ignore('role_projects', {'role_id': rid, 'project_id': r[0]['id']})
+                _role_cache.invalidate(rid)
         return jsonify({'success': bool(r), 'project': r[0] if r else None})
 
     PROJECT_EDITABLE_FIELDS = {'name', 'description', 'color', 'status', 'priority',
@@ -2837,6 +3053,8 @@ def create_app():
     @app.route('/planning/api/projects/<pid>', methods=['PATCH'])
     @login_required
     def planning_update_project(pid):
+        if not is_admin() and not (user_can('planning') and user_has_project_access(app, current_user.id, pid)):
+            return jsonify({'success': False, 'error': 'Sin permisos sobre este proyecto'}), 403
         body = request.get_json() or {}
         d = {k: v for k, v in body.items() if k in PROJECT_EDITABLE_FIELDS}
         if 'name' in d:
@@ -2941,24 +3159,30 @@ def create_app():
         """Disparable por el cron externo: envía notificación a cada usuario con tareas vencidas hoy."""
         if not is_admin(): return jsonify({'success': False, 'error': 'Solo admin'})
         today_iso = date.today().isoformat()
-        all_users = app.supabase.get('users', select='id,full_name,email,modules') or []
+        all_users = app.supabase.get('users', select='id,full_name,email,active_role_id') or []
         # Independiente del usuario: se consulta una sola vez fuera del bucle.
         rows = app.supabase.get('tasks',
-            select='id,due_date,status,created_by,assigned_to,assigned_email,ms_email,source') or []
+            select='id,due_date,status,created_by,assigned_to,assigned_email,ms_email,source,project_id') or []
         sent_total = 0
+        empty_grants = {'modules': [], 'calendar_ids': set(), 'project_ids': set(), 'ms_emails': set()}
         for u in all_users:
-            mods = (u.get('modules') or 'calendar,planning').split(',')
-            if 'planning' not in mods and 'todo' not in mods: continue
             uid = u['id']
-            allowed_ms = set([r['ms_email'] for r in (app.supabase.get('ms_account_permissions',
-                {'user_id': uid}, select='ms_email') or []) if r.get('ms_email')])
+            # Job en segundo plano: se usa el rol activo PERSISTIDO de cada usuario
+            # (users.active_role_id), no session['active_role_id'] (eso es del admin
+            # que disparó el cron, no del usuario que se está evaluando).
+            grants = role_grants(app, u['active_role_id']) if u.get('active_role_id') else empty_grants
+            mods = grants['modules']
+            if 'planning' not in mods and 'todo' not in mods: continue
+            has_todo = 'todo' in mods
             overdue = []
             for t in rows:
                 if t.get('status') == 'done': continue
                 d = t.get('due_date')
                 if not d or d >= today_iso: continue
+                pid = t.get('project_id')
+                if pid and pid not in grants['project_ids']: continue
                 if t.get('source') == 'ms_todo':
-                    if (t.get('ms_email') or '') in allowed_ms: overdue.append(t)
+                    if has_todo and (t.get('ms_email') or '') in grants['ms_emails']: overdue.append(t)
                 else:
                     if (t.get('created_by') == uid or t.get('assigned_to') == uid or
                         (t.get('assigned_email') or '').lower() == (u.get('email') or '').lower()):
@@ -2997,6 +3221,14 @@ def create_app():
     @app.route('/planning/api/deps/<dep_id>', methods=['DELETE'])
     @login_required
     def planning_delete_dep(dep_id):
+        if not is_admin():
+            rows = app.supabase.get('task_deps', {'id': dep_id}, select='task_id')
+            if not rows:
+                return jsonify({'success': False, 'error': 'No encontrada'}), 404
+            task_rows = app.supabase.get('tasks', {'id': rows[0]['task_id']},
+                select='id,created_by,assigned_to,assigned_email,ms_email,source,project_id')
+            if not task_rows or not _user_owns_task(app, task_rows[0], current_user.id):
+                return jsonify({'success': False, 'error': 'Sin permisos'}), 403
         ok = app.supabase.delete('task_deps', dep_id)
         return jsonify({'success': ok})
 
@@ -3069,6 +3301,8 @@ def create_app():
         rows = app.supabase.get('tasks', {'id': tid}, select='*')
         if not rows: return jsonify({'success': False, 'error': 'Tarea no encontrada'})
         task = rows[0]
+        if not is_admin() and not _user_owns_task(app, task, current_user.id):
+            return jsonify({'success': False, 'error': 'Sin permisos'}), 403
         subs = task.get('subtasks') or []
         changed = False
         for s in subs:
@@ -3102,6 +3336,13 @@ def create_app():
     @login_required
     def planning_create_task():
         d = request.get_json() or {}
+        wants_ms = bool(d.get('ms_email') and d.get('ms_list_id'))
+        if not user_can('todo' if wants_ms else 'planning'):
+            return jsonify({'success': False, 'error': 'Sin acceso a este módulo'})
+        if wants_ms and not is_admin() and d['ms_email'] not in get_user_ms_emails(app, current_user.id):
+            return jsonify({'success': False, 'error': 'No tienes autorización sobre esa cuenta de Microsoft'})
+        if d.get('project_id') and not is_admin() and not user_has_project_access(app, current_user.id, d['project_id']):
+            return jsonify({'success': False, 'error': 'No tienes acceso a ese proyecto'})
         d['created_by'] = current_user.id
         d['title'] = _sanitize(d.get('title', ''), 300)
         if not d['title']: return jsonify({'success': False, 'error': 'Título requerido'})
@@ -3135,6 +3376,13 @@ def create_app():
             if not task or not _user_owns_task(app, task, current_user.id):
                 return jsonify({'success': False, 'error': 'Sin permisos'}), 403
         d = request.get_json() or {}
+        # No basta con validar el estado PREVIO de la tarea: si el body intenta
+        # reasignarla a un proyecto o cuenta MS fuera del rol activo, se rechaza.
+        if not is_admin():
+            if d.get('project_id') and not user_has_project_access(app, current_user.id, d['project_id']):
+                return jsonify({'success': False, 'error': 'No tienes acceso a ese proyecto'}), 403
+            if d.get('ms_email') and d['ms_email'] not in get_user_ms_emails(app, current_user.id):
+                return jsonify({'success': False, 'error': 'No tienes autorización sobre esa cuenta de Microsoft'}), 403
         d['updated_at'] = datetime.now(timezone.utc).isoformat()
         if d.get('status') == 'done' and not d.get('completed_date'):
             d['completed_date'] = date.today().isoformat()
@@ -3165,20 +3413,15 @@ def create_app():
         if patch.get('status') == 'done' and not patch.get('completed_date'):
             patch['completed_date'] = date.today().isoformat()
             patch['progress_pct']   = 100
-        # Permisos: si no es admin, valida que todas le pertenezcan
+        # Permisos: si no es admin, valida que todas le pertenezcan (dueño/asignado/cuenta MS + proyecto del rol activo)
         if not is_admin():
-            rows = app.supabase.get_in('tasks', 'id', ids, select='id,created_by,assigned_to,assigned_email,ms_email,source')
-            allowed_ms = set(get_user_ms_emails(app, current_user.id))
-            uid = str(current_user.id)
-            def own(t):
-                if t.get('source') == 'ms_todo':
-                    return (t.get('ms_email') or '') in allowed_ms
-                if t.get('created_by') == uid: return True
-                if t.get('assigned_to') == uid: return True
-                if (t.get('assigned_email') or '').lower() == (current_user.email or '').lower():
-                    return True
-                return False
-            ids = [t['id'] for t in rows if own(t)]
+            if patch.get('project_id') and not user_has_project_access(app, current_user.id, patch['project_id']):
+                return jsonify({'success': False, 'error': 'No tienes acceso a ese proyecto'}), 403
+            if patch.get('ms_email') and patch['ms_email'] not in get_user_ms_emails(app, current_user.id):
+                return jsonify({'success': False, 'error': 'No tienes autorización sobre esa cuenta de Microsoft'}), 403
+            rows = app.supabase.get_in('tasks', 'id', ids,
+                select='id,created_by,assigned_to,assigned_email,ms_email,source,project_id')
+            ids = [t['id'] for t in rows if _user_owns_task(app, t, current_user.id)]
             if not ids:
                 return jsonify({'success': False, 'error': 'Sin permisos'})
         import time as _time
@@ -3243,6 +3486,11 @@ def create_app():
     @app.route('/planning/api/deps/<tid>', methods=['GET'])
     @login_required
     def planning_task_deps(tid):
+        if not is_admin():
+            task_rows = app.supabase.get('tasks', {'id': tid},
+                select='id,created_by,assigned_to,assigned_email,ms_email,source,project_id')
+            if not task_rows or not _user_owns_task(app, task_rows[0], current_user.id):
+                return jsonify({'success': False, 'error': 'Sin permisos'}), 403
         rows = app.supabase.get('task_deps', {'task_id': tid}, select='id,depends_on')
         return jsonify(rows or [])
 
@@ -3250,6 +3498,13 @@ def create_app():
     @login_required
     def planning_add_dep():
         d = request.get_json() or {}
+        if not is_admin():
+            for field in ('task_id', 'depends_on'):
+                tid = d.get(field)
+                task_rows = app.supabase.get('tasks', {'id': tid},
+                    select='id,created_by,assigned_to,assigned_email,ms_email,source,project_id') if tid else []
+                if not task_rows or not _user_owns_task(app, task_rows[0], current_user.id):
+                    return jsonify({'success': False, 'error': 'Sin permisos sobre una de las tareas'}), 403
         r = app.supabase.insert_ignore('task_deps', d)
         return jsonify({'success': bool(r)})
 
@@ -3354,6 +3609,8 @@ def create_app():
     @app.route('/planning/api/import-excel', methods=['POST'])
     @login_required
     def planning_import_excel():
+        if not user_can('planning'):
+            return jsonify({'success': False, 'error': 'Sin acceso al módulo Planificación'})
         if not OPENPYXL_AVAILABLE:
             return jsonify({'success': False, 'error': 'openpyxl no instalado'}), 500
         f = request.files.get('file')

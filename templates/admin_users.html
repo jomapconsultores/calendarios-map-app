@@ -20,7 +20,6 @@
 
 <h5 class="section-heading mt-4" id="registrados">👥 Usuarios registrados <span class="badge bg-primary">{{users|length}}</span></h5>
 {% for u in users %}
-{% set u_modules = (u.modules or 'calendar,planning').split(',') %}
 <div class="user-row card mb-2"><div class="card-body"><div class="row align-items-center">
   <div class="col-md-3">
     <strong>{{u.full_name}}</strong><br>
@@ -28,13 +27,8 @@
     <span class="badge bg-{{'danger' if u.role=='admin' else 'info'}}">{{u.role}}</span>
   </div>
   <div class="col-md-5">
-    {%for c in u.calendars%}<span class="cal-badge badge bg-light text-dark border me-1 mb-1"><span class="dot" style="background:{{c.color}}"></span>{{c.name}}</span>{%endfor%}
-    {%if not u.calendars%}<span class="text-warning small">Sin calendarios</span>{%endif%}
-    <div class="mt-1">
-      {%for mid, mlabel in all_modules%}
-        {%if mid in u_modules%}<span class="badge bg-primary bg-opacity-25 text-primary me-1" style="font-size:.65rem">{{mlabel}}</span>{%endif%}
-      {%endfor%}
-    </div>
+    {%for r in all_roles%}{%if r.id in u.role_ids%}<span class="badge bg-primary bg-opacity-25 text-primary me-1 mb-1">🎛️ {{r.name}}</span>{%endif%}{%endfor%}
+    {%if not u.role_ids%}<span class="text-warning small">Sin roles asignados</span>{%endif%}
   </div>
   <div class="col-md-4 text-md-end mt-2 mt-md-0">
     <button class="btn btn-outline-primary btn-sm rounded-pill" data-bs-toggle="modal" data-bs-target="#edit{{u.id}}">✏️ Editar</button>
@@ -55,70 +49,28 @@
       <div class="col-md-6"><label class="form-label">Rol</label><select name="role" class="form-select"><option value="staff" {{'selected' if u.role=='staff'}}>Staff</option><option value="admin" {{'selected' if u.role=='admin'}}>Admin</option></select></div>
     </div>
 
-    <!-- BLOQUE: Módulos del sistema -->
+    <!-- BLOQUE: Roles asignados -->
     <div class="card mb-3 border-primary border-opacity-25">
       <div class="card-body p-3">
-        <h6 class="fw-bold mb-2 text-primary">🎛️ Módulos del sistema</h6>
-        <small class="text-muted d-block mb-2">Selecciona qué áreas puede usar este usuario.</small>
-        <div class="row">
-          {%for mid, mlabel in all_modules%}
-          <div class="col-md-4">
-            <div class="form-check">
-              <input class="form-check-input mod-check" type="checkbox" name="modules" value="{{mid}}" data-mod="{{mid}}" {{'checked' if mid in u_modules}}>
-              <label class="form-check-label">{{mlabel}}</label>
-            </div>
-          </div>
-          {%endfor%}
+        <h6 class="fw-bold mb-2 text-primary">🎛️ Roles asignados</h6>
+        <small class="text-muted d-block mb-2">Cada rol trae sus propios módulos, calendarios, proyectos y cuentas Microsoft. Gestiona el catálogo de roles en Administración → Roles.</small>
+        {% if not all_roles %}
+        <div class="alert alert-secondary py-2 small mb-0">
+          ℹ️ Aún no hay roles creados. Crea el primero en <a href="/admin/roles">Administración → Roles</a>.
         </div>
-      </div>
-    </div>
-
-    <!-- BLOQUE: Calendarios (condicionado al módulo Calendario) -->
-    <div class="card mb-3 border-info border-opacity-25 mod-section" data-requires="calendar"
-         style="{{ '' if 'calendar' in u_modules else 'opacity:.5' }}">
-      <div class="card-body p-3">
-        <h6 class="fw-bold mb-2" style="color:#0ea5e9">📅 Calendarios accesibles</h6>
-        <small class="text-muted d-block mb-2">Marca los calendarios que este usuario podrá ver en el módulo Calendario.</small>
+        {% endif %}
         <div class="row">
-          {%for c in calendarios%}
+          {%for r in all_roles%}
           <div class="col-md-6">
             <div class="form-check">
-              <input class="form-check-input" type="checkbox" name="calendars" value="{{c.calendar_id}}" {{'checked' if c in u.calendars}}>
-              <label class="form-check-label"><span class="dot" style="background:{{c.color}}"></span>{{c.name}}</label>
+              <input class="form-check-input" type="checkbox" name="roles" value="{{r.id}}" {{'checked' if r.id in u.role_ids}}>
+              <label class="form-check-label">{{r.name}}</label>
             </div>
           </div>
           {%endfor%}
         </div>
       </div>
     </div>
-
-    <!-- BLOQUE: Cuentas Microsoft To-Do (condicionado al módulo todo) -->
-    {% if ms_accounts %}
-    <div class="card mb-3 border-warning border-opacity-25 mod-section" data-requires="todo"
-         style="{{ '' if 'todo' in u_modules else 'opacity:.5' }}">
-      <div class="card-body p-3">
-        <h6 class="fw-bold mb-2" style="color:#d97706">✅ Cuentas Microsoft To-Do accesibles</h6>
-        <small class="text-muted d-block mb-2">Autoriza una a una qué cuenta de Microsoft podrá ver este usuario. Sin marcar nada, no verá ninguna tarea aunque tenga el módulo To-Do habilitado.</small>
-        <div class="row">
-          {%for ms in ms_accounts%}
-          <div class="col-md-6 mb-2">
-            <div class="border rounded p-2" style="background:#fffbeb">
-              <div class="form-check">
-                <input class="form-check-input" type="checkbox" name="ms_emails" value="{{ms}}" id="ms_{{u.id}}_{{loop.index}}" {{'checked' if ms in u.ms_emails}}>
-                <label class="form-check-label fw-semibold" for="ms_{{u.id}}_{{loop.index}}">📋 {{ms}}</label>
-              </div>
-              <small class="text-muted d-block ms-4">{{ ms_counts.get(ms, 0) }} tareas en el sistema</small>
-            </div>
-          </div>
-          {%endfor%}
-        </div>
-      </div>
-    </div>
-    {% else %}
-    <div class="alert alert-secondary py-2 small">
-      ℹ️ Aún no hay cuentas de Microsoft conectadas. Conéctalas desde Planificación → Conectar Microsoft To-Do.
-    </div>
-    {% endif %}
 
     <button class="btn btn-primary rounded-pill">💾 Guardar cambios</button>
   </form></div>
@@ -139,17 +91,5 @@ function delUser(uid){
     .then(d=>{ if(d.success){ location.reload(); } else{ alert('❌ '+(d.error||'No se pudo eliminar')); } })
     .catch(()=>alert('❌ Error de conexión'));
 }
-
-// Sincronizar visualmente las secciones según los módulos seleccionados
-document.addEventListener('change', function(e){
-  if (!e.target.classList || !e.target.classList.contains('mod-check')) return;
-  const modal = e.target.closest('.modal');
-  if (!modal) return;
-  const mod = e.target.dataset.mod;
-  const checked = e.target.checked;
-  modal.querySelectorAll('.mod-section[data-requires="'+mod+'"]').forEach(function(s){
-    s.style.opacity = checked ? '1' : '.5';
-  });
-});
 </script>
 {% endblock %}
