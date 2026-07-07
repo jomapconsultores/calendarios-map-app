@@ -61,7 +61,7 @@ except Exception as _wa_err:  # pragma: no cover
     WEBAUTHN_AVAILABLE = False
     print(f'[webauthn] no disponible: {_wa_err}')
 
-from .feriados import feriados as _feriados_ec, feriados_rango as _feriados_rango, es_feriado as _es_feriado
+from .feriados import feriados as _feriados_ec, feriados_rango as _feriados_rango
 
 load_dotenv()
 os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
