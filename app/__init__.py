@@ -3371,7 +3371,7 @@ def create_app():
     def planning_update_task(tid):
         if not is_admin():
             rows = app.supabase.get('tasks', {'id': tid},
-                select='id,created_by,assigned_to,assigned_email,ms_email,source')
+                select='id,created_by,assigned_to,assigned_email,ms_email,source,project_id')
             task = rows[0] if rows else None
             if not task or not _user_owns_task(app, task, current_user.id):
                 return jsonify({'success': False, 'error': 'Sin permisos'}), 403
