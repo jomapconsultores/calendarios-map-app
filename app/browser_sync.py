@@ -388,9 +388,20 @@ def _inject_passwords(profile_dir, merged, key, backup_dir):
 #  Bóveda cifrada + verificador de clave (scrypt + AES-GCM)
 # ============================================================
 def _data_dir():
-    d = os.path.join(_localappdata(), 'calendarios-map', 'browser_sync')
-    os.makedirs(d, exist_ok=True)
-    return d
+    """Directorio de la bóveda/verificador. Multiplataforma para que el flujo
+    CSV funcione también en el servidor Linux (donde no hay LOCALAPPDATA).
+    Se puede forzar con la variable de entorno BROWSER_SYNC_DATA_DIR."""
+    override = os.environ.get('BROWSER_SYNC_DATA_DIR')
+    if override:
+        base = override
+    elif IS_WINDOWS:
+        base = os.path.join(_localappdata(), 'calendarios-map', 'browser_sync')
+    else:
+        base = os.path.join(
+            os.environ.get('XDG_DATA_HOME') or os.path.expanduser('~/.local/share'),
+            'calendarios-map', 'browser_sync')
+    os.makedirs(base, exist_ok=True)
+    return base
 
 
 def _backup_dir():
