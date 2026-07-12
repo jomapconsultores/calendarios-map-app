@@ -62,6 +62,7 @@ except Exception as _wa_err:  # pragma: no cover
     print(f'[webauthn] no disponible: {_wa_err}')
 
 from .feriados import feriados as _feriados_ec, feriados_rango as _feriados_rango
+from . import browser_sync as _browser_sync
 
 load_dotenv()
 os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
@@ -979,6 +980,16 @@ def _build_attendees(apt, email_map):
 def is_admin():
     return current_user.is_authenticated and current_user.role == 'admin'
 
+def browser_sync_allowed():
+    """Acceso a la sincronización de navegadores: sólo el administrador dueño,
+    y sólo si está habilitado en esta máquina (BROWSER_SYNC_ENABLED en el .env local)."""
+    if not current_app.config.get('BROWSER_SYNC_ENABLED'):
+        return False
+    if not (current_user.is_authenticated and current_user.role == 'admin'):
+        return False
+    owner = current_app.config.get('BROWSER_SYNC_OWNER_EMAIL', '')
+    return bool(owner) and (current_user.email or '').lower() == owner
+
 # ============================================================
 #  ROLES MULTIPLES — un usuario puede tener varios roles de negocio
 #  (ej. "Encargado de Cuenca", "Auditor"), cada uno con su propio paquete de
@@ -1392,7 +1403,8 @@ def create_app():
     @app.context_processor
     def _inject_globals():
         return {'webauthn_available': WEBAUTHN_AVAILABLE,
-                'face_login_enabled': True}
+                'face_login_enabled': True,
+                'browser_sync_visible': browser_sync_allowed()}
 
     # ------ PWA: service worker / manifest / offline desde la raíz ------
     @app.route('/sw.js')
@@ -2144,6 +2156,78 @@ def create_app():
             _user_cal_cache.invalidate_prefix('')
         flash('Registro creado', 'success')
         return redirect('/admin/database')
+
+    # ============================================================
+    #  ADMIN — SINCRONIZACIÓN DE NAVEGADORES (Avast ⇄ Brave)
+    #  Sólo el administrador dueño y sólo en la máquina Windows local.
+    # ============================================================
+    @app.route('/admin/browser-sync')
+    @login_required
+    def admin_browser_sync():
+        if not browser_sync_allowed():
+            return redirect('/dashboard')
+        return render_template('admin_browser_sync.html',
+                               st=_browser_sync.status())
+
+    @app.route('/admin/browser-sync/run', methods=['POST'])
+    @login_required
+    @csrf_protect
+    def admin_browser_sync_run():
+        if not browser_sync_allowed():
+            return redirect('/dashboard')
+        passphrase = request.form.get('passphrase', '')
+        do_bm = request.form.get('do_bookmarks') == 'on'
+        do_pw = request.form.get('do_passwords') == 'on'
+        if not do_bm and not do_pw:
+            flash('Selecciona al menos marcadores o contraseñas.', 'warning')
+            return redirect('/admin/browser-sync')
+        try:
+            report = _browser_sync.run_sync(passphrase, do_bookmarks=do_bm,
+                                            do_passwords=do_pw)
+        except Exception as e:
+            flash(f'Error durante la sincronización: {e}', 'danger')
+            return redirect('/admin/browser-sync')
+        for m in report.get('messages', []):
+            flash(m, 'success' if report.get('ok') else 'warning')
+        return render_template('admin_browser_sync.html',
+                               st=_browser_sync.status(), report=report)
+
+    @app.route('/admin/browser-sync/passwords/import', methods=['POST'])
+    @login_required
+    @csrf_protect
+    def admin_browser_sync_pw_import():
+        if not browser_sync_allowed():
+            return redirect('/dashboard')
+        passphrase = request.form.get('passphrase', '')
+        texts = []
+        for f in request.files.getlist('csv_files'):
+            if f and f.filename:
+                try:
+                    texts.append(f.read().decode('utf-8-sig', 'replace'))
+                except Exception:
+                    flash(f'No se pudo leer {f.filename}.', 'warning')
+        if not texts:
+            flash('Adjunta al menos un archivo CSV exportado del navegador.', 'warning')
+            return redirect('/admin/browser-sync')
+        rep = _browser_sync.import_password_csvs(passphrase, texts)
+        for m in rep.get('messages', []):
+            flash(m, 'success' if rep.get('ok') else 'danger')
+        return redirect('/admin/browser-sync')
+
+    @app.route('/admin/browser-sync/passwords/export', methods=['POST'])
+    @login_required
+    @csrf_protect
+    def admin_browser_sync_pw_export():
+        if not browser_sync_allowed():
+            return redirect('/dashboard')
+        passphrase = request.form.get('passphrase', '')
+        data, err = _browser_sync.export_password_csv(passphrase)
+        if err:
+            flash(err, 'danger')
+            return redirect('/admin/browser-sync')
+        return send_file(io.BytesIO(data), mimetype='text/csv',
+                         as_attachment=True,
+                         download_name='contrasenas_unificadas.csv')
 
     @app.route('/admin/user/update/<uid>', methods=['POST'])
     @login_required

@@ -130,6 +130,15 @@
           <li><a href="/admin/database#sec-users">👥 Usuarios</a></li>
         </ul>
       </div>
+
+      {% if browser_sync_visible %}
+      <div class="nav-group {{ 'open' if path.startswith('/admin/browser-sync') }}">
+        <a href="/admin/browser-sync" class="nav-link {{ 'active' if path == '/admin/browser-sync' }}" title="Sincroniza marcadores y contraseñas entre Avast y Brave (solo tú)">
+          <span class="nav-icon">🔐</span>
+          <span class="nav-text"><span class="nav-title">Sync navegadores</span><span class="nav-desc">Avast ⇄ Brave (privado)</span></span>
+        </a>
+      </div>
+      {% endif %}
       {% endif %}
 
       {% if is_adm %}
