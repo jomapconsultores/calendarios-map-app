@@ -17,8 +17,10 @@ class Config:
     # Secreto para disparar la sincronización automática To-Do ⇄ Sistema desde un cron externo
     CRON_SECRET = os.getenv('CRON_SECRET', '')
     TIMEZONE = 'America/Guayaquil'
-    # Sincronización local de navegadores (Avast ⇄ Brave). Sólo tiene sentido en
-    # la máquina Windows local; por eso está apagado salvo que se active en el .env
-    # de esa máquina. OWNER_EMAIL restringe el acceso a un único administrador.
-    BROWSER_SYNC_ENABLED = os.getenv('BROWSER_SYNC_ENABLED', '0') == '1'
+    # Sincronización de navegadores (Avast ⇄ Brave). ACTIVA por defecto: el acceso
+    # ya está blindado a un único administrador dueño (OWNER_EMAIL) + rol admin.
+    # En la web funciona el flujo CSV de contraseñas; marcadores y lectura directa
+    # de perfiles sólo funcionan en la máquina Windows local. Para desactivarla
+    # por completo en un despliegue, pon BROWSER_SYNC_ENABLED=0 en su entorno.
+    BROWSER_SYNC_ENABLED = os.getenv('BROWSER_SYNC_ENABLED', '1') == '1'
     BROWSER_SYNC_OWNER_EMAIL = os.getenv('BROWSER_SYNC_OWNER_EMAIL', 'jomapconsultores@gmail.com').lower()
