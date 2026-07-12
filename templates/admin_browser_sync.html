@@ -1,0 +1,162 @@
+{% extends "base.html" %}
+{% block title %}Sync navegadores - calendarios-map{% endblock %}
+{% block page_title %}🔐 Sincronización de navegadores{% endblock %}
+{% block page_sub %}<p class="page-sub">Unifica marcadores y contraseñas entre <strong>Avast Secure Browser</strong> y <strong>Brave</strong>. Acceso privado del administrador. Requiere una clave adicional en cada sincronización.</p>{% endblock %}
+
+{% block content %}
+
+{% if not st.is_windows %}
+<div class="alert alert-danger">⚠️ Esta función sólo opera en la máquina Windows local donde están instalados los navegadores. El servidor no tiene acceso a los perfiles.</div>
+{% endif %}
+{% if not st.crypto_available %}
+<div class="alert alert-warning">⚠️ Falta la librería <code>cryptography</code>. Instálala con <code>pip install cryptography</code> y reinicia la app.</div>
+{% endif %}
+
+<!-- Estado de los navegadores -->
+<div class="card mb-3"><div class="card-body">
+  <h6 class="section-heading">Estado detectado</h6>
+  <div class="row">
+    {% for bid, b in st.browsers.items() %}
+    <div class="col-md-6 mb-2">
+      <div class="border rounded p-2 h-100">
+        <strong>{{ b.label }}</strong>
+        {% if b.installed %}
+          <span class="badge bg-success">Instalado</span>
+          {% if b.running %}<span class="badge bg-danger">Abierto</span>{% else %}<span class="badge bg-secondary">Cerrado</span>{% endif %}
+          <div class="small text-muted mt-1">
+            {{ '✔️' if b.has_bookmarks else '—' }} Marcadores ·
+            {{ '✔️' if b.has_login_data else '—' }} Contraseñas<br>
+            Clave v10 (migrable): {{ '✔️ sí' if b.has_v10_key else '❌ no' }}<br>
+            {% if b.has_app_bound %}<span class="text-warning">⚠️ App-Bound activo: algunas contraseñas (v20) no son migrables por este método.</span>{% endif %}
+          </div>
+        {% else %}
+          <span class="badge bg-secondary">No instalado</span>
+        {% endif %}
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+</div></div>
+
+<!-- Formulario -->
+<div class="card mb-3"><div class="card-body">
+  <h6 class="section-heading">Ejecutar sincronización</h6>
+  <form method="POST" action="/admin/browser-sync/run"
+        onsubmit="return confirm('Se hará una copia de seguridad y luego se fusionarán los datos en ambos navegadores. Para contraseñas, ambos navegadores deben estar CERRADOS. ¿Continuar?')">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+    <div class="form-check mb-2">
+      <input class="form-check-input" type="checkbox" name="do_bookmarks" id="do_bookmarks" checked>
+      <label class="form-check-label" for="do_bookmarks">Marcadores (unión sin duplicados)</label>
+    </div>
+    <div class="form-check mb-3">
+      <input class="form-check-input" type="checkbox" name="do_passwords" id="do_passwords">
+      <label class="form-check-label" for="do_passwords">Contraseñas <span class="text-muted small">(cierra ambos navegadores antes)</span></label>
+    </div>
+
+    <div class="mb-3" style="max-width:420px">
+      <label class="form-label small">Clave adicional {% if not st.vault_exists %}<span class="text-muted">(la primera vez la establece)</span>{% endif %}</label>
+      <input type="password" name="passphrase" class="form-control" minlength="8" required
+             autocomplete="off" placeholder="Mínimo 8 caracteres">
+      <div class="form-text">Cifra la bóveda de contraseñas y autoriza la operación. No se guarda en ningún lado; si la olvidas, la bóveda es irrecuperable.</div>
+    </div>
+
+    <button type="submit" class="btn btn-primary rounded-pill"
+            {% if not st.is_windows or not st.crypto_available %}disabled{% endif %}>
+      🔄 Sincronizar ahora
+    </button>
+  </form>
+</div></div>
+
+<!-- Contraseñas vía CSV (a prueba de App-Bound / v20) -->
+<div class="card mb-3"><div class="card-body">
+  <h6 class="section-heading">🔑 Contraseñas (método CSV, cobertura 100%)</h6>
+  <p class="small text-muted">
+    Tus contraseñas están protegidas con App-Bound Encryption (v20) y no se pueden
+    descifrar por transplante directo. La vía robusta: en <em>cada</em> navegador entra a
+    <strong>Ajustes → Contraseñas → ⋮ → Exportar contraseñas</strong> (te pedirá tu clave de
+    Windows), guarda el CSV, y súbelos aquí. La app los fusiona sin duplicados en la
+    <strong>bóveda cifrada con tu clave adicional</strong> y te devuelve un CSV unificado para
+    reimportar en ambos navegadores.
+  </p>
+
+  <div class="row">
+    <div class="col-md-6 mb-2">
+      <div class="border rounded p-3 h-100">
+        <strong class="small">1 · Importar CSV a la bóveda</strong>
+        <form method="POST" action="/admin/browser-sync/passwords/import" enctype="multipart/form-data" class="mt-2">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <input type="file" name="csv_files" class="form-control form-control-sm mb-2" accept=".csv" multiple required>
+          <input type="password" name="passphrase" class="form-control form-control-sm mb-2" minlength="8" required autocomplete="off" placeholder="Clave adicional">
+          <button class="btn btn-outline-primary btn-sm rounded-pill" {% if not st.crypto_available %}disabled{% endif %}>⬆️ Fusionar en bóveda</button>
+        </form>
+      </div>
+    </div>
+    <div class="col-md-6 mb-2">
+      <div class="border rounded p-3 h-100">
+        <strong class="small">2 · Descargar CSV unificado</strong>
+        <form method="POST" action="/admin/browser-sync/passwords/export" class="mt-2"
+              onsubmit="return confirm('El CSV descargado contiene contraseñas EN CLARO. Impórtalo en cada navegador y luego bórralo del disco.')">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <input type="password" name="passphrase" class="form-control form-control-sm mb-2" minlength="8" required autocomplete="off" placeholder="Clave adicional">
+          <button class="btn btn-outline-success btn-sm rounded-pill" {% if not st.vault_exists %}disabled{% endif %}>⬇️ Descargar unificado</button>
+          {% if not st.vault_exists %}<div class="form-text">Primero importa al menos un CSV.</div>{% endif %}
+        </form>
+        <div class="small text-muted mt-2">Luego, en cada navegador: <strong>Ajustes → Contraseñas → Importar</strong> y elige este CSV.</div>
+      </div>
+    </div>
+  </div>
+</div></div>
+
+<!-- Reporte -->
+{% if report %}
+<div class="card mb-3"><div class="card-body">
+  <h6 class="section-heading">Resultado</h6>
+  <ul class="small mb-2">
+    {% for m in report.messages %}<li>{{ m }}</li>{% endfor %}
+  </ul>
+
+  {% if report.bookmarks %}
+  <div class="small"><strong>Marcadores:</strong>
+    {% for b, r in report.bookmarks.items() %}
+      {{ b }}: +{{ r.added }} añadidos ({{ r.total_merged }} totales){% if not loop.last %} · {% endif %}
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  {% if report.passwords %}
+  <div class="small mt-2"><strong>Contraseñas:</strong>
+    <table class="table table-sm mt-1">
+      <thead><tr><th>Navegador</th><th>Leídas v10</th><th>v20 (omitidas)</th><th>Errores</th><th>Insertadas</th><th>Actualizadas</th><th>Fallidas</th></tr></thead>
+      <tbody>
+      {% for b, r in report.passwords.items() %}
+        <tr>
+          <td>{{ b }}</td>
+          <td>{{ r.read.v10 if r.read else '—' }}</td>
+          <td>{{ r.read.v20 if r.read else '—' }}</td>
+          <td>{{ r.read.error if r.read else '—' }}</td>
+          <td>{{ r.write.inserted if r.write and r.write.inserted is defined else '—' }}</td>
+          <td>{{ r.write.updated if r.write and r.write.updated is defined else '—' }}</td>
+          <td>{{ r.write.failed if r.write and r.write.failed is defined else '—' }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+
+  {% if report.skipped_app_bound %}
+  <div class="alert alert-warning small mt-2 mb-0">
+    ⚠️ Contraseñas con App-Bound Encryption (v20) que NO se pudieron migrar automáticamente:
+    {% for b, n in report.skipped_app_bound.items() %}{{ b }}: {{ n }}{% if not loop.last %}, {% endif %}{% endfor %}.
+    Para esas, usa la exportación/importación integrada del navegador o cópialas a mano.
+  </div>
+  {% endif %}
+
+  {% if report.backup_dir %}
+  <div class="small text-muted mt-2">📦 Copia de seguridad guardada en: <code>{{ report.backup_dir }}</code></div>
+  {% endif %}
+</div></div>
+{% endif %}
+
+{% endblock %}
