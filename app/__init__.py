@@ -989,7 +989,29 @@ def _build_attendees(apt, email_map):
     return attendees
 
 def is_admin():
-    return current_user.is_authenticated and current_user.role == 'admin'
+    """Admin EFECTIVO (memoizado por request). Depende del ROL ACTIVO: si el
+    nivel del rol activo es 'administrador', el usuario tiene poderes totales;
+    con cualquier otro nivel queda limitado a los grants de ese rol. Esto es lo
+    que permite a un usuario alternar entre, p.ej., un rol Socio (limitado) y un
+    rol Administrador (total) desde el selector de rol.
+
+    Salvaguarda (bootstrap): un usuario marcado users.role=='admin' que todavía
+    NO tiene roles de negocio asignados conserva admin, para no dejar el sistema
+    sin ningún administrador tras la migración."""
+    if not current_user.is_authenticated:
+        return False
+    if hasattr(g, '_is_admin'):
+        return g._is_admin
+    try:
+        roles = get_user_roles(current_app, current_user.id)
+        if not roles:
+            result = (current_user.role == 'admin')
+        else:
+            result = (get_active_role_grants(current_app, current_user.id).get('level') == 'administrador')
+    except Exception:
+        result = (current_user.role == 'admin')
+    g._is_admin = result
+    return result
 
 def browser_sync_allowed():
     """Acceso a la sincronización de navegadores: sólo el administrador dueño,
@@ -1031,13 +1053,15 @@ def role_grants(app, role_id):
     val, hit = _role_cache.get(role_id)
     if hit:
         return val
-    role = app.supabase.get('roles', {'id': role_id}, select='modules')
+    role = app.supabase.get('roles', {'id': role_id}, select='modules,level')
     modules = [m.strip() for m in (role[0].get('modules') or '').split(',') if m.strip()] if role else []
+    level = ((role[0].get('level') if role else None) or DEFAULT_ROLE_LEVEL)
     cals  = app.supabase.get('role_calendars',   {'role_id': role_id}, select='calendar_id')
     projs = app.supabase.get('role_projects',    {'role_id': role_id}, select='project_id')
     msacc = app.supabase.get('role_ms_accounts', {'role_id': role_id}, select='ms_email')
     tasks = app.supabase.get('role_tasks',       {'role_id': role_id}, select='task_id,project_id')
     result = {
+        'level':        level,
         'modules':      modules,
         'calendar_ids': {c['calendar_id'] for c in (cals or [])},
         'project_ids':  {p['project_id']  for p in (projs or [])},
@@ -1085,7 +1109,7 @@ def get_active_role_id(app, uid):
 def get_active_role_grants(app, uid):
     rid = get_active_role_id(app, uid)
     if not rid:
-        return {'modules': [], 'calendar_ids': set(), 'project_ids': set(),
+        return {'level': None, 'modules': [], 'calendar_ids': set(), 'project_ids': set(),
                 'ms_emails': set(), 'task_ids': set(), 'narrowed_projects': set()}
     return role_grants(app, rid)
 
@@ -1454,7 +1478,10 @@ def create_app():
     def _inject_globals():
         return {'webauthn_available': WEBAUTHN_AVAILABLE,
                 'face_login_enabled': True,
-                'browser_sync_visible': browser_sync_allowed()}
+                'browser_sync_visible': browser_sync_allowed(),
+                # Admin EFECTIVO según el rol activo (no el flag fijo del sistema),
+                # para que la interfaz se limite/habilite al alternar de rol.
+                'is_effective_admin': is_admin()}
 
     # ------ PWA: service worker / manifest / offline desde la raíz ------
     @app.route('/sw.js')

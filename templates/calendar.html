@@ -8,7 +8,7 @@
 {% endblock %}
 
 {% block topbar_actions %}
-{% if current_user.role == 'admin' %}
+{% if is_effective_admin %}
 <button class="btn btn-outline-secondary btn-sm rounded-pill" onclick="syncCalendar()" title="Sincronizar citas sin evento Google">🔄 Sincronizar</button>
 <button class="btn btn-outline-warning btn-sm rounded-pill" onclick="fixCalendarEvents()" title="Actualizar ubicación y enlace en TODOS los eventos ya sincronizados">📍 Fix ubicaciones</button>
 {% if google_connected_global %}

@@ -20,7 +20,7 @@
   </div>
 </div>
 
-{% if current_user.role == 'admin' and pending %}
+{% if is_effective_admin and pending %}
 <h5 class="section-heading">⏳ Solicitudes pendientes <span class="badge bg-warning text-dark">{{pending|length}}</span></h5>
 {% for p in pending %}
 <div class="solicitud card mb-3"><div class="card-body">
@@ -46,7 +46,7 @@
 </div></div>{% endfor %}
 {% endif %}
 
-{% if current_user.role != 'admin' and calendarios|length == 0 %}
+{% if not is_effective_admin and calendarios|length == 0 %}
 <div class="alert alert-warning text-center"><h5>⏳ Acceso pendiente</h5><p class="mb-0">El administrador revisará tu solicitud de acceso.</p></div>
 {% endif %}
 
@@ -186,7 +186,7 @@
       <span class="btn btn-primary btn-sm rounded-pill">Ir al calendario →</span>
     </a>
   </div>
-  {% if current_user.role == 'admin' %}
+  {% if is_effective_admin %}
   <div class="col-md-6 col-xl-4">
     <a href="{{ '/auth/google' if not google_connected else '#' }}" class="module-card" {% if google_connected %}onclick="return false" style="cursor:default"{% endif %}>
       <div class="m-icon" style="background:#dcfce7">🔗</div>
@@ -196,7 +196,7 @@
     </a>
   </div>
   {% endif %}
-  {% if current_user.role == 'admin' %}
+  {% if is_effective_admin %}
   <div class="col-md-6 col-xl-4">
     <a href="/admin/users" class="module-card">
       <div class="m-icon" style="background:#fef3c7">👥</div>

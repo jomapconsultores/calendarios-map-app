@@ -21,7 +21,9 @@
 </head>
 <body>
 {% set path = request.path %}
-{% set is_adm = current_user.role == 'admin' %}
+{# Admin EFECTIVO: depende del rol activo (nivel administrador), no del flag fijo,
+   para que la barra/menús se limiten al alternar a un rol de menor nivel. #}
+{% set is_adm = is_effective_admin %}
 <div class="app-shell">
 
   <!-- ============ MENÚ LATERAL IZQUIERDO ============ -->
@@ -267,6 +269,30 @@ document.querySelectorAll('[data-toggle-group]').forEach(function(el){
   }
 </script>
 <script src="{{ url_for('static', filename='js/password-toggle.js') }}"></script>
+<script>
+// Cierre de sesión automático tras 20 minutos de inactividad.
+// El contador se reinicia con cualquier actividad del usuario y se
+// sincroniza entre pestañas abiertas del sistema (localStorage 'storage').
+(function () {
+  var IDLE_MS = 20 * 60 * 1000;
+  var SYNC_KEY = '__idle_last_activity';
+  var EVENTS = ['mousemove', 'mousedown', 'keydown', 'scroll', 'touchstart', 'click', 'wheel'];
+  var timer, lastSync = 0;
+  function logout() { window.location.href = '/logout'; }
+  function reset() { clearTimeout(timer); timer = setTimeout(logout, IDLE_MS); }
+  function onActivity() {
+    reset();
+    var now = Date.now();
+    if (now - lastSync > 5000) {
+      lastSync = now;
+      try { localStorage.setItem(SYNC_KEY, String(now)); } catch (e) {}
+    }
+  }
+  EVENTS.forEach(function (ev) { window.addEventListener(ev, onActivity, { passive: true }); });
+  window.addEventListener('storage', function (e) { if (e.key === SYNC_KEY) reset(); });
+  reset();
+})();
+</script>
 {% block scripts %}{% endblock %}
 </body>
 </html>
