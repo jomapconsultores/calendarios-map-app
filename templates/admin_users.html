@@ -4,6 +4,7 @@
 {% block page_sub %}<p class="page-sub">Gestión de accesos y solicitudes</p>{% endblock %}
 
 {% block content %}
+{% set level_labels = dict(role_levels) %}
 
 {% if pending %}
 <h5 class="section-heading" id="pending">⏳ Solicitudes pendientes <span class="badge bg-warning text-dark">{{pending|length}}</span></h5>
@@ -27,7 +28,7 @@
     <span class="badge bg-{{'danger' if u.role=='admin' else 'info'}}">{{u.role}}</span>
   </div>
   <div class="col-md-5">
-    {%for r in all_roles%}{%if r.id in u.role_ids%}<span class="badge bg-primary bg-opacity-25 text-primary me-1 mb-1">🎛️ {{r.name}}</span>{%endif%}{%endfor%}
+    {%for r in all_roles%}{%if r.id in u.role_ids%}<span class="badge bg-primary bg-opacity-25 text-primary me-1 mb-1" title="{{ level_labels.get(r.level, r.level) }}">🎛️ {{r.name}} <span class="opacity-75">· {{ level_labels.get(r.level, r.level) }}</span></span>{%endif%}{%endfor%}
     {%if not u.role_ids%}<span class="text-warning small">Sin roles asignados</span>{%endif%}
   </div>
   <div class="col-md-4 text-md-end mt-2 mt-md-0">
@@ -53,14 +54,18 @@
     <div class="card mb-3 border-primary border-opacity-25">
       <div class="card-body p-3">
         <h6 class="fw-bold mb-2 text-primary">🎛️ Roles asignados</h6>
-        <small class="text-muted d-block mb-2">Cada rol trae sus propios módulos, calendarios, proyectos y cuentas Microsoft. Gestiona el catálogo de roles en Administración → Roles.</small>
+        <small class="text-muted d-block mb-2">Cada rol pertenece a un nivel (administrador / socio / funcionario) y trae sus propios módulos, calendarios, proyectos, actividades y cuentas Microsoft. Gestiona el catálogo en Administración → Roles.</small>
         {% if not all_roles %}
         <div class="alert alert-secondary py-2 small mb-0">
           ℹ️ Aún no hay roles creados. Crea el primero en <a href="/admin/roles">Administración → Roles</a>.
         </div>
         {% endif %}
+        {%for lid, llabel in role_levels%}
+        {% set lvl_roles = all_roles | selectattr('level', 'equalto', lid) | list %}
+        {% if lvl_roles %}
+        <div class="fw-semibold small text-uppercase text-muted mt-2">{{llabel}}</div>
         <div class="row">
-          {%for r in all_roles%}
+          {%for r in lvl_roles%}
           <div class="col-md-6">
             <div class="form-check">
               <input class="form-check-input" type="checkbox" name="roles" value="{{r.id}}" {{'checked' if r.id in u.role_ids}}>
@@ -69,6 +74,8 @@
           </div>
           {%endfor%}
         </div>
+        {% endif %}
+        {%endfor%}
       </div>
     </div>
 
