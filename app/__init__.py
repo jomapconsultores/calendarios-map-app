@@ -140,6 +140,17 @@ ALL_MODULES = [
     ('todo',      '✅ To-Do externo (Microsoft)'),
 ]
 
+# Niveles de rol (clasificación de negocio). Es una etiqueta/agrupación: el
+# acceso real lo definen los grants marcados por el admin. El administrador del
+# sistema real sigue siendo users.role == 'admin'.
+ROLE_LEVELS = [
+    ('administrador', '👑 Administrador'),
+    ('socio',         '🤝 Socio'),
+    ('funcionario',   '🧑‍💼 Funcionario'),
+]
+ROLE_LEVEL_IDS = {lid for lid, _ in ROLE_LEVELS}
+DEFAULT_ROLE_LEVEL = 'funcionario'
+
 
 # ============================================================
 #  SUPABASE CLIENT — persistent HTTP session (keep-alive)
@@ -978,7 +989,29 @@ def _build_attendees(apt, email_map):
     return attendees
 
 def is_admin():
-    return current_user.is_authenticated and current_user.role == 'admin'
+    """Admin EFECTIVO (memoizado por request). Depende del ROL ACTIVO: si el
+    nivel del rol activo es 'administrador', el usuario tiene poderes totales;
+    con cualquier otro nivel queda limitado a los grants de ese rol. Esto es lo
+    que permite a un usuario alternar entre, p.ej., un rol Socio (limitado) y un
+    rol Administrador (total) desde el selector de rol.
+
+    Salvaguarda (bootstrap): un usuario marcado users.role=='admin' que todavía
+    NO tiene roles de negocio asignados conserva admin, para no dejar el sistema
+    sin ningún administrador tras la migración."""
+    if not current_user.is_authenticated:
+        return False
+    if hasattr(g, '_is_admin'):
+        return g._is_admin
+    try:
+        roles = get_user_roles(current_app, current_user.id)
+        if not roles:
+            result = (current_user.role == 'admin')
+        else:
+            result = (get_active_role_grants(current_app, current_user.id).get('level') == 'administrador')
+    except Exception:
+        result = (current_user.role == 'admin')
+    g._is_admin = result
+    return result
 
 def browser_sync_allowed():
     """Acceso a la sincronización de navegadores: sólo el administrador dueño,
@@ -1009,23 +1042,52 @@ def get_user_roles(app, uid):
     return result
 
 def role_grants(app, role_id):
-    """{modules, calendar_ids, project_ids, ms_emails} otorgados por un rol."""
+    """{modules, calendar_ids, project_ids, ms_emails, task_ids, narrowed_projects}
+    otorgados por un rol.
+
+    task_ids / narrowed_projects modelan el acceso a ACTIVIDADES (tareas):
+      - narrowed_projects: proyectos en los que el rol tiene al menos una tarea
+        marcada -> dentro de esos proyectos solo se ven las tareas de task_ids.
+      - Un proyecto que NO está en narrowed_projects se ve completo (todas sus
+        tareas), que es el comportamiento previo a esta función."""
     val, hit = _role_cache.get(role_id)
     if hit:
         return val
-    role = app.supabase.get('roles', {'id': role_id}, select='modules')
+    role = app.supabase.get('roles', {'id': role_id}, select='modules,level')
     modules = [m.strip() for m in (role[0].get('modules') or '').split(',') if m.strip()] if role else []
+    level = ((role[0].get('level') if role else None) or DEFAULT_ROLE_LEVEL)
     cals  = app.supabase.get('role_calendars',   {'role_id': role_id}, select='calendar_id')
     projs = app.supabase.get('role_projects',    {'role_id': role_id}, select='project_id')
     msacc = app.supabase.get('role_ms_accounts', {'role_id': role_id}, select='ms_email')
+    tasks = app.supabase.get('role_tasks',       {'role_id': role_id}, select='task_id,project_id')
     result = {
+        'level':        level,
         'modules':      modules,
         'calendar_ids': {c['calendar_id'] for c in (cals or [])},
         'project_ids':  {p['project_id']  for p in (projs or [])},
         'ms_emails':    {m['ms_email']    for m in (msacc or [])},
+        'task_ids':          {t['task_id']    for t in (tasks or [])},
+        'narrowed_projects': {t['project_id'] for t in (tasks or []) if t.get('project_id')},
     }
     _role_cache.set(role_id, result)
     return result
+
+def _save_role_activities(app, role_id, task_ids, replace=False):
+    """Persiste las actividades (tareas) marcadas para un rol en role_tasks,
+    guardando project_id denormalizado. Si replace=True borra las previas."""
+    if replace:
+        for row in app.supabase.get('role_tasks', {'role_id': role_id}, select='id'):
+            app.supabase.delete('role_tasks', row['id'])
+    task_ids = [t for t in (task_ids or []) if t]
+    if not task_ids:
+        return
+    rows = app.supabase.get_in('tasks', 'id', task_ids, select='id,project_id') or []
+    pid_by_task = {r['id']: r.get('project_id') for r in rows}
+    for tid in task_ids:
+        if tid not in pid_by_task:        # tarea inexistente/borrada -> se ignora
+            continue
+        app.supabase.insert_ignore('role_tasks', {
+            'role_id': role_id, 'task_id': tid, 'project_id': pid_by_task[tid]})
 
 def get_active_role_id(app, uid):
     """Rol activo del usuario, memoizado por request. Si la elección guardada
@@ -1047,7 +1109,8 @@ def get_active_role_id(app, uid):
 def get_active_role_grants(app, uid):
     rid = get_active_role_id(app, uid)
     if not rid:
-        return {'modules': [], 'calendar_ids': set(), 'project_ids': set(), 'ms_emails': set()}
+        return {'level': None, 'modules': [], 'calendar_ids': set(), 'project_ids': set(),
+                'ms_emails': set(), 'task_ids': set(), 'narrowed_projects': set()}
     return role_grants(app, rid)
 
 def get_user_calendars(app, uid):
@@ -1144,14 +1207,25 @@ def _delete_user_cascade(app, uid):
     return ok
 
 def _project_allowed(app, task, uid):
-    """Chequeo adicional de alcance por proyecto: solo aplica si la tarea tiene
-    project_id (nunca oculta tareas manuales sueltas que ya eran visibles por
-    dueño/asignado — es aditivo, no retroactivo). Admins bypasean vía is_admin()
-    en el llamador."""
+    """Alcance de una tarea según el rol activo. Combina dos capas:
+
+      1) Proyecto: si la tarea tiene project_id, ese proyecto debe estar en el
+         rol activo (tareas manuales sueltas sin project_id no se ocultan — es
+         aditivo, no retroactivo).
+      2) Actividad: si el rol tiene actividades marcadas en ESE proyecto
+         (narrowed_projects), solo se ve la tarea si está en task_ids. Un
+         proyecto sin actividades marcadas se ve completo.
+
+    Admins bypasean vía is_admin() en el llamador."""
     pid = task.get('project_id')
     if not pid:
         return True
-    return pid in get_active_role_grants(app, uid)['project_ids']
+    grants = get_active_role_grants(app, uid)
+    if pid not in grants['project_ids']:
+        return False
+    if pid in grants['narrowed_projects']:
+        return task.get('id') in grants['task_ids']
+    return True
 
 def _filter_visible_tasks(app, rows, uid):
     """Misma regla de visibilidad usada en GET /planning/api/tasks: admins ven todo;
@@ -1404,7 +1478,10 @@ def create_app():
     def _inject_globals():
         return {'webauthn_available': WEBAUTHN_AVAILABLE,
                 'face_login_enabled': True,
-                'browser_sync_visible': browser_sync_allowed()}
+                'browser_sync_visible': browser_sync_allowed(),
+                # Admin EFECTIVO según el rol activo (no el flag fijo del sistema),
+                # para que la interfaz se limite/habilite al alternar de rol.
+                'is_effective_admin': is_admin()}
 
     # ------ PWA: service worker / manifest / offline desde la raíz ------
     @app.route('/sw.js')
@@ -1971,7 +2048,9 @@ def create_app():
                                if p['calendar_id'] in cal_by_id],
             })
         # Roles: catálogo completo + cuáles tiene cada usuario
-        all_roles = app.supabase.get('roles', select='id,name') or []
+        all_roles = app.supabase.get('roles', select='id,name,level') or []
+        for r in all_roles:
+            r['level'] = r.get('level') or DEFAULT_ROLE_LEVEL
         user_roles_all = app.supabase.get('user_roles', select='user_id,role_id') or []
         roles_by_user = defaultdict(set)
         for ur in user_roles_all:
@@ -1980,7 +2059,7 @@ def create_app():
             u['role_ids'] = roles_by_user.get(u['id'], set())
         return render_template('admin_users.html', users=users, calendarios=all_cals,
                                pending=pending, pending_all=pending_all,
-                               all_roles=all_roles)
+                               all_roles=all_roles, role_levels=ROLE_LEVELS)
 
     # ============================================================
     #  ADMIN — ROLES (catálogo de roles: módulos + calendarios + proyectos + cuentas MS)
@@ -1990,29 +2069,48 @@ def create_app():
     def admin_roles():
         if not is_admin():
             return redirect('/dashboard')
-        roles = app.supabase.get('roles', select='id,name,description,modules,created_at') or []
+        roles = app.supabase.get('roles', select='id,name,description,modules,level,created_at') or []
         all_cals = _get_calendar_config(app)
         all_projects = app.supabase.get('projects', select='id,name') or []
         ms_accounts = [t.get('email','') for t in (app.supabase.get('ms_tokens', select='email') or []) if t.get('email')]
         cal_ids   = app.supabase.get('role_calendars',   select='role_id,calendar_id') or []
         proj_ids  = app.supabase.get('role_projects',    select='role_id,project_id') or []
         ms_ids    = app.supabase.get('role_ms_accounts', select='role_id,ms_email') or []
-        cals_by_role = defaultdict(set); projs_by_role = defaultdict(set); ms_by_role = defaultdict(set)
+        task_ids  = app.supabase.get('role_tasks',       select='role_id,task_id') or []
+        cals_by_role = defaultdict(set); projs_by_role = defaultdict(set)
+        ms_by_role = defaultdict(set);   tasks_by_role = defaultdict(set)
         for r in cal_ids:  cals_by_role[r['role_id']].add(r['calendar_id'])
         for r in proj_ids: projs_by_role[r['role_id']].add(r['project_id'])
         for r in ms_ids:   ms_by_role[r['role_id']].add(r['ms_email'])
+        for r in task_ids: tasks_by_role[r['role_id']].add(r['task_id'])
         user_roles_all = app.supabase.get('user_roles', select='user_id,role_id') or []
         users_by_role = defaultdict(int)
         for ur in user_roles_all:
             users_by_role[ur['role_id']] += 1
         for r in roles:
             r['modules_list']  = [m for m in (r.get('modules') or '').split(',') if m]
+            r['level']         = r.get('level') or DEFAULT_ROLE_LEVEL
             r['calendar_ids']  = cals_by_role.get(r['id'], set())
             r['project_ids']   = projs_by_role.get(r['id'], set())
             r['ms_emails']     = ms_by_role.get(r['id'], set())
+            r['task_ids']      = tasks_by_role.get(r['id'], set())
             r['user_count']    = users_by_role.get(r['id'], 0)
+        # Actividades (tareas de proyecto) agrupadas por proyecto, para marcarlas.
+        all_tasks = app.supabase.get('tasks', select='id,title,project_id,phase') or []
+        proj_name = {p['id']: p['name'] for p in all_projects}
+        activities_by_project = defaultdict(list)
+        for t in all_tasks:
+            if t.get('project_id') and t['project_id'] in proj_name:
+                activities_by_project[t['project_id']].append(t)
+        projects_activities = [
+            {'id': pid, 'name': proj_name[pid],
+             'tasks': sorted(activities_by_project[pid], key=lambda x: (x.get('phase') or '', x.get('title') or ''))}
+            for pid in proj_name if activities_by_project.get(pid)
+        ]
         return render_template('admin_roles.html', roles=roles, calendarios=all_cals,
-                               projects=all_projects, ms_accounts=ms_accounts, all_modules=ALL_MODULES)
+                               projects=all_projects, ms_accounts=ms_accounts,
+                               all_modules=ALL_MODULES, role_levels=ROLE_LEVELS,
+                               projects_activities=projects_activities)
 
     @app.route('/admin/roles/create', methods=['POST'])
     @login_required
@@ -2023,9 +2121,13 @@ def create_app():
         if not name:
             flash('El rol necesita un nombre.', 'danger')
             return redirect('/admin/roles')
+        level = request.form.get('level', DEFAULT_ROLE_LEVEL)
+        if level not in ROLE_LEVEL_IDS:
+            level = DEFAULT_ROLE_LEVEL
         data = {
             'name': name,
             'description': _sanitize(request.form.get('description', ''), 500),
+            'level': level,
             'modules': ','.join(request.form.getlist('modules')),
             'created_by': str(current_user.id),
         }
@@ -2038,6 +2140,7 @@ def create_app():
                 app.supabase.insert_ignore('role_projects', {'role_id': role_id, 'project_id': pid})
             for ms in request.form.getlist('ms_accounts'):
                 app.supabase.insert_ignore('role_ms_accounts', {'role_id': role_id, 'ms_email': ms})
+            _save_role_activities(app, role_id, request.form.getlist('activities'))
         flash('Rol creado', 'success')
         return redirect('/admin/roles')
 
@@ -2050,9 +2153,13 @@ def create_app():
         if not name:
             flash('El rol necesita un nombre.', 'danger')
             return redirect('/admin/roles')
+        level = request.form.get('level', DEFAULT_ROLE_LEVEL)
+        if level not in ROLE_LEVEL_IDS:
+            level = DEFAULT_ROLE_LEVEL
         app.supabase.update('roles', rid, {
             'name': name,
             'description': _sanitize(request.form.get('description', ''), 500),
+            'level': level,
             'modules': ','.join(request.form.getlist('modules')),
         })
         for tbl, field, values in (
@@ -2064,6 +2171,7 @@ def create_app():
                 app.supabase.delete(tbl, row['id'])
             for v in values:
                 app.supabase.insert_ignore(tbl, {'role_id': rid, field: v})
+        _save_role_activities(app, rid, request.form.getlist('activities'), replace=True)
         _role_cache.invalidate(rid)
         flash('Rol actualizado', 'success')
         return redirect('/admin/roles')

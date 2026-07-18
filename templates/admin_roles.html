@@ -4,9 +4,11 @@
 {% block page_sub %}<p class="page-sub">Cada rol agrupa módulos, calendarios, proyectos y cuentas Microsoft. Un usuario puede tener varios roles y elegir cuál tiene activo.</p>{% endblock %}
 
 {% block content %}
+{% set level_labels = dict(role_levels) %}
 
 <div class="card mb-3"><div class="card-body">
   <button class="btn btn-success btn-sm rounded-pill" data-bs-toggle="modal" data-bs-target="#newRoleModal">➕ Nuevo rol</button>
+  <small class="text-muted d-block mt-2">Cada rol se clasifica en un <strong>nivel</strong> (administrador / socio / funcionario) y agrupa los módulos, calendarios, proyectos, actividades y cuentas Microsoft a los que da acceso.</small>
 </div></div>
 
 <h5 class="section-heading" id="registrados">🎛️ Roles existentes <span class="badge bg-primary">{{roles|length}}</span></h5>
@@ -15,10 +17,15 @@
 <div class="alert alert-secondary py-2 small">ℹ️ Aún no hay roles creados. Crea el primero con "Nuevo rol".</div>
 {% endif %}
 
-{% for r in roles %}
+{% for lid, llabel in role_levels %}
+{% set level_roles = roles | selectattr('level', 'equalto', lid) | list %}
+{% if level_roles %}
+<h6 class="fw-bold mt-3 mb-2 text-uppercase small text-muted">{{llabel}} <span class="badge bg-secondary">{{level_roles|length}}</span></h6>
+{% for r in level_roles %}
 <div class="user-row card mb-2"><div class="card-body"><div class="row align-items-center">
   <div class="col-md-4">
-    <strong>{{r.name}}</strong><br>
+    <strong>{{r.name}}</strong>
+    <span class="badge bg-dark bg-opacity-75">{{ level_labels.get(r.level, r.level) }}</span><br>
     {% if r.description %}<small class="text-muted">{{r.description}}</small><br>{% endif %}
     <span class="badge bg-secondary">{{r.user_count}} usuario(s)</span>
   </div>
@@ -27,7 +34,7 @@
       {%if mid in r.modules_list%}<span class="badge bg-primary bg-opacity-25 text-primary me-1" style="font-size:.65rem">{{mlabel}}</span>{%endif%}
     {%endfor%}
     <div class="mt-1 small text-muted">
-      📅 {{r.calendar_ids|length}} calendario(s) · 📋 {{r.project_ids|length}} proyecto(s) · ✅ {{r.ms_emails|length}} cuenta(s) MS
+      📅 {{r.calendar_ids|length}} calendario(s) · 📋 {{r.project_ids|length}} proyecto(s) · 🎯 {{r.task_ids|length}} actividad(es) · ✅ {{r.ms_emails|length}} cuenta(s) MS
     </div>
   </div>
   <div class="col-md-3 text-md-end mt-2 mt-md-0">
@@ -44,8 +51,13 @@
   <div class="modal-body"><form method="POST" action="/admin/roles/update/{{r.id}}">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <div class="row mb-3">
-      <div class="col-md-6"><label class="form-label">Nombre</label><input name="name" class="form-control" value="{{r.name}}" required></div>
-      <div class="col-md-6"><label class="form-label">Descripción</label><input name="description" class="form-control" value="{{r.description or ''}}"></div>
+      <div class="col-md-4"><label class="form-label">Nombre</label><input name="name" class="form-control" value="{{r.name}}" required></div>
+      <div class="col-md-4"><label class="form-label">Descripción</label><input name="description" class="form-control" value="{{r.description or ''}}"></div>
+      <div class="col-md-4"><label class="form-label">Nivel</label>
+        <select name="level" class="form-select">
+          {%for lid, llabel in role_levels%}<option value="{{lid}}" {{'selected' if r.level==lid}}>{{llabel}}</option>{%endfor%}
+        </select>
+      </div>
     </div>
 
     <div class="card mb-3 border-primary border-opacity-25">
@@ -99,6 +111,31 @@
       </div>
     </div>
 
+    <div class="card mb-3" style="border-color:rgba(217,70,239,.25)">
+      <div class="card-body p-3">
+        <h6 class="fw-bold mb-2" style="color:#c026d3">🎯 Actividades (tareas) por proyecto</h6>
+        <small class="text-muted d-block mb-2">Opcional. Marca actividades solo si quieres <strong>limitar</strong> el rol a tareas concretas dentro de un proyecto. Si no marcas ninguna actividad de un proyecto, el rol ve <strong>todas</strong> las tareas de ese proyecto.</small>
+        {% if not projects_activities %}
+        <small class="text-muted">Aún no hay actividades (tareas asociadas a un proyecto).</small>
+        {% endif %}
+        {%for pa in projects_activities%}
+        <div class="mb-2">
+          <div class="fw-semibold small">📋 {{pa.name}}</div>
+          <div class="row">
+            {%for t in pa.tasks%}
+            <div class="col-md-6">
+              <div class="form-check">
+                <input class="form-check-input" type="checkbox" name="activities" value="{{t.id}}" {{'checked' if t.id in r.task_ids}}>
+                <label class="form-check-label">{% if t.phase %}<span class="text-muted">[{{t.phase}}]</span> {% endif %}{{t.title}}</label>
+              </div>
+            </div>
+            {%endfor%}
+          </div>
+        </div>
+        {%endfor%}
+      </div>
+    </div>
+
     {% if ms_accounts %}
     <div class="card mb-3 border-warning border-opacity-25">
       <div class="card-body p-3">
@@ -120,7 +157,9 @@
     <button class="btn btn-primary rounded-pill">💾 Guardar cambios</button>
   </form></div>
 </div></div></div>
-{% endfor %}
+{% endfor %}{# level_roles #}
+{% endif %}
+{% endfor %}{# role_levels #}
 
 <!-- Modal: nuevo rol -->
 <div class="modal fade" id="newRoleModal" tabindex="-1"><div class="modal-dialog modal-lg"><div class="modal-content border-0 shadow">
@@ -128,8 +167,13 @@
   <div class="modal-body"><form method="POST" action="/admin/roles/create">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <div class="row mb-3">
-      <div class="col-md-6"><label class="form-label">Nombre</label><input name="name" class="form-control" placeholder="Ej. Encargado de Cuenca" required></div>
-      <div class="col-md-6"><label class="form-label">Descripción</label><input name="description" class="form-control" placeholder="Opcional"></div>
+      <div class="col-md-4"><label class="form-label">Nombre</label><input name="name" class="form-control" placeholder="Ej. Socio Tributos" required></div>
+      <div class="col-md-4"><label class="form-label">Descripción</label><input name="description" class="form-control" placeholder="Opcional"></div>
+      <div class="col-md-4"><label class="form-label">Nivel</label>
+        <select name="level" class="form-select">
+          {%for lid, llabel in role_levels%}<option value="{{lid}}" {{'selected' if lid=='funcionario'}}>{{llabel}}</option>{%endfor%}
+        </select>
+      </div>
     </div>
 
     <div class="card mb-3 border-primary border-opacity-25">
@@ -180,6 +224,31 @@
           </div>
           {%endfor%}
         </div>
+      </div>
+    </div>
+
+    <div class="card mb-3" style="border-color:rgba(217,70,239,.25)">
+      <div class="card-body p-3">
+        <h6 class="fw-bold mb-2" style="color:#c026d3">🎯 Actividades (tareas) por proyecto</h6>
+        <small class="text-muted d-block mb-2">Opcional. Marca actividades solo si quieres <strong>limitar</strong> el rol a tareas concretas dentro de un proyecto. Si no marcas ninguna actividad de un proyecto, el rol ve <strong>todas</strong> las tareas de ese proyecto.</small>
+        {% if not projects_activities %}
+        <small class="text-muted">Aún no hay actividades (tareas asociadas a un proyecto).</small>
+        {% endif %}
+        {%for pa in projects_activities%}
+        <div class="mb-2">
+          <div class="fw-semibold small">📋 {{pa.name}}</div>
+          <div class="row">
+            {%for t in pa.tasks%}
+            <div class="col-md-6">
+              <div class="form-check">
+                <input class="form-check-input" type="checkbox" name="activities" value="{{t.id}}">
+                <label class="form-check-label">{% if t.phase %}<span class="text-muted">[{{t.phase}}]</span> {% endif %}{{t.title}}</label>
+              </div>
+            </div>
+            {%endfor%}
+          </div>
+        </div>
+        {%endfor%}
       </div>
     </div>
 
