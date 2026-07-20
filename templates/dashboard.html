@@ -5,19 +5,10 @@
 
 {% block content %}
 
-<!-- Guía rápida didáctica -->
-<div class="card border-0 shadow-sm mb-3" style="background:linear-gradient(135deg,#eef2ff,#f5f3ff);border-left:4px solid #6366f1 !important">
-  <div class="card-body py-3">
-    <div class="d-flex align-items-center gap-2 mb-1">
-      <span style="font-size:1.25rem">🧭</span>
-      <strong>Guía rápida</strong>
-    </div>
-    <p class="text-muted small mb-0">
-      Los <strong>cuadros de colores</strong> muestran tus tareas por urgencia — haz clic en cualquiera para abrirlas.
-      Más abajo verás tus <strong>próximas citas</strong>. Para moverte entre módulos usa el <strong>menú lateral</strong> (icono ☰ en móvil):
-      <strong>📅 Calendario</strong> para citas, <strong>📋 Planificación</strong> para proyectos y <strong>✅ To-Do</strong> para tus tareas de Microsoft.
-    </p>
-  </div>
+<!-- Ayuda breve: una línea, no un bloque tutorial -->
+<div class="hint-bar">
+  <span class="hint-ic">🧭</span>
+  <span>Los indicadores muestran tus tareas por urgencia — haz clic en cualquiera para abrirlas. Usa el <strong>menú lateral</strong> para moverte entre módulos.</span>
 </div>
 
 {% if is_effective_admin and pending %}
@@ -50,71 +41,27 @@
 <div class="alert alert-warning text-center"><h5>⏳ Acceso pendiente</h5><p class="mb-0">El administrador revisará tu solicitud de acceso.</p></div>
 {% endif %}
 
-<!-- WIDGETS: estado del día -->
-<div class="row g-3 mb-3">
-  {% if can_planning or can_todo %}
-  <div class="col-6 col-md-3">
-    <a href="/todo?tf=overdue" class="text-decoration-none">
-      <div class="card border-0 shadow-sm h-100" style="background:linear-gradient(135deg,#fee2e2,#fecaca)">
-        <div class="card-body p-3">
-          <div class="d-flex justify-content-between align-items-start">
-            <div>
-              <div class="text-muted small">Vencidas</div>
-              <h3 class="fw-bold mb-0" style="color:#991b1b">{{widgets.overdue}}</h3>
-            </div>
-            <span style="font-size:1.6rem">⛔</span>
-          </div>
-        </div>
-      </div>
-    </a>
-  </div>
-  <div class="col-6 col-md-3">
-    <a href="/todo?tf=today" class="text-decoration-none">
-      <div class="card border-0 shadow-sm h-100" style="background:linear-gradient(135deg,#d1fae5,#a7f3d0)">
-        <div class="card-body p-3">
-          <div class="d-flex justify-content-between align-items-start">
-            <div>
-              <div class="text-muted small">Para hoy</div>
-              <h3 class="fw-bold mb-0" style="color:#065f46">{{widgets.today_count}}</h3>
-            </div>
-            <span style="font-size:1.6rem">📌</span>
-          </div>
-        </div>
-      </div>
-    </a>
-  </div>
-  <div class="col-6 col-md-3">
-    <a href="/todo?tf=week" class="text-decoration-none">
-      <div class="card border-0 shadow-sm h-100" style="background:linear-gradient(135deg,#ede9fe,#ddd6fe)">
-        <div class="card-body p-3">
-          <div class="d-flex justify-content-between align-items-start">
-            <div>
-              <div class="text-muted small">Esta semana</div>
-              <h3 class="fw-bold mb-0" style="color:#5b21b6">{{widgets.week_count}}</h3>
-            </div>
-            <span style="font-size:1.6rem">🗓</span>
-          </div>
-        </div>
-      </div>
-    </a>
-  </div>
-  <div class="col-6 col-md-3">
-    <a href="/todo" class="text-decoration-none">
-      <div class="card border-0 shadow-sm h-100" style="background:linear-gradient(135deg,#dbeafe,#bfdbfe)">
-        <div class="card-body p-3">
-          <div class="d-flex justify-content-between align-items-start">
-            <div>
-              <div class="text-muted small">Pendientes total</div>
-              <h3 class="fw-bold mb-0" style="color:#1e40af">{{widgets.total_pending}}</h3>
-            </div>
-            <span style="font-size:1.6rem">📋</span>
-          </div>
-        </div>
-      </div>
-    </a>
-  </div>
-  {% endif %}
+<!-- INDICADORES: estado del día -->
+{% if can_planning or can_todo %}
+<div class="stat-grid">
+  <a href="/todo?tf=overdue" class="stat-tile" style="--tone:#dc2626;--tone-bg:#fef2f2;--tone-fg:#b91c1c" title="Tareas cuyo plazo ya venció">
+    <span><span class="stat-label">Vencidas</span><span class="stat-value d-block">{{widgets.overdue}}</span></span>
+    <span class="stat-ic">⛔</span>
+  </a>
+  <a href="/todo?tf=today" class="stat-tile" style="--tone:#059669;--tone-bg:#ecfdf5;--tone-fg:#047857" title="Tareas que vencen hoy">
+    <span><span class="stat-label">Para hoy</span><span class="stat-value d-block">{{widgets.today_count}}</span></span>
+    <span class="stat-ic">📌</span>
+  </a>
+  <a href="/todo?tf=week" class="stat-tile" style="--tone:#7c3aed;--tone-bg:#f5f3ff;--tone-fg:#6d28d9" title="Tareas de los próximos 7 días">
+    <span><span class="stat-label">Esta semana</span><span class="stat-value d-block">{{widgets.week_count}}</span></span>
+    <span class="stat-ic">🗓</span>
+  </a>
+  <a href="/todo" class="stat-tile" style="--tone:#2563eb;--tone-bg:#eff6ff;--tone-fg:#1d4ed8" title="Todas las tareas pendientes">
+    <span><span class="stat-label">Pendientes</span><span class="stat-value d-block">{{widgets.total_pending}}</span></span>
+    <span class="stat-ic">📋</span>
+  </a>
 </div>
+{% endif %}
 
 <!-- Próximas citas + desglose por fuente -->
 <div class="row g-3 mb-3">
@@ -152,21 +99,21 @@
   <div class="col-md-{% if can_calendar %}5{% else %}12{% endif %}">
     <div class="card border-0 shadow-sm h-100">
       <div class="card-body p-3">
-        <h6 class="fw-bold mb-2">📊 Estado por fuente</h6>
+        <h6 class="mb-2">📊 Estado por fuente</h6>
         {% if can_planning %}
-        <div class="d-flex justify-content-between align-items-center mb-2 p-2 rounded" style="background:#f1f5f9">
-          <span><span style="background:#4f46e5;color:#fff;padding:2px 8px;border-radius:6px;font-size:.72rem">✍️ Sistema</span></span>
-          <strong>{{widgets.manual_pending}} pendientes</strong>
+        <div class="src-row">
+          <span class="src-chip" style="background:#eef2ff;color:#3730a3">✍️ Sistema</span>
+          <span class="src-count">{{widgets.manual_pending}} <small>pendientes</small></span>
         </div>
         {% endif %}
         {% if can_todo %}
-        <div class="d-flex justify-content-between align-items-center mb-2 p-2 rounded" style="background:#dbeafe">
-          <span><span style="background:#0078d4;color:#fff;padding:2px 8px;border-radius:6px;font-size:.72rem">📋 Microsoft</span></span>
-          <strong>{{widgets.todo_pending}} pendientes</strong>
+        <div class="src-row">
+          <span class="src-chip" style="background:#e0f2fe;color:#075985">📋 Microsoft</span>
+          <span class="src-count">{{widgets.todo_pending}} <small>pendientes</small></span>
         </div>
-        <div class="d-flex justify-content-between align-items-center mb-2 p-2 rounded" style="background:#fef3c7">
-          <span>📑 Subtareas pendientes</span>
-          <strong>{{widgets.sub_pending}}</strong>
+        <div class="src-row">
+          <span class="src-chip" style="background:#fef3c7;color:#92400e">📑 Subtareas</span>
+          <span class="src-count">{{widgets.sub_pending}} <small>pendientes</small></span>
         </div>
         {% endif %}
         {% if widgets.ms_accounts %}
