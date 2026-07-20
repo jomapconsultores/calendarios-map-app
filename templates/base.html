@@ -6,7 +6,7 @@
 <meta name="csrf-token" content="{{ csrf_token() }}">
 <title>{% block title %}calendarios-map{% endblock %}</title>
 <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-<link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=7">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=8">
 <!-- PWA -->
 <link rel="manifest" href="/manifest.webmanifest">
 <meta name="theme-color" content="#4f46e5">
@@ -48,59 +48,61 @@
       </a>
 
       <nav class="rail-nav">
-        <a href="/dashboard" class="rail-btn {{ 'active' if ns.active_key == 'dashboard' }}" data-panel="dashboard" title="Panel — Resumen general">
-          <span class="rail-ic">📊</span><span class="rail-tip">Panel</span>
+        <div class="rail-section"><span>Principal</span></div>
+
+        <a href="/dashboard" class="rail-btn {{ 'active' if ns.active_key == 'dashboard' }}" data-panel="dashboard" title="Panel — Resumen general del sistema">
+          <span class="rail-ic">📊</span><span class="rail-label">Panel</span>
         </a>
 
         {% if is_adm or 'calendar' in active_modules %}
-        <a href="/calendar" class="rail-btn {{ 'active' if ns.active_key == 'calendar' }}" data-panel="calendar" data-group title="Calendario — Agenda y citas">
-          <span class="rail-ic">📅</span><span class="rail-tip">Calendario</span>
+        <a href="/calendar" class="rail-btn {{ 'active' if ns.active_key == 'calendar' }}" data-panel="calendar" data-group title="Calendario — Agenda de citas y feriados">
+          <span class="rail-ic">📅</span><span class="rail-label">Calendario</span>
         </a>
         {% endif %}
 
         {% if is_adm or 'planning' in active_modules %}
-        <a href="/planning" class="rail-btn {{ 'active' if ns.active_key == 'planning' }}" data-panel="planning" data-group title="Planificación — Proyectos del equipo">
-          <span class="rail-ic">📋</span><span class="rail-tip">Planificación</span>
+        <a href="/planning" class="rail-btn {{ 'active' if ns.active_key == 'planning' }}" data-panel="planning" data-group title="Planificación — Proyectos y tareas del equipo">
+          <span class="rail-ic">📋</span><span class="rail-label">Planificación</span>
         </a>
         {% endif %}
 
         {% if is_adm or 'todo' in active_modules %}
-        <a href="/todo" class="rail-btn {{ 'active' if ns.active_key == 'todo' }}" data-panel="todo" data-group title="To-Do externo — Tareas de Microsoft">
-          <span class="rail-ic">✅</span><span class="rail-tip">To-Do</span>
+        <a href="/todo" class="rail-btn {{ 'active' if ns.active_key == 'todo' }}" data-panel="todo" data-group title="To-Do externo — Tareas sincronizadas de Microsoft">
+          <span class="rail-ic">✅</span><span class="rail-label">To-Do</span>
         </a>
         {% endif %}
 
-        <a href="/profile" class="rail-btn {{ 'active' if ns.active_key == 'profile' }}" data-panel="profile" title="Mi perfil — Cuenta y seguridad">
-          <span class="rail-ic">👤</span><span class="rail-tip">Mi perfil</span>
+        <a href="/profile" class="rail-btn {{ 'active' if ns.active_key == 'profile' }}" data-panel="profile" title="Mi perfil — Tu cuenta, contraseña y accesos">
+          <span class="rail-ic">👤</span><span class="rail-label">Mi perfil</span>
         </a>
 
         {% if is_adm %}
-        <div class="rail-divider" title="Administración"></div>
+        <div class="rail-section"><span>Administración</span></div>
 
-        <a href="/admin/users" class="rail-btn {{ 'active' if ns.active_key == 'users' }}" data-panel="users" data-group title="Usuarios — Altas y permisos">
-          <span class="rail-ic">👥</span><span class="rail-tip">Usuarios</span>
+        <a href="/admin/users" class="rail-btn {{ 'active' if ns.active_key == 'users' }}" data-panel="users" data-group title="Usuarios — Altas, bajas y permisos">
+          <span class="rail-ic">👥</span><span class="rail-label">Usuarios</span>
         </a>
-        <a href="/admin/roles" class="rail-btn {{ 'active' if ns.active_key == 'roles' }}" data-panel="roles" data-group title="Roles — Permisos por rol">
-          <span class="rail-ic">🎛️</span><span class="rail-tip">Roles</span>
+        <a href="/admin/roles" class="rail-btn {{ 'active' if ns.active_key == 'roles' }}" data-panel="roles" data-group title="Roles — Qué habilita cada rol de negocio">
+          <span class="rail-ic">🎛️</span><span class="rail-label">Roles</span>
         </a>
-        <a href="/admin/database" class="rail-btn {{ 'active' if ns.active_key == 'database' }}" data-panel="database" data-group title="Base de datos — Catálogos del sistema">
-          <span class="rail-ic">🗄️</span><span class="rail-tip">Base de datos</span>
+        <a href="/admin/database" class="rail-btn {{ 'active' if ns.active_key == 'database' }}" data-panel="database" data-group title="Base de datos — Catálogos y datos maestros">
+          <span class="rail-ic">🗄️</span><span class="rail-label">Base de datos</span>
         </a>
         {% if browser_sync_visible %}
         <a href="/admin/browser-sync" class="rail-btn {{ 'active' if ns.active_key == 'browser-sync' }}" data-panel="browser-sync" title="Sync navegadores — Avast ⇄ Brave (privado)">
-          <span class="rail-ic">🔐</span><span class="rail-tip">Sync navegadores</span>
+          <span class="rail-ic">🔐</span><span class="rail-label">Sync</span>
         </a>
         {% endif %}
 
-        <div class="rail-divider" title="Integraciones"></div>
+        <div class="rail-section"><span>Conexiones</span></div>
 
         {% if google_connected_global %}
-        <a class="rail-btn" style="cursor:default" data-panel="integraciones" data-group title="Google Calendar conectado">
-          <span class="rail-ic">🔗</span><span class="rail-tip">Integraciones</span>
+        <a class="rail-btn" style="cursor:default" data-panel="integraciones" data-group title="Integraciones — Google Calendar conectado">
+          <span class="rail-ic">🔗</span><span class="rail-label">Integraciones</span>
         </a>
         {% else %}
-        <a href="/auth/google" class="rail-btn" data-panel="integraciones" data-group title="Integraciones — Google / Microsoft">
-          <span class="rail-ic">🔗</span><span class="rail-tip">Integraciones</span>
+        <a href="/auth/google" class="rail-btn" data-panel="integraciones" data-group title="Integraciones — Conectar Google y Microsoft">
+          <span class="rail-ic">🔗</span><span class="rail-label">Integraciones</span>
         </a>
         {% endif %}
         {% endif %}
@@ -121,79 +123,79 @@
       <div class="panel-body">
         <!-- Panel -->
         <section class="panel-page {{ 'active' if ns.active_key == 'dashboard' }}" data-page="dashboard">
-          <div class="panel-head"><span class="panel-head-ic">📊</span><span><span class="panel-title">Panel</span><span class="panel-sub">Resumen general</span></span></div>
+          <div class="panel-head"><span class="panel-head-ic">📊</span><span><span class="panel-title">Panel</span><span class="panel-sub">Resumen general del sistema</span></span></div>
           <ul class="panel-links">
-            <li><a href="/dashboard" class="{{ 'active' if path == '/dashboard' }}">📊 Ir al panel</a></li>
+            <li><a href="/dashboard" class="{{ 'active' if path == '/dashboard' }}"><span class="pl-t">📊 Ir al panel</span><span class="pl-d">Métricas y actividad del día</span></a></li>
           </ul>
         </section>
 
         {% if is_adm or 'calendar' in active_modules %}
         <section class="panel-page {{ 'active' if ns.active_key == 'calendar' }}" data-page="calendar">
-          <div class="panel-head"><span class="panel-head-ic">📅</span><span><span class="panel-title">Calendario</span><span class="panel-sub">Agenda y citas</span></span></div>
+          <div class="panel-head"><span class="panel-head-ic">📅</span><span><span class="panel-title">Calendario</span><span class="panel-sub">Agenda de citas y feriados</span></span></div>
           <ul class="panel-links">
-            <li><a href="/calendar" class="{{ 'active' if path == '/calendar' }}">🗓️ Agenda mensual</a></li>
-            <li><a href="/calendar?action=new">➕ Nueva cita</a></li>
-            <li><a href="/calendar?action=pending">⏳ Pendientes</a></li>
+            <li><a href="/calendar" class="{{ 'active' if path == '/calendar' }}"><span class="pl-t">🗓️ Agenda mensual</span><span class="pl-d">Todas las citas del mes</span></a></li>
+            <li><a href="/calendar?action=new"><span class="pl-t">➕ Nueva cita</span><span class="pl-d">Agendar a un cliente</span></a></li>
+            <li><a href="/calendar?action=pending"><span class="pl-t">⏳ Pendientes</span><span class="pl-d">Citas que esperan aprobación</span></a></li>
           </ul>
         </section>
         {% endif %}
 
         {% if is_adm or 'planning' in active_modules %}
         <section class="panel-page {{ 'active' if ns.active_key == 'planning' }}" data-page="planning">
-          <div class="panel-head"><span class="panel-head-ic">📋</span><span><span class="panel-title">Planificación</span><span class="panel-sub">Proyectos del equipo</span></span></div>
+          <div class="panel-head"><span class="panel-head-ic">📋</span><span><span class="panel-title">Planificación</span><span class="panel-sub">Proyectos y tareas del equipo</span></span></div>
           <ul class="panel-links">
-            <li><a href="/planning" class="{{ 'active' if path == '/planning' }}">📝 Mis tareas</a></li>
-            <li><a href="/planning?view=kanban">🗂️ Tablero Kanban</a></li>
-            <li><a href="/planning?view=gantt">📊 Gantt</a></li>
-            <li><a href="/planning?view=map">🗺️ Mapa de procesos</a></li>
+            <li><a href="/planning" class="{{ 'active' if path == '/planning' }}"><span class="pl-t">📝 Mis tareas</span><span class="pl-d">Lo que tienes asignado</span></a></li>
+            <li><a href="/planning?view=kanban"><span class="pl-t">🗂️ Tablero Kanban</span><span class="pl-d">Tareas agrupadas por estado</span></a></li>
+            <li><a href="/planning?view=gantt"><span class="pl-t">📊 Gantt</span><span class="pl-d">Cronograma y plazos</span></a></li>
+            <li><a href="/planning?view=map"><span class="pl-t">🗺️ Mapa de procesos</span><span class="pl-d">Flujo completo del proyecto</span></a></li>
           </ul>
         </section>
         {% endif %}
 
         {% if is_adm or 'todo' in active_modules %}
         <section class="panel-page {{ 'active' if ns.active_key == 'todo' }}" data-page="todo">
-          <div class="panel-head"><span class="panel-head-ic">✅</span><span><span class="panel-title">To-Do externo</span><span class="panel-sub">Tareas de Microsoft</span></span></div>
+          <div class="panel-head"><span class="panel-head-ic">✅</span><span><span class="panel-title">To-Do externo</span><span class="panel-sub">Tareas sincronizadas de Microsoft</span></span></div>
           <ul class="panel-links">
-            <li><a href="/todo" class="{{ 'active' if path == '/todo' }}">📋 Todas las cuentas</a></li>
-            <li><a href="/todo?view=kanban">🗂️ Tablero Kanban</a></li>
+            <li><a href="/todo" class="{{ 'active' if path == '/todo' }}"><span class="pl-t">📋 Todas las cuentas</span><span class="pl-d">Tareas de cada cuenta conectada</span></a></li>
+            <li><a href="/todo?view=kanban"><span class="pl-t">🗂️ Tablero Kanban</span><span class="pl-d">Tareas agrupadas por estado</span></a></li>
           </ul>
         </section>
         {% endif %}
 
         <!-- Mi perfil -->
         <section class="panel-page {{ 'active' if ns.active_key == 'profile' }}" data-page="profile">
-          <div class="panel-head"><span class="panel-head-ic">👤</span><span><span class="panel-title">Mi perfil</span><span class="panel-sub">Cuenta y seguridad</span></span></div>
+          <div class="panel-head"><span class="panel-head-ic">👤</span><span><span class="panel-title">Mi perfil</span><span class="panel-sub">Tu cuenta y seguridad</span></span></div>
           <ul class="panel-links">
-            <li><a href="/profile" class="{{ 'active' if path == '/profile' }}">👤 Ver mi perfil</a></li>
+            <li><a href="/profile" class="{{ 'active' if path == '/profile' }}"><span class="pl-t">👤 Ver mi perfil</span><span class="pl-d">Datos, contraseña y accesos</span></a></li>
           </ul>
         </section>
 
         {% if is_adm %}
         <section class="panel-page {{ 'active' if ns.active_key == 'users' }}" data-page="users">
-          <div class="panel-head"><span class="panel-head-ic">👥</span><span><span class="panel-title">Usuarios</span><span class="panel-sub">Altas y permisos</span></span></div>
+          <div class="panel-head"><span class="panel-head-ic">👥</span><span><span class="panel-title">Usuarios</span><span class="panel-sub">Altas, bajas y permisos</span></span></div>
           <ul class="panel-links">
-            <li><a href="/admin/users#registrados">👤 Registrados</a></li>
-            <li><a href="/admin/users#pending">📨 Solicitudes</a></li>
+            <li><a href="/admin/users#registrados"><span class="pl-t">👤 Registrados</span><span class="pl-d">Usuarios activos del sistema</span></a></li>
+            <li><a href="/admin/users#pending"><span class="pl-t">📨 Solicitudes</span><span class="pl-d">Registros por aprobar</span></a></li>
           </ul>
         </section>
 
         <section class="panel-page {{ 'active' if ns.active_key == 'roles' }}" data-page="roles">
-          <div class="panel-head"><span class="panel-head-ic">🎛️</span><span><span class="panel-title">Roles</span><span class="panel-sub">Permisos por rol</span></span></div>
+          <div class="panel-head"><span class="panel-head-ic">🎛️</span><span><span class="panel-title">Roles</span><span class="panel-sub">Qué habilita cada rol</span></span></div>
           <ul class="panel-links">
-            <li><a href="/admin/roles" class="{{ 'active' if path == '/admin/roles' }}">🎛️ Catálogo de roles</a></li>
+            <li><a href="/admin/roles" class="{{ 'active' if path == '/admin/roles' }}"><span class="pl-t">🎛️ Catálogo de roles</span><span class="pl-d">Módulos y calendarios por rol</span></a></li>
           </ul>
         </section>
 
         <section class="panel-page {{ 'active' if ns.active_key == 'database' }}" data-page="database">
-          <div class="panel-head"><span class="panel-head-ic">🗄️</span><span><span class="panel-title">Base de datos</span><span class="panel-sub">Catálogos del sistema</span></span></div>
+          <div class="panel-head"><span class="panel-head-ic">🗄️</span><span><span class="panel-title">Base de datos</span><span class="panel-sub">Catálogos y datos maestros</span></span></div>
           <ul class="panel-links">
-            <li><a href="/admin/database#sec-ciudades">🏙️ Ciudades</a></li>
-            <li><a href="/admin/database#sec-titles">🏷️ Títulos</a></li>
-            <li><a href="/admin/database#sec-encargados">🧑‍💼 Encargados</a></li>
-            <li><a href="/admin/database#sec-clients">🤝 Clientes</a></li>
-            <li><a href="/admin/database#sec-appointments">📅 Citas</a></li>
-            <li><a href="/admin/database#sec-calendars">🗓️ Calendarios</a></li>
-            <li><a href="/admin/database#sec-users">👥 Usuarios</a></li>
+            <li><a href="/admin/database#sec-ciudades"><span class="pl-t">🏙️ Ciudades</span><span class="pl-d">Sedes y ubicaciones</span></a></li>
+            <li><a href="/admin/database#sec-titles"><span class="pl-t">🏷️ Títulos</span><span class="pl-d">Tratamientos de cliente</span></a></li>
+            <li><a href="/admin/database#sec-encargados"><span class="pl-t">🧑‍💼 Encargados</span><span class="pl-d">Responsables de cada cita</span></a></li>
+            <li><a href="/admin/database#sec-clients"><span class="pl-t">🤝 Clientes</span><span class="pl-d">Directorio de clientes</span></a></li>
+            <li><a href="/admin/database#sec-appointments"><span class="pl-t">📅 Citas</span><span class="pl-d">Registro histórico</span></a></li>
+            <li><a href="/admin/database#sec-calendars"><span class="pl-t">🗓️ Calendarios</span><span class="pl-d">Agendas configuradas</span></a></li>
+            <li><a href="/admin/database#sec-users"><span class="pl-t">👥 Usuarios</span><span class="pl-d">Cuentas del sistema</span></a></li>
           </ul>
         </section>
 
@@ -201,20 +203,20 @@
         <section class="panel-page {{ 'active' if ns.active_key == 'browser-sync' }}" data-page="browser-sync">
           <div class="panel-head"><span class="panel-head-ic">🔐</span><span><span class="panel-title">Sync navegadores</span><span class="panel-sub">Avast ⇄ Brave (privado)</span></span></div>
           <ul class="panel-links">
-            <li><a href="/admin/browser-sync" class="{{ 'active' if path == '/admin/browser-sync' }}">🔐 Abrir sincronización</a></li>
+            <li><a href="/admin/browser-sync" class="{{ 'active' if path == '/admin/browser-sync' }}"><span class="pl-t">🔐 Abrir sincronización</span><span class="pl-d">Marcadores y contraseñas</span></a></li>
           </ul>
         </section>
         {% endif %}
 
         <section class="panel-page" data-page="integraciones">
-          <div class="panel-head"><span class="panel-head-ic">🔗</span><span><span class="panel-title">Integraciones</span><span class="panel-sub">Servicios externos</span></span></div>
+          <div class="panel-head"><span class="panel-head-ic">🔗</span><span><span class="panel-title">Integraciones</span><span class="panel-sub">Servicios externos conectados</span></span></div>
           <ul class="panel-links">
             {% if google_connected_global %}
-            <li><a class="pill-link" style="cursor:default">🔗 Google Calendar <span class="nav-pill" style="background:#dcfce7;color:#166534">Conectado</span></a></li>
+            <li><a class="pill-link" style="cursor:default"><span class="pl-t">🔗 Google Calendar <span class="nav-pill" style="background:#dcfce7;color:#166534">Conectado</span></span><span class="pl-d">Las citas se sincronizan solas</span></a></li>
             {% else %}
-            <li><a href="/auth/google" class="pill-link">🔗 Google Calendar <span class="nav-pill" style="background:#fee2e2;color:#991b1b">Conectar</span></a></li>
+            <li><a href="/auth/google" class="pill-link"><span class="pl-t">🔗 Google Calendar <span class="nav-pill" style="background:#fee2e2;color:#991b1b">Conectar</span></span><span class="pl-d">Para sincronizar tus citas</span></a></li>
             {% endif %}
-            <li><a href="/auth/microsoft" class="pill-link">📋 Microsoft To-Do <span class="nav-pill" style="background:#dbeafe;color:#1e40af">Conectar</span></a></li>
+            <li><a href="/auth/microsoft" class="pill-link"><span class="pl-t">📋 Microsoft To-Do <span class="nav-pill" style="background:#dbeafe;color:#1e40af">Conectar</span></span><span class="pl-d">Para importar tus tareas</span></a></li>
           </ul>
         </section>
         {% endif %}

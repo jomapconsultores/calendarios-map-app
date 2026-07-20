@@ -25,8 +25,8 @@
     --radius: 14px;
     --radius-sm: 10px;
     --transition: all .18s ease;
-    --rail-w: 62px;
-    --panel-w: 212px;
+    --rail-w: 88px;
+    --panel-w: 236px;
     --sidebar-w: calc(var(--rail-w) + var(--panel-w));
 }
 
@@ -85,48 +85,59 @@ body {
 .rail-nav {
     flex: 1; width: 100%;
     overflow-y: auto; overflow-x: hidden;
-    padding: 10px 0;
-    display: flex; flex-direction: column; align-items: center; gap: 4px;
+    padding: 6px 6px 14px;
+    display: flex; flex-direction: column; align-items: stretch; gap: 3px;
 }
 .rail-nav::-webkit-scrollbar { width: 0; }
 
+/* Rótulo de grupo: dice de qué trata el bloque de abajo */
+.rail-section {
+    display: flex; align-items: center; gap: 6px;
+    padding: 12px 2px 5px;
+    flex-shrink: 0;
+}
+.rail-section::before, .rail-section::after {
+    content: ''; flex: 1; height: 1px; background: rgba(255,255,255,.09);
+}
+.rail-section span {
+    font-size: .48rem; font-weight: 800; text-transform: uppercase;
+    letter-spacing: .9px; color: #64748b; white-space: nowrap;
+}
+
+/* Botón del riel: ícono + etiqueta visible (no hay que adivinar) */
 .rail-btn {
     position: relative;
-    width: 44px; height: 44px;
-    display: grid; place-items: center;
-    border-radius: 12px;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 5px;
+    min-height: 58px;
+    padding: 9px 4px;
+    border-radius: 11px;
     color: #94a3b8;
     text-decoration: none;
+    text-align: center;
     cursor: pointer;
     user-select: none;
     transition: all .15s ease;
     flex-shrink: 0;
 }
-.rail-btn .rail-ic { font-size: 1.2rem; line-height: 1; }
+.rail-btn .rail-ic { font-size: 1.15rem; line-height: 1; }
+.rail-btn .rail-label {
+    font-size: .575rem; font-weight: 600; line-height: 1.2;
+    letter-spacing: .1px; word-break: break-word; hyphens: auto;
+}
 .rail-btn:hover { background: rgba(255,255,255,.08); color: #e2e8f0; }
 .rail-btn.active {
     background: linear-gradient(135deg, #4f46e5, #7c3aed);
     color: #fff;
     box-shadow: 0 4px 12px rgba(79,70,229,.4);
 }
+.rail-btn.active .rail-label { font-weight: 700; }
 .rail-btn.active::before {
     content: '';
-    position: absolute; left: -10px; top: 50%; transform: translateY(-50%);
-    width: 4px; height: 22px; border-radius: 0 3px 3px 0; background: #c7d2fe;
+    position: absolute; left: -6px; top: 50%; transform: translateY(-50%);
+    width: 3px; height: 26px; border-radius: 0 3px 3px 0; background: #c7d2fe;
 }
-/* Tooltip flotante con el nombre de la sección */
-.rail-tip {
-    position: absolute; left: calc(100% + 8px); top: 50%; transform: translateY(-50%);
-    background: #1e293b; color: #e2e8f0;
-    font-size: .72rem; font-weight: 600; white-space: nowrap;
-    padding: 5px 9px; border-radius: 7px;
-    box-shadow: 0 6px 18px rgba(0,0,0,.35);
-    opacity: 0; pointer-events: none; transition: opacity .12s ease;
-    z-index: 5;
-}
-.rail-btn:hover .rail-tip { opacity: 1; }
-
-.rail-divider { width: 26px; height: 1px; background: rgba(255,255,255,.1); margin: 6px 0; flex-shrink: 0; }
+.rail-btn:focus-visible { outline: 2px solid #818cf8; outline-offset: 2px; }
 
 .rail-foot {
     width: 100%;
@@ -187,24 +198,37 @@ body {
 }
 .panel-head-ic { font-size: 1.3rem; flex-shrink: 0; }
 .panel-head > span:last-child { display: flex; flex-direction: column; min-width: 0; line-height: 1.25; }
-.panel-title { color: #f1f5f9; font-size: .95rem; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.panel-sub { color: #64748b; font-size: .68rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.panel-title { color: #f1f5f9; font-size: .95rem; font-weight: 700; }
+.panel-sub { color: #7c8ba1; font-size: .68rem; line-height: 1.35; }
 
 .panel-links { list-style: none; margin: 0; padding: 4px 0 0; }
 .panel-links li { margin-bottom: 2px; }
+/* Cada enlace explica qué hace: título + descripción */
 .panel-links a {
-    display: flex; align-items: center; gap: 8px;
-    padding: 9px 12px;
-    color: #94a3b8; font-size: .82rem; font-weight: 500;
+    display: flex; flex-direction: column; gap: 2px;
+    padding: 8px 11px;
+    color: #94a3b8;
     text-decoration: none; border-radius: 9px;
     transition: all .15s ease;
 }
+.panel-links .pl-t {
+    display: flex; align-items: center; gap: 7px;
+    font-size: .81rem; font-weight: 600; line-height: 1.3;
+}
+.panel-links .pl-d {
+    font-size: .655rem; font-weight: 400; line-height: 1.3;
+    color: #64748b; transition: color .15s ease;
+}
 .panel-links a:hover { background: rgba(255,255,255,.06); color: #e2e8f0; }
+.panel-links a:hover .pl-d { color: #94a3b8; }
 .panel-links a.active {
     background: linear-gradient(135deg, rgba(79,70,229,.85), rgba(124,58,237,.85));
     color: #fff;
 }
-.panel-links a.pill-link { justify-content: space-between; }
+.panel-links a.active .pl-d { color: rgba(255,255,255,.82); }
+.panel-links a:focus-visible { outline: 2px solid #818cf8; outline-offset: 1px; }
+/* Integraciones: la píldora de estado va a la derecha del título */
+.panel-links a.pill-link .pl-t { justify-content: space-between; width: 100%; }
 
 /* Pill de estado (usado en el panel de Integraciones) */
 .nav-pill { font-size: .58rem; font-weight: 700; padding: 2px 8px; border-radius: 999px; flex-shrink: 0; }
@@ -647,7 +671,7 @@ textarea.form-control { resize: vertical; min-height: 70px; }
    RESPONSIVE — Mobile
    ============================================ */
 @media (max-width: 768px) {
-    :root { --rail-w: 58px; --panel-w: 206px; }
+    :root { --rail-w: 82px; --panel-w: 214px; }
 
     .modal-dialog { margin: 8px; }
     .modal-body { max-height: 60vh; padding: 16px; }
