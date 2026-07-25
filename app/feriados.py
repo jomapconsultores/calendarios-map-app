@@ -1,3 +1,6 @@
+# ------------------------------------------------------------
+# Desarrollado por Marco Antonio Posligua San Martín
+# ------------------------------------------------------------
 """
 Feriados nacionales de Ecuador — cálculo automático con la Ley de traslado.
 

@@ -1,3 +1,6 @@
+# ------------------------------------------------------------
+# Desarrollado por Marco Antonio Posligua San Martín
+# ------------------------------------------------------------
 """
 Sincronización local de navegadores Chromium (Avast Secure Browser ⇄ Brave).
 
