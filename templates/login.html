@@ -56,6 +56,15 @@
         {% endif %}
 
         <div class="text-center mt-3"><a href="/register" class="small">¿No tienes cuenta? Regístrate</a></div>
+        <div class="text-center mt-2">
+          <a href="#" class="small text-muted"
+             onclick="var o=document.getElementById('olvide');o.style.display=o.style.display==='none'?'block':'none';return false;">¿Olvidaste tu contraseña?</a>
+          <div id="olvide" style="display:none" class="alert alert-light border small text-start mt-2 mb-0">
+            Por seguridad no se envían contraseñas por correo. Pide al <strong>administrador</strong>
+            que entre en <em>Usuarios</em> y use <em>Restablecer</em>: te entregará una contraseña
+            temporal de un solo uso, válida 72 horas, que deberás cambiar apenas ingreses.
+          </div>
+        </div>
       </div></div>
       <p class="text-center text-white-50 small mt-3 mb-0">© 2026 · Marco Antonio Posligua San Martín</p>
     </div>

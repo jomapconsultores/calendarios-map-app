@@ -1,0 +1,96 @@
+# ------------------------------------------------------------
+# Desarrollado por Marco Antonio Posligua San Martín
+# ------------------------------------------------------------
+# Compila el APK/AAB de Calendarios MAP en la nube.
+#
+# Existe porque el equipo trabaja en Windows sin el SDK de Android instalado:
+# aquí el runner lo trae ya listo. Si no hay almacén de claves configurado en los
+# secretos, genera un APK de depuración —instalable a mano para probar— en vez de
+# fallar, que es lo útil mientras no exista cuenta de Google Play.
+
+name: App Android — Calendarios MAP
+
+on:
+  workflow_dispatch:
+    inputs:
+      app_url:
+        description: "Dirección del despliegue que abrirá la app (deja vacío para usar la variable APP_URL)"
+        required: false
+        type: string
+  push:
+    tags: ['movil-v*']
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: movil
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # Android Gradle Plugin 8.x exige JDK 17: con el 11 falla al configurar.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Instalar dependencias
+        run: npm install
+
+      - name: Generar el proyecto Android
+        env:
+          APP_URL: ${{ inputs.app_url || vars.APP_URL }}
+        run: |
+          npx cap add android || npx cap sync android
+
+      - name: Preparar el almacén de claves
+        id: keystore
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "$KEYSTORE_B64" ]; then
+            echo "$KEYSTORE_B64" | base64 -d > android/app/firma.keystore
+            echo "firmado=si" >> "$GITHUB_OUTPUT"
+          else
+            echo "Sin ANDROID_KEYSTORE_BASE64: se compilará un APK de depuración."
+            echo "firmado=no" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Compilar APK firmado
+        if: steps.keystore.outputs.firmado == 'si'
+        working-directory: movil/android
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleRelease bundleRelease \
+            -Pandroid.injected.signing.store.file=$PWD/app/firma.keystore \
+            -Pandroid.injected.signing.store.password="$KEYSTORE_PASSWORD" \
+            -Pandroid.injected.signing.key.alias="$KEY_ALIAS" \
+            -Pandroid.injected.signing.key.password="$KEY_PASSWORD"
+
+      - name: Compilar APK de depuración
+        if: steps.keystore.outputs.firmado == 'no'
+        working-directory: movil/android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug
+
+      - name: Publicar el paquete como artefacto
+        uses: actions/upload-artifact@v4
+        with:
+          name: calendario-android
+          if-no-files-found: error
+          path: |
+            movil/android/app/build/outputs/apk/**/*.apk
+            movil/android/app/build/outputs/bundle/**/*.aab

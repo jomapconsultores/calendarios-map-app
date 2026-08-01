@@ -10,10 +10,23 @@
       <h5 class="section-heading">👤 Datos de la cuenta</h5>
       <form method="POST">
         <div class="mb-3"><label class="form-label">Nombre completo</label><input name="full_name" class="form-control" value="{{current_user.full_name}}"></div>
-        <div class="mb-3"><label class="form-label">Email</label><input name="email" type="email" class="form-control" value="{{current_user.email}}"></div>
-        <div class="mb-3"><label class="form-label">Nueva contraseña</label><input name="password" type="password" class="form-control" placeholder="Dejar vacío para no cambiar…"></div>
+        <div class="row">
+          <div class="col-6 mb-3"><label class="form-label">Teléfono</label><input name="phone" type="tel" class="form-control" value="{{ profile_row.phone or '' }}" placeholder="09XXXXXXXX"></div>
+          <div class="col-6 mb-3"><label class="form-label">Cargo</label><input name="position" class="form-control" value="{{ profile_row.position or '' }}" placeholder="Socio, funcionario…"></div>
+        </div>
+        <div class="mb-3"><label class="form-label">Email</label><input name="email" type="email" class="form-control" value="{{current_user.email}}">
+          <div class="form-text">Es tu usuario para entrar. Si lo cambias, confirma tu contraseña actual abajo.</div>
+        </div>
+        <div class="mb-3"><label class="form-label">Contraseña actual</label><input name="current_password" type="password" class="form-control" autocomplete="current-password" placeholder="Solo si cambias el email"></div>
         <button type="submit" class="btn btn-primary rounded-pill w-100">💾 Guardar cambios</button>
       </form>
+      <hr class="my-4">
+      <h6 class="fw-bold">🔑 Mi contraseña</h6>
+      <p class="text-muted small">
+        Para cambiarla necesitas escribir la actual. Si la olvidaste, pide al administrador
+        que la restablezca: te entregará una contraseña temporal de un solo uso.
+      </p>
+      <a href="/account/password" class="btn btn-outline-primary rounded-pill w-100">Cambiar mi contraseña</a>
     </div></div>
 
     <div class="card mt-4"><div class="card-body p-4">

@@ -1,0 +1,28 @@
+{
+  "name": "calendario-movil",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Empaquetado Android/iOS de Calendarios MAP — Desarrollado por Marco Antonio Posligua San Martín",
+  "scripts": {
+    "cap:android": "node -e \"process.exit(require('fs').existsSync('android')?0:1)\" && cap sync android || cap add android",
+    "cap:ios": "node -e \"process.exit(require('fs').existsSync('ios')?0:1)\" && cap sync ios || cap add ios",
+    "sync": "cap sync",
+    "iconos": "capacitor-assets generate --iconBackgroundColor \"#ffffff\" --splashBackgroundColor \"#ffffff\"",
+    "apk:debug": "cap sync android && cd android && ./gradlew assembleDebug",
+    "apk:release": "cap sync android && cd android && ./gradlew assembleRelease",
+    "apk:debug:win": "cap sync android && cd android && gradlew.bat assembleDebug",
+    "apk:release:win": "cap sync android && cd android && gradlew.bat assembleRelease"
+  },
+  "dependencies": {
+    "@capacitor/android": "^6.2.0",
+    "@capacitor/app": "^6.0.2",
+    "@capacitor/core": "^6.2.0",
+    "@capacitor/ios": "^6.2.0",
+    "@capacitor/status-bar": "^6.0.2"
+  },
+  "devDependencies": {
+    "@capacitor/assets": "^3.0.5",
+    "@capacitor/cli": "^6.2.0",
+    "typescript": "^5.6.0"
+  }
+}

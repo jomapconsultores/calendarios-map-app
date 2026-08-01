@@ -156,6 +156,50 @@ DEFAULT_ROLE_LEVEL = 'funcionario'
 
 
 # ============================================================
+#  MÓDULO DE CUENTA — clave propia y restablecimiento administrativo
+# ============================================================
+# Longitud mínima exigida al definir una contraseña nueva.
+MIN_PASSWORD = 8
+
+# Rutas que un usuario con clave temporal SÍ puede visitar (si no, quedaría
+# encerrado sin poder cambiarla ni cerrar sesión).
+FREE_PATHS_PASSWORD = ('/account/password', '/logout', '/login', '/static/', '/sw.js')
+
+
+def _gen_temp_password(length=12):
+    """Clave temporal legible: sin caracteres ambiguos (0/O, 1/l/I) para poder
+    dictarla por teléfono sin errores. Aleatoriedad criptográfica."""
+    alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789'
+    return ''.join(secrets.choice(alphabet) for _ in range(length))
+
+
+def _temp_password_expired(row):
+    """True si el usuario arrastra una clave temporal ya caducada."""
+    if not row or not row.get('must_change_password'):
+        return False
+    exp = row.get('temp_password_expires')
+    if not exp:
+        return False
+    try:
+        return datetime.fromisoformat(str(exp).replace('Z', '+00:00')) < datetime.now(timezone.utc)
+    except ValueError:
+        return False
+
+
+def _log_password(app, user_id, action, executed_by=None):
+    """Bitácora de cambios de clave. Nunca guarda la clave, solo el hecho."""
+    try:
+        app.supabase.insert('password_log', {
+            'user_id': user_id, 'action': action, 'executed_by': executed_by,
+            'ip': (request.headers.get('X-Forwarded-For', '').split(',')[0].strip()
+                   or request.remote_addr or ''),
+        })
+    except Exception:
+        # Auxiliar: si la tabla aún no está migrada no debe frenar el cambio.
+        pass
+
+
+# ============================================================
 #  SUPABASE CLIENT — persistent HTTP session (keep-alive)
 # ============================================================
 class SupabaseAPI:
@@ -1578,6 +1622,26 @@ def create_app():
     def home():
         return redirect('/dashboard') if current_user.is_authenticated else render_template('index.html')
 
+    @app.before_request
+    def _force_password_change():
+        """Mientras el usuario arrastre una clave temporal del administrador, no
+        puede usar el sistema: solo cambiarla o cerrar sesión."""
+        if not current_user.is_authenticated:
+            return None
+        path = request.path or ''
+        if path.startswith(FREE_PATHS_PASSWORD):
+            return None
+        # El estado se fija al iniciar sesión: así el guard no consulta la base
+        # en cada petición.
+        if not session.get('must_change_password'):
+            return None
+        if path.startswith('/api/'):
+            return jsonify({'error': 'Debes definir una nueva contraseña',
+                            'redirect': '/account/password'}), 403
+        flash('Tu contraseña fue restablecida por el administrador. '
+              'Define una nueva para continuar.', 'warning')
+        return redirect('/account/password')
+
     @app.route('/login', methods=['GET', 'POST'])
     @limiter.limit('10 per minute')
     def login():
@@ -1592,7 +1656,14 @@ def create_app():
             users = app.supabase.get('users', {'email': email})
             if users and check_password_hash(users[0]['password_hash'], pw):
                 u = users[0]
+                # Una clave temporal caducada no sirve: hay que pedir al
+                # administrador que la restablezca de nuevo.
+                if _temp_password_expired(u):
+                    flash('La contraseña temporal que te entregó el administrador ya caducó. '
+                          'Pídele que la restablezca nuevamente.', 'danger')
+                    return render_template('login.html')
                 login_user(User(u))
+                session['must_change_password'] = bool(u.get('must_change_password'))
                 roles = get_user_roles(app, u['id'])
                 role_ids = {r['id'] for r in roles}
                 stored = u.get('active_role_id')
@@ -1730,10 +1801,13 @@ def create_app():
             'last_used_at': datetime.now(timezone.utc).isoformat(),
         })
         users = app.supabase.get('users', {'id': rec['user_id']},
-                                 select='id,email,full_name,role')
+                                 select='id,email,full_name,role,must_change_password')
         if not users:
             return jsonify({'success': False, 'error': 'Usuario no encontrado'})
         login_user(User(users[0]))
+        session['must_change_password'] = bool(users[0].get('must_change_password'))
+        if session['must_change_password']:
+            return jsonify({'success': True, 'redirect': '/account/password'})
         return jsonify({'success': True, 'redirect': '/dashboard'})
 
     @app.route('/webauthn/credentials', methods=['GET'])
@@ -1813,7 +1887,7 @@ def create_app():
         if not email or not _valid_descriptor(desc):
             return jsonify({'success': False, 'error': 'Datos invalidos'})
         users = app.supabase.get('users', {'email': email},
-                                 select='id,email,full_name,role')
+                                 select='id,email,full_name,role,must_change_password')
         # Mensaje genérico para no revelar si el email existe
         if not users:
             return jsonify({'success': False, 'error': 'Rostro no reconocido'})
@@ -1829,7 +1903,10 @@ def create_app():
                 best = min(best, _face_distance(desc, v))
         if best <= FACE_THRESHOLD:
             login_user(User(users[0]))
-            return jsonify({'success': True, 'redirect': '/dashboard'})
+            session['must_change_password'] = bool(users[0].get('must_change_password'))
+            return jsonify({'success': True,
+                            'redirect': '/account/password' if session['must_change_password']
+                                        else '/dashboard'})
         return jsonify({'success': False, 'error': 'Rostro no reconocido'})
 
     @app.route('/register', methods=['GET', 'POST'])
@@ -1872,24 +1949,65 @@ def create_app():
     @app.route('/profile', methods=['GET', 'POST'])
     @login_required
     def profile():
+        row = (app.supabase.get('users', {'id': current_user.id}) or [{}])[0]
         if request.method == 'POST':
             data = {}
             name = _sanitize(request.form.get('full_name', ''), 100)
             email = _sanitize(request.form.get('email', ''), 254).lower()
-            pw = request.form.get('password', '')
+            data['phone'] = _sanitize(request.form.get('phone', ''), 30)
+            data['position'] = _sanitize(request.form.get('position', ''), 80)
             if name: data['full_name'] = name
-            if email and _validate_email(email): data['email'] = email
-            if pw:
-                if len(pw) < 6:
-                    flash('La contrasena debe tener al menos 6 caracteres.', 'warning')
+            # El email es la credencial de acceso: cambiarlo exige confirmar la
+            # clave actual. El cambio de contraseña vive en /account/password,
+            # que sí verifica la anterior.
+            if email and _validate_email(email) and email != (row.get('email') or '').lower():
+                if not check_password_hash(row.get('password_hash') or '',
+                                           request.form.get('current_password', '')):
+                    flash('Para cambiar tu email debes confirmar tu contraseña actual.', 'danger')
                     return redirect('/profile')
-                data['password_hash'] = generate_password_hash(pw)
+                data['email'] = email
             if data:
                 app.supabase.update('users', current_user.id, data)
             flash('Datos actualizados', 'success')
             return redirect('/profile')
         my_cals = get_user_calendars(app, current_user.id)
-        return render_template('profile.html', my_calendars=my_cals, all_modules=ALL_MODULES)
+        return render_template('profile.html', my_calendars=my_cals,
+                               all_modules=ALL_MODULES, profile_row=row,
+                               min_password=MIN_PASSWORD)
+
+    # ============================================================
+    #  MI CLAVE — cambio con verificación de la anterior
+    # ============================================================
+    @app.route('/account/password', methods=['GET', 'POST'])
+    @login_required
+    def account_password():
+        row = (app.supabase.get('users', {'id': current_user.id}) or [{}])[0]
+        forced = bool(row.get('must_change_password'))
+        if request.method == 'POST':
+            current = request.form.get('current_password', '')
+            new = request.form.get('new_password', '')
+            confirm = request.form.get('confirm_password', '')
+            if not check_password_hash(row.get('password_hash') or '', current):
+                flash('La contraseña actual no es correcta.', 'danger')
+            elif len(new) < MIN_PASSWORD:
+                flash(f'La nueva contraseña debe tener al menos {MIN_PASSWORD} caracteres.', 'danger')
+            elif new != confirm:
+                flash('La nueva contraseña y su confirmación no coinciden.', 'danger')
+            elif check_password_hash(row.get('password_hash') or '', new):
+                flash('La nueva contraseña debe ser distinta de la anterior.', 'danger')
+            else:
+                app.supabase.update('users', current_user.id, {
+                    'password_hash': generate_password_hash(new),
+                    'must_change_password': False,
+                    'temp_password_expires': None,
+                    'password_updated_at': datetime.now(timezone.utc).isoformat(),
+                })
+                session['must_change_password'] = False
+                _log_password(app, current_user.id, 'self_change', current_user.id)
+                flash('Contraseña actualizada correctamente.', 'success')
+                return redirect('/dashboard')
+        return render_template('account_password.html', forced=forced,
+                               min_password=MIN_PASSWORD)
 
     # ============================================================
     #  MICROSOFT OAUTH — To-Do
@@ -2027,7 +2145,8 @@ def create_app():
     def admin_users():
         if not is_admin():
             return redirect('/dashboard')
-        users     = app.supabase.get('users', select='id,email,full_name,role,created_at')
+        users     = app.supabase.get('users',
+                        select='id,email,full_name,role,created_at,phone,position,must_change_password')
         all_cals  = _get_calendar_config(app)
         all_perms = app.supabase.get('calendar_permissions',
                         select='id,user_id,calendar_id,status')
@@ -2063,6 +2182,33 @@ def create_app():
         return render_template('admin_users.html', users=users, calendarios=all_cals,
                                pending=pending, pending_all=pending_all,
                                all_roles=all_roles, role_levels=ROLE_LEVELS)
+
+    @app.route('/admin/users/<user_id>/reset-password', methods=['POST'])
+    @login_required
+    @csrf_protect
+    def admin_reset_password(user_id):
+        """Recuperación de clave olvidada: el administrador genera una clave
+        temporal de un solo uso. Se muestra UNA vez (no queda almacenada en
+        claro) y caduca a las 72 h. El usuario debe cambiarla al entrar."""
+        if not is_admin():
+            return redirect('/dashboard')
+        rows = app.supabase.get('users', {'id': user_id}, select='id,full_name,email')
+        if not rows:
+            flash('Usuario no encontrado.', 'danger')
+            return redirect('/admin/users')
+        temp = _gen_temp_password()
+        app.supabase.update('users', user_id, {
+            'password_hash': generate_password_hash(temp),
+            'must_change_password': True,
+            'temp_password_expires': (datetime.now(timezone.utc) + timedelta(hours=72)).isoformat(),
+            'password_reset_by': current_user.id,
+        })
+        _log_password(app, user_id, 'reset_admin', current_user.id)
+        nombre = rows[0].get('full_name') or rows[0].get('email')
+        flash(f'Contraseña temporal de {nombre}: {temp} — entrégasela en persona. '
+              f'Caduca en 72 horas y deberá cambiarla al entrar. No se volverá a mostrar.',
+              'success')
+        return redirect('/admin/users')
 
     # ============================================================
     #  ADMIN — ROLES (catálogo de roles: módulos + calendarios + proyectos + cuentas MS)

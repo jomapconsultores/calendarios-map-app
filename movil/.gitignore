@@ -1,0 +1,9 @@
+# Proyectos nativos generados por Capacitor: se recrean con `npx cap add`.
+android/
+ios/
+node_modules/
+# Nunca versionar el almacén de claves: quien lo tenga puede publicar en tu nombre.
+*.keystore
+*.jks
+*.p12
+*.mobileprovision

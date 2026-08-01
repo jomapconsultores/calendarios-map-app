@@ -32,7 +32,14 @@
     {%if not u.role_ids%}<span class="text-warning small">Sin roles asignados</span>{%endif%}
   </div>
   <div class="col-md-4 text-md-end mt-2 mt-md-0">
+    {% if u.must_change_password %}<span class="badge bg-warning text-dark me-1" title="Tiene una contraseña temporal sin cambiar">Temporal</span>{% endif %}
     <button class="btn btn-outline-primary btn-sm rounded-pill" data-bs-toggle="modal" data-bs-target="#edit{{u.id}}">✏️ Editar</button>
+    {# Recuperación de clave olvidada: genera una contraseña temporal de un solo uso #}
+    <form method="POST" action="/admin/users/{{u.id}}/reset-password" class="d-inline"
+          onsubmit="return confirm('¿Restablecer la contraseña de {{ u.full_name }}?\n\nSe generará una contraseña temporal de un solo uso que deberás entregarle. Su contraseña actual dejará de funcionar.');">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button class="btn btn-outline-warning btn-sm rounded-pill" title="Olvidó su contraseña">🔑 Restablecer</button>
+    </form>
     <button class="btn btn-outline-danger btn-sm rounded-pill" onclick="delUser('{{u.id}}')">🗑️</button>
   </div>
 </div></div></div>

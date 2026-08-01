@@ -42,8 +42,13 @@ self.addEventListener('fetch', (e) => {
     e.respondWith(
       caches.match(req).then((cached) => {
         const network = fetch(req).then((res) => {
-          const copy = res.clone();
-          caches.open(CACHE).then((c) => c.put(req, copy));
+          // Solo se guarda lo que llegó bien: sin esta comprobación, un 404 o
+          // un 500 se quedaban en caché y se seguían sirviendo hasta el
+          // siguiente cambio de versión, aunque el archivo ya estuviera bien.
+          if (res.ok && res.type === 'basic') {
+            const copy = res.clone();
+            caches.open(CACHE).then((c) => c.put(req, copy));
+          }
           return res;
         }).catch(() => cached);
         return cached || network;
