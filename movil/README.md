@@ -27,20 +27,26 @@ una corrección en el servidor llega al teléfono sin volver a publicar.
 
 ## Construir el APK localmente
 
+La app abre el despliegue en Coolify, **https://calendario.pensamiento-libre.org**, que
+viene fijado en `capacitor.config.ts`. No hace falta configurar nada para
+compilar contra producción:
+
 ```bash
 cd movil
 npm install
 
 # Windows (PowerShell):
-$env:APP_URL = "https://tu-despliegue.ejemplo.com"
 npm run cap:android
 npm run apk:debug:win
 
 # macOS / Linux:
-export APP_URL="https://tu-despliegue.ejemplo.com"
 npm run cap:android
 npm run apk:debug
 ```
+
+Para compilar contra otro destino —una prueba, un dominio nuevo— define
+`APP_URL` antes de `cap:android`: `$env:APP_URL = "https://otro.ejemplo.com"`
+en PowerShell, `export APP_URL="https://otro.ejemplo.com"` en macOS o Linux.
 
 El APK queda en `android/app/build/outputs/apk/debug/app-debug.apk`.
 
@@ -66,7 +72,7 @@ Los flujos `.github/workflows/movil-android-calendario.yml` y
 
 | Nombre | Tipo | Para qué |
 |---|---|---|
-| `APP_URL` | variable | dirección del despliegue que abrirá la app |
+| `APP_URL` | variable *(opcional)* | otro destino en vez del de Coolify, que ya viene fijado |
 | `ANDROID_KEYSTORE_BASE64` | secreto | `base64 -w0 ~/claves/calendario.keystore` |
 | `ANDROID_KEYSTORE_PASSWORD` | secreto | clave del almacén |
 | `ANDROID_KEY_ALIAS` | secreto | alias de la clave |
