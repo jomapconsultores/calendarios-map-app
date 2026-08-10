@@ -1,0 +1,244 @@
+/* ------------------------------------------------------------
+ * Desarrollado por Marco Antonio Posligua San Martín
+ * ------------------------------------------------------------
+ * Ajustes de teléfono para Calendarios MAP — Android e iOS.
+ *
+ * Va aparte de style.css a propósito: aquí sólo hay reglas que existen por una
+ * limitación concreta del teléfono (el notch del iPhone, el zoom automático de
+ * Safari al enfocar un campo, el dedo como puntero). Mezclarlas con el diseño
+ * general hacía imposible saber cuáles se podían tocar sin romper un móvil.
+ *
+ * Se carga DESPUÉS de style.css, así que puede corregirlo sin usar !important
+ * salvo donde haya que ganarle a Bootstrap.
+ * ------------------------------------------------------------ */
+
+/* ============================================================
+   1. iOS — MUESCA Y BORDES DE PANTALLA
+   El iPhone dibuja bajo la muesca y bajo la barra inferior de gestos. Sin
+   estos márgenes, el encabezado queda tapado por la hora y el pie por la
+   barra de inicio. `viewport-fit=cover` (ya está en base.html) es lo que
+   habilita las variables env().
+   ============================================================ */
+:root {
+  --safe-top:    env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left:   env(safe-area-inset-left, 0px);
+  --safe-right:  env(safe-area-inset-right, 0px);
+}
+
+.topbar {
+  padding-top: calc(8px + var(--safe-top));
+  padding-left: calc(14px + var(--safe-left));
+  padding-right: calc(14px + var(--safe-right));
+}
+
+.content {
+  padding-left: calc(12px + var(--safe-left));
+  padding-right: calc(12px + var(--safe-right));
+  padding-bottom: calc(16px + var(--safe-bottom));
+}
+
+.sidebar { padding-top: var(--safe-top); padding-bottom: var(--safe-bottom); }
+.f-credit { padding-bottom: calc(8px + var(--safe-bottom)); }
+
+/* La barra de acciones flotante de las tablas no puede quedar bajo la barra
+   de gestos del iPhone. */
+#bulkBar { bottom: calc(12px + var(--safe-bottom)); }
+#toastZone { bottom: calc(20px + var(--safe-bottom)) !important; right: calc(20px + var(--safe-right)) !important; }
+
+/* ============================================================
+   2. iOS — ZOOM AUTOMÁTICO AL ESCRIBIR
+   Safari amplía la página cuando enfocas un campo de menos de 16px y NO la
+   devuelve al salir: la pantalla se queda descuadrada. La única solución
+   fiable es que todo campo escribible mida 16px o más en el teléfono.
+   No se toca el tamaño en escritorio, donde el problema no existe.
+   ============================================================ */
+@media (max-width: 768px) {
+  input, select, textarea,
+  .form-control, .form-select,
+  .form-control-sm, .form-select-sm {
+    font-size: 16px !important;
+  }
+  /* Compensa la altura extra para que los formularios no crezcan de golpe. */
+  .form-control-sm, .form-select-sm { padding: 6px 10px; }
+}
+
+/* ============================================================
+   3. EL DEDO NO ES UN RATÓN
+   ============================================================ */
+@media (pointer: coarse) {
+  /* 44×44 px es el mínimo que recomiendan Apple y Google para poder acertar. */
+  .btn, .btn-sm, .btn-xs, .rail-btn, .etab, .sector-pill, .plan-pill,
+  .panel-links a, .nav-link {
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .btn-xs { min-height: 38px; padding-left: 14px; padding-right: 14px; }
+  .panel-links a { justify-content: flex-start; }
+
+  /* Las casillas de las tablas de importación son diminutas para un dedo. */
+  input[type="checkbox"], input[type="radio"] { width: 20px; height: 20px; }
+
+  /* El destello azul de Android al tocar ensucia el diseño. */
+  * { -webkit-tap-highlight-color: rgba(79, 70, 229, .15); }
+
+  /* Sin esto, arrastrar dentro de una tabla arrastra la página entera. */
+  .table-responsive, .gantt-wrap { -webkit-overflow-scrolling: touch; }
+}
+
+/* ============================================================
+   4. TABLAS ANCHAS EN PANTALLA ESTRECHA
+   Las tres tablas nuevas (directorio, actividades del cronograma, vista previa
+   de importación) tienen 9-10 columnas: en un teléfono no caben ni con scroll
+   cómodo. Se ocultan las columnas secundarias y se sube el dato importante a
+   la celda del nombre, que ya lo muestra en su segunda línea.
+   ============================================================ */
+@media (max-width: 768px) {
+  .dir-table, .act-table, .task-table { font-size: .8rem; }
+  .dir-table th, .dir-table td,
+  .act-table th, .act-table td { padding: 8px 8px; }
+
+  /* Directorio: documento · nombre · celular · acción */
+  .dir-table th:nth-child(3), .dir-table td:nth-child(3),   /* sector */
+  .dir-table th:nth-child(5), .dir-table td:nth-child(5),   /* convencional */
+  .dir-table th:nth-child(6), .dir-table td:nth-child(6),   /* correo */
+  .dir-table th:nth-child(7), .dir-table td:nth-child(7),   /* ciudad */
+  .dir-table th:nth-child(8), .dir-table td:nth-child(8) {  /* SRI */
+    display: none;
+  }
+
+  /* Cronograma: nombre · fin · estado · acción */
+  .act-table th:nth-child(1), .act-table td:nth-child(1),   /* # */
+  .act-table th:nth-child(3), .act-table td:nth-child(3),   /* responsable */
+  .act-table th:nth-child(4), .act-table td:nth-child(4),   /* inicio */
+  .act-table th:nth-child(6), .act-table td:nth-child(6),   /* días */
+  .act-table th:nth-child(7), .act-table td:nth-child(7),   /* avance */
+  .act-table th:nth-child(9), .act-table td:nth-child(9) {  /* origen */
+    display: none;
+  }
+
+  .stats-row { grid-template-columns: 1fr 1fr; }
+  .stat-card { padding: 10px 12px; }
+  .stat-card .sc-num { font-size: 1.3rem; }
+}
+
+/* En pantallas muy estrechas se deja lo mínimo imprescindible. */
+@media (max-width: 420px) {
+  .dir-table th:nth-child(4), .dir-table td:nth-child(4) { display: none; } /* celular */
+  .act-table th:nth-child(5), .act-table td:nth-child(5) { display: none; } /* fin */
+  .dir-toolbar > *, .cro-toolbar > * { flex: 1 1 100%; }
+  .dir-toolbar input, .cro-toolbar select { max-width: none !important; }
+}
+
+/* ============================================================
+   5. GANTT EN EL TELÉFONO
+   La columna de nombres de 290px se comía la pantalla y no quedaba sitio para
+   las barras, que es lo que se va a mirar. Se estrecha y el diagrama se
+   desplaza en horizontal con el dedo.
+   ============================================================ */
+@media (max-width: 768px) {
+  .gantt-wrap { padding: 10px 6px; }
+  .gantt-container { min-width: 720px; }
+  .g-label-col, .g-label { width: 150px; }
+  .g-label .gl-text { font-size: .78rem; }
+  .g-row, .g-head { height: 42px; }         /* fila más alta = más fácil de tocar */
+  .g-bar { top: 11px; }
+}
+
+/* ============================================================
+   6. VENTANAS EMERGENTES A PANTALLA COMPLETA
+   Un formulario de ficha con pestañas dentro de un modal centrado y pequeño es
+   inservible en un teléfono. En móvil ocupan toda la pantalla.
+   ============================================================ */
+@media (max-width: 768px) {
+  .modal-dialog {
+    margin: 0;
+    max-width: 100%;
+    min-height: 100%;
+  }
+  .modal-content {
+    min-height: 100vh;
+    min-height: 100dvh;              /* dvh: descuenta la barra de Safari */
+    border-radius: 0;
+  }
+  .modal-header { padding-top: calc(12px + var(--safe-top)); }
+  .modal-body { max-height: none; }
+  .modal-footer {
+    position: sticky;
+    bottom: 0;
+    background: #fff;
+    padding-bottom: calc(10px + var(--safe-bottom));
+    box-shadow: 0 -2px 10px rgba(0, 0, 0, .06);
+  }
+  .modal-footer .btn { flex: 1 1 auto; }
+  /* Las pestañas de la ficha no caben en una línea: se deslizan. */
+  .nav-tabs { flex-wrap: nowrap; overflow-x: auto; }
+  .nav-tabs .nav-link { white-space: nowrap; }
+}
+
+/* ============================================================
+   7. APLICACIÓN INSTALADA (standalone)
+   Cuando se abre desde el icono —o dentro del contenedor Capacitor— no hay
+   barra del navegador: se recupera ese espacio y se desactivan gestos que en
+   una aplicación resultan extraños.
+   ============================================================ */
+@media (display-mode: standalone), (display-mode: minimal-ui) {
+  body {
+    overscroll-behavior-y: none;     /* sin "rebote" ni recarga al tirar */
+    -webkit-user-select: none;       /* no selecciona texto al mantener pulsado */
+    user-select: none;
+  }
+  /* …salvo donde el usuario sí necesita copiar: datos del cliente y campos. */
+  input, textarea, .dir-table, .act-table, .task-table, .audit-item, .act-list {
+    -webkit-user-select: text;
+    user-select: text;
+  }
+}
+
+/* ============================================================
+   8. AVISO DE INSTALACIÓN
+   ============================================================ */
+#instalarBanner {
+  position: fixed;
+  left: calc(12px + var(--safe-left));
+  right: calc(12px + var(--safe-right));
+  bottom: calc(12px + var(--safe-bottom));
+  z-index: 1090;
+  background: #1e293b;
+  color: #fff;
+  border-radius: 14px;
+  padding: 12px 14px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, .28);
+  display: none;
+  align-items: center;
+  gap: 12px;
+  font-size: .86rem;
+  line-height: 1.4;
+}
+#instalarBanner.mostrar { display: flex; }
+#instalarBanner .ib-texto { flex: 1; }
+#instalarBanner .ib-titulo { font-weight: 700; margin-bottom: 2px; }
+#instalarBanner button {
+  border: 0;
+  border-radius: 10px;
+  padding: 8px 14px;
+  font-weight: 700;
+  font-size: .82rem;
+  cursor: pointer;
+  white-space: nowrap;
+}
+#instalarBanner .ib-si { background: #c8ff00; color: #1e293b; }
+#instalarBanner .ib-no { background: transparent; color: #94a3b8; padding: 8px; }
+
+/* ============================================================
+   9. IMPRESIÓN — que un listado salga limpio desde el teléfono
+   ============================================================ */
+@media print {
+  .sidebar, .topbar, .plan-toolbar, .dir-toolbar, .cro-toolbar,
+  #instalarBanner, #toastZone, #bulkBar, .f-credit { display: none !important; }
+  .app-main { margin-left: 0; }
+  .content { padding: 0; }
+  .dir-table th, .dir-table td, .act-table th, .act-table td { display: table-cell !important; }
+}

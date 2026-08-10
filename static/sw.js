@@ -4,7 +4,16 @@
 //  - Estáticos (/static/): cache-first
 //  - APIs y POST: siempre red (nunca se cachean datos sensibles)
 // ============================================================
-const CACHE = 'calmap-v1';
+// Subir esta versión invalida TODA la caché anterior. Hay que hacerlo en cada
+// despliegue que cambie CSS o JS: si no, el teléfono sigue sirviendo los
+// archivos viejos que guardó y el usuario ve la versión anterior sin saberlo.
+// v2: se retiraron Kanban/Gantt/mapa de procesos y entraron movil.css e
+//     instalar.js — la caché v1 aún tenía los archivos antiguos.
+const CACHE = 'calmap-v2';
+// Sólo lo que se pide SIN parámetro de versión. El CSS y el JS se enlazan con
+// «?v=N», y la caché distingue por URL completa: precargarlos aquí sin el
+// parámetro no serviría de nada (nunca coincidiría con lo que pide la página) y
+// además el «?v=N» es justo lo que fuerza a bajar la versión nueva.
 const PRECACHE = [
   '/offline.html',
   '/static/icons/icon-192.png',

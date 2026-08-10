@@ -17,3 +17,7 @@ Flask-Limiter>=4.0.0
 Flask-WTF>=1.2.0
 sentry-sdk[flask]>=2.0
 cryptography>=42.0
+# Directorio y Cronograma
+anthropic>=0.70.0        # clasificación de archivos importados y planificación del Gantt
+pypdf>=5.0.0             # lectura de PDF en la importación del directorio
+python-docx>=1.1.0       # lectura de Word en la importación del directorio

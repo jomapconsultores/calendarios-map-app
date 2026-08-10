@@ -1,0 +1,892 @@
+{% extends "base.html" %}
+{% block title %}{{ page_title }} — CalendarioMAP{% endblock %}
+{% block page_title %}{{ page_title }}{% endblock %}
+{% block page_sub %}<p class="page-sub">{{ page_sub }}</p>{% endblock %}
+
+{% block head %}
+<style>
+/* ===== CRONOGRAMA ===== */
+.cro-toolbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:12px}
+.plan-pills{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px}
+.plan-pill{padding:6px 15px;border-radius:20px;font-size:.82rem;font-weight:600;cursor:pointer;
+  border:1.5px solid #e2e8f0;background:#fff;color:#475569;transition:.15s;white-space:nowrap}
+.plan-pill:hover{transform:translateY(-1px);box-shadow:0 3px 8px rgba(0,0,0,.07)}
+.plan-pill.active{color:#fff;box-shadow:0 4px 12px rgba(79,70,229,.25)}
+.plan-pill .pp-count{background:rgba(0,0,0,.08);border-radius:10px;padding:0 6px;margin-left:5px;font-size:.72rem}
+.plan-pill.active .pp-count{background:rgba(255,255,255,.25)}
+
+.stats-row{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:14px}
+.stat-card{background:#fff;border-radius:12px;padding:12px 16px;border:1.5px solid #e2e8f0;
+  display:flex;flex-direction:column;gap:2px;box-shadow:0 1px 3px rgba(0,0,0,.05)}
+.stat-card .sc-num{font-size:1.6rem;font-weight:700;line-height:1}
+.stat-card .sc-lbl{font-size:.75rem;color:#64748b;font-weight:500}
+.stat-card.info .sc-num{color:#4f46e5}
+.stat-card.success .sc-num{color:#10b981}
+.stat-card.warning .sc-num{color:#f59e0b}
+.stat-card.danger .sc-num{color:#ef4444}
+
+/* GANTT */
+.gantt-wrap{background:#fff;border:1.5px solid #e2e8f0;border-radius:14px;padding:14px;overflow-x:auto}
+.gantt-container{min-width:900px;font-size:.8rem;position:relative}
+.g-head{display:flex;border-bottom:2px solid #e2e8f0;height:38px;align-items:flex-end;padding-bottom:4px}
+.g-label-col{width:290px;flex-shrink:0;font-size:.72rem;font-weight:700;color:#64748b;
+  text-transform:uppercase;letter-spacing:.04em}
+.g-scale{flex:1;position:relative;height:100%}
+.g-month{position:absolute;font-size:.7rem;color:#64748b;font-weight:700;bottom:14px;white-space:nowrap}
+.g-tick{position:absolute;font-size:.62rem;color:#94a3b8;bottom:0;transform:translateX(-50%);white-space:nowrap}
+.g-row{display:flex;align-items:center;height:38px;border-bottom:1px solid #f1f5f9}
+.g-row:hover{background:#fafbff}
+.g-row.g-sel{background:#eef2ff}
+.g-label{width:290px;flex-shrink:0;padding-right:12px;display:flex;align-items:center;gap:6px;
+  overflow:hidden;cursor:pointer}
+.g-label .gl-text{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:500;color:#1e293b}
+.g-label:hover .gl-text{color:#4f46e5}
+.g-track{flex:1;position:relative;height:100%}
+.g-bar{position:absolute;top:9px;height:20px;border-radius:5px;cursor:pointer;
+  display:flex;align-items:center;padding:0 7px;font-size:.68rem;font-weight:600;color:#fff;
+  white-space:nowrap;overflow:hidden;min-width:6px;box-shadow:0 1px 3px rgba(0,0,0,.15)}
+.g-bar:hover{filter:brightness(1.08);z-index:12}
+.g-bar .g-fill{position:absolute;left:0;top:0;bottom:0;background:rgba(255,255,255,.35);border-radius:5px}
+.g-bar .g-txt{position:relative;z-index:2}
+.g-milestone{position:absolute;top:8px;width:22px;height:22px;background:#7c3aed;
+  transform:rotate(45deg);border-radius:4px;cursor:pointer;box-shadow:0 1px 4px rgba(0,0,0,.2)}
+.g-today{position:absolute;top:0;bottom:0;width:2px;background:#ef4444;z-index:6;pointer-events:none}
+.g-grid{position:absolute;top:0;bottom:0;width:1px;background:#f1f5f9;z-index:1}
+.g-weekend{position:absolute;top:0;bottom:0;background:#f8fafc;z-index:0}
+.g-dep{position:absolute;height:0;border-top:1.5px dashed #a5b4fc;z-index:4;pointer-events:none}
+
+.badge-estado{display:inline-block;padding:2px 9px;border-radius:20px;font-size:.68rem;font-weight:700;white-space:nowrap}
+.be-pending{background:#fef3c7;color:#92400e}
+.be-in_progress{background:#dbeafe;color:#1e40af}
+.be-review{background:#ede9fe;color:#5b21b6}
+.be-done{background:#d1fae5;color:#065f46}
+.be-blocked{background:#fee2e2;color:#991b1b}
+
+.act-table{width:100%;border-collapse:collapse;font-size:.83rem}
+.act-table th{background:#f8fafc;color:#64748b;font-size:.72rem;font-weight:600;text-transform:uppercase;
+  letter-spacing:.04em;padding:8px 10px;border-bottom:1.5px solid #e2e8f0;white-space:nowrap}
+.act-table td{padding:8px 10px;border-bottom:1px solid #f1f5f9;vertical-align:middle}
+.act-table tr:hover td{background:#f5f7ff}
+.act-table tr.vencida td{background:#fff5f5}
+
+.btn-xs{padding:3px 10px;font-size:.73rem;border-radius:8px;border:none;cursor:pointer;font-weight:600}
+.btn-xs-edit{background:#ede9fe;color:#5b21b6}
+.btn-xs-del{background:#fee2e2;color:#991b1b}
+
+.cro-modal .modal-header{background:linear-gradient(135deg,#4f46e5,#7c3aed);color:#fff}
+.modal-section-label{font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;
+  color:#64748b;margin:14px 0 6px}
+.prop-cambio{font-size:.78rem}
+.prop-antes{color:#b91c1c;text-decoration:line-through}
+.prop-despues{color:#047857;font-weight:600}
+.ia-nota{font-size:.75rem;color:#64748b;font-style:italic}
+.vacio{text-align:center;color:#64748b;padding:48px 16px}
+.vacio .v-ic{font-size:2.6rem}
+
+@media(max-width:768px){ .stats-row{grid-template-columns:1fr 1fr} }
+</style>
+{% endblock %}
+
+{% block topbar_actions %}
+<button class="btn btn-primary btn-sm rounded-pill" onclick="abrirPlan(null)">+ Cronograma</button>
+{% endblock %}
+
+{% block content %}
+
+<div class="plan-pills" id="planPills"></div>
+
+<div id="sinPlanes" class="vacio" style="display:none">
+  <div class="v-ic">📊</div>
+  <p class="mt-2">Todavía no hay ningún cronograma.<br>
+  Crea uno y trae las actividades desde tus pendientes del To-Do.</p>
+  <button class="btn btn-primary btn-sm rounded-pill" onclick="abrirPlan(null)">+ Crear el primero</button>
+</div>
+
+<div id="zonaPlan" style="display:none">
+  <div class="stats-row">
+    <div class="stat-card info"><div class="sc-num" id="stActividades">0</div><div class="sc-lbl">Actividades</div></div>
+    <div class="stat-card success"><div class="sc-num" id="stCompletadas">0</div><div class="sc-lbl">Completadas</div></div>
+    <div class="stat-card warning"><div class="sc-num" id="stAvance">0%</div><div class="sc-lbl">Avance del plan</div></div>
+    <div class="stat-card danger"><div class="sc-num" id="stVencidas">0</div><div class="sc-lbl">Vencidas</div></div>
+  </div>
+
+  <div class="cro-toolbar">
+    <button class="btn btn-primary btn-sm rounded-pill" onclick="abrirActividad(null)">+ Actividad</button>
+    <button class="btn btn-outline-primary btn-sm rounded-pill" onclick="abrirImportarTareas()">
+      📥 Traer de Actividades
+    </button>
+    <button class="btn btn-outline-secondary btn-sm rounded-pill" onclick="sincronizarTareas()">
+      🔄 Actualizar avance
+    </button>
+    <button class="btn btn-sm rounded-pill fw-bold" id="btnIa"
+            style="background:#7c3aed;color:#fff;border:0" onclick="abrirPlanificacion()">
+      🤖 Planificar con IA
+    </button>
+    <div style="flex:1"></div>
+    <select id="zoom" class="form-select form-select-sm" style="max-width:150px" onchange="pintarGantt()">
+      <option value="dia">Escala: días</option>
+      <option value="semana" selected>Escala: semanas</option>
+      <option value="mes">Escala: meses</option>
+    </select>
+    <button class="btn btn-outline-dark btn-sm rounded-pill" onclick="abrirPlan(planActivo.id)">⚙️ Editar plan</button>
+  </div>
+
+  <div class="gantt-wrap mb-3">
+    <div id="ganttInterior"></div>
+  </div>
+
+  <div class="table-responsive">
+    <table class="act-table">
+      <thead>
+        <tr>
+          <th>#</th><th>Actividad</th><th>Responsable</th><th>Inicio</th><th>Fin</th>
+          <th>Días</th><th>Avance</th><th>Estado</th><th>Origen</th><th></th>
+        </tr>
+      </thead>
+      <tbody id="actCuerpo"></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ============ PLAN ============ -->
+<div class="modal fade cro-modal" id="modalPlan" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content border-0 shadow">
+      <div class="modal-header">
+        <h5 class="modal-title text-white" id="tituloPlan">Nuevo cronograma</h5>
+        <button class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="pId">
+        <label class="form-label fw-semibold small">NOMBRE *</label>
+        <input id="pNombre" class="form-control form-control-sm" placeholder="Ej.: Cierre fiscal 2026">
+        <label class="form-label fw-semibold small mt-3">DESCRIPCIÓN</label>
+        <textarea id="pDescripcion" class="form-control form-control-sm" rows="3"
+                  placeholder="Contexto del plan. La IA lo usa para estimar mejor las duraciones."></textarea>
+        <div class="row g-2 mt-1">
+          <div class="col-6">
+            <label class="form-label fw-semibold small">INICIO PREVISTO</label>
+            <input id="pInicio" type="date" class="form-control form-control-sm">
+          </div>
+          <div class="col-6">
+            <label class="form-label fw-semibold small">FIN PREVISTO</label>
+            <input id="pFin" type="date" class="form-control form-control-sm">
+          </div>
+        </div>
+        <label class="form-label fw-semibold small mt-3">COLOR</label>
+        <input id="pColor" type="color" class="form-control form-control-color form-control-sm" value="#4f46e5">
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-outline-danger btn-sm rounded-pill me-auto" id="btnBorrarPlan"
+                style="display:none" onclick="borrarPlan()">🗑 Eliminar cronograma</button>
+        <button class="btn btn-secondary btn-sm rounded-pill" data-bs-dismiss="modal">Cancelar</button>
+        <button class="btn btn-primary btn-sm rounded-pill" onclick="guardarPlan()">💾 Guardar</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ ACTIVIDAD ============ -->
+<div class="modal fade cro-modal" id="modalActividad" tabindex="-1">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content border-0 shadow">
+      <div class="modal-header">
+        <h5 class="modal-title text-white" id="tituloActividad">Nueva actividad</h5>
+        <button class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="aId">
+        <label class="form-label fw-semibold small">NOMBRE *</label>
+        <input id="aNombre" class="form-control form-control-sm">
+        <label class="form-label fw-semibold small mt-3">DESCRIPCIÓN</label>
+        <textarea id="aDescripcion" class="form-control form-control-sm" rows="2"></textarea>
+
+        <div class="row g-2 mt-1">
+          <div class="col-md-6">
+            <label class="form-label fw-semibold small">RESPONSABLE</label>
+            <input id="aResponsable" class="form-control form-control-sm">
+          </div>
+          <div class="col-md-3">
+            <label class="form-label fw-semibold small">INICIO</label>
+            <input id="aInicio" type="date" class="form-control form-control-sm" onchange="recalcularDias()">
+          </div>
+          <div class="col-md-3">
+            <label class="form-label fw-semibold small">FIN</label>
+            <input id="aFin" type="date" class="form-control form-control-sm" onchange="recalcularDias()">
+          </div>
+          <div class="col-md-3">
+            <label class="form-label fw-semibold small">DÍAS HÁBILES</label>
+            <input id="aDias" class="form-control form-control-sm" readonly>
+          </div>
+          <div class="col-md-3">
+            <label class="form-label fw-semibold small">AVANCE (%)</label>
+            <input id="aAvance" type="number" min="0" max="100" class="form-control form-control-sm" value="0">
+          </div>
+          <div class="col-md-3">
+            <label class="form-label fw-semibold small">ESTADO</label>
+            <select id="aEstado" class="form-select form-select-sm">
+              <option value="pending">Pendiente</option>
+              <option value="in_progress">En progreso</option>
+              <option value="review">En revisión</option>
+              <option value="done">Completada</option>
+              <option value="blocked">Bloqueada</option>
+            </select>
+          </div>
+          <div class="col-md-3">
+            <label class="form-label fw-semibold small">PRIORIDAD</label>
+            <select id="aPrioridad" class="form-select form-select-sm">
+              <option value="low">Baja</option>
+              <option value="medium" selected>Media</option>
+              <option value="high">Alta</option>
+              <option value="urgent">Urgente</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="form-check mt-3">
+          <input class="form-check-input" type="checkbox" id="aHito">
+          <label class="form-check-label small" for="aHito">
+            Es un hito (una fecha de corte que no consume tiempo: un vencimiento, una entrega)
+          </label>
+        </div>
+
+        <div class="modal-section-label">Depende de que terminen</div>
+        <select id="aDependencias" class="form-select form-select-sm" multiple size="5"></select>
+        <div class="small text-muted mt-1">Mantén Ctrl (o Cmd) para elegir varias.</div>
+
+        <div id="aNotaIa" class="alert alert-light border mt-3" style="display:none"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-outline-danger btn-sm rounded-pill me-auto" id="btnBorrarActividad"
+                style="display:none" onclick="borrarActividad()">🗑 Eliminar</button>
+        <button class="btn btn-secondary btn-sm rounded-pill" data-bs-dismiss="modal">Cancelar</button>
+        <button class="btn btn-primary btn-sm rounded-pill" onclick="guardarActividad()">💾 Guardar</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ TRAER TAREAS DEL TO-DO ============ -->
+<div class="modal fade cro-modal" id="modalImportarTareas" tabindex="-1">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-content border-0 shadow">
+      <div class="modal-header">
+        <h5 class="modal-title text-white">📥 Traer actividades del To-Do</h5>
+        <button class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <p class="text-muted small">
+          Elige qué pendientes se convierten en actividades del cronograma. Puedes traerlos todos
+          o sólo los que necesites; los que ya están en el plan no aparecen.
+        </p>
+        <div class="d-flex gap-2 mb-2">
+          <input id="buscarTarea" class="form-control form-control-sm" style="max-width:260px"
+                 placeholder="🔍 Filtrar…" oninput="pintarTareasDisponibles()">
+          <button class="btn btn-outline-secondary btn-sm rounded-pill" onclick="marcarTareas(true)">Marcar todas</button>
+          <button class="btn btn-outline-secondary btn-sm rounded-pill" onclick="marcarTareas(false)">Ninguna</button>
+        </div>
+        <table class="act-table">
+          <thead><tr><th style="width:36px"></th><th>Tarea</th><th>Proyecto / lista</th>
+            <th>Vence</th><th>Estado</th></tr></thead>
+          <tbody id="tareasCuerpo"></tbody>
+        </table>
+        <div id="tareasVacio" class="text-muted text-center py-4" style="display:none">
+          No hay pendientes disponibles para traer.
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary btn-sm rounded-pill" data-bs-dismiss="modal">Cerrar</button>
+        <button class="btn btn-primary btn-sm rounded-pill" onclick="importarTareas()">📥 Traer seleccionadas</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ PLANIFICACIÓN CON IA ============ -->
+<div class="modal fade cro-modal" id="modalIa" tabindex="-1">
+  <div class="modal-dialog modal-xl modal-dialog-scrollable">
+    <div class="modal-content border-0 shadow">
+      <div class="modal-header">
+        <h5 class="modal-title text-white">🤖 Planificar con IA</h5>
+        <button class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div id="iaPasoConfig">
+          <p class="text-muted small">
+            La IA propone fechas, duraciones y el orden de dependencias de las actividades del plan.
+            <strong>No cambia nada por su cuenta</strong>: verás la propuesta y aplicarás sólo lo que apruebes.
+          </p>
+          <div class="row g-2">
+            <div class="col-md-4">
+              <label class="form-label fw-semibold small">ARRANCA EL</label>
+              <input id="iaInicio" type="date" class="form-control form-control-sm">
+            </div>
+            <div class="col-md-4">
+              <label class="form-label fw-semibold small">TERMINA COMO MÁXIMO EL</label>
+              <input id="iaLimite" type="date" class="form-control form-control-sm">
+            </div>
+            <div class="col-md-4">
+              <label class="form-label fw-semibold small">JORNADA / RESTRICCIONES</label>
+              <input id="iaJornada" class="form-control form-control-sm"
+                     placeholder="Ej.: medio tiempo los viernes">
+            </div>
+            <div class="col-12">
+              <label class="form-label fw-semibold small">CONTEXTO DEL TRABAJO</label>
+              <textarea id="iaContexto" class="form-control form-control-sm" rows="3"
+                        placeholder="Qué se está planificando, qué depende de terceros, qué es urgente…"></textarea>
+            </div>
+            <div class="col-12">
+              <div class="form-check">
+                <input class="form-check-input" type="checkbox" id="iaSoloVacias" checked>
+                <label class="form-check-label small" for="iaSoloVacias">
+                  Planificar sólo las actividades que aún no tienen fechas
+                  <span class="text-muted">(desmárcalo para replanificar todo el cronograma)</span>
+                </label>
+              </div>
+            </div>
+          </div>
+          <div class="mt-3">
+            <button class="btn btn-sm rounded-pill fw-bold" style="background:#7c3aed;color:#fff;border:0"
+                    onclick="pedirPlanificacion()">🤖 Generar propuesta</button>
+            <span id="iaEstado" class="small text-muted ms-2"></span>
+          </div>
+        </div>
+
+        <div id="iaPasoPropuesta" style="display:none">
+          <div class="alert alert-info py-2" id="iaResumen"></div>
+          <div id="iaRiesgos"></div>
+          <table class="act-table">
+            <thead><tr>
+              <th style="width:36px"><input type="checkbox" id="iaMarcarTodas" checked
+                     onchange="marcarPropuestas(this.checked)"></th>
+              <th>Actividad</th><th>Fechas propuestas</th><th>Días</th>
+              <th>Responsable</th><th>Justificación</th>
+            </tr></thead>
+            <tbody id="iaCuerpo"></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-outline-secondary btn-sm rounded-pill me-auto" id="btnIaVolver"
+                style="display:none" onclick="volverConfigIa()">← Cambiar parámetros</button>
+        <button class="btn btn-secondary btn-sm rounded-pill" data-bs-dismiss="modal">Cerrar</button>
+        <button class="btn btn-success btn-sm rounded-pill" id="btnIaAplicar"
+                style="display:none" onclick="aplicarPropuesta()">✅ Aplicar lo aprobado</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="toastZone" style="position:fixed;bottom:20px;right:20px;z-index:1100"></div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const IA = {{ ia|tojson }};
+
+let planes = [], planActivo = null, actividades = [], tareasDisponibles = [], propuestas = [];
+let modalPlan, modalActividad, modalImportarTareas, modalIa;
+
+const ESTADOS = {pending:'Pendiente', in_progress:'En progreso', review:'En revisión',
+                 done:'Completada', blocked:'Bloqueada'};
+const COLORES = {pending:'#f59e0b', in_progress:'#4f46e5', review:'#8b5cf6',
+                 done:'#10b981', blocked:'#ef4444'};
+const hoy = new Date(); hoy.setHours(0,0,0,0);
+
+document.addEventListener('DOMContentLoaded', () => {
+  modalPlan            = new bootstrap.Modal(document.getElementById('modalPlan'));
+  modalActividad       = new bootstrap.Modal(document.getElementById('modalActividad'));
+  modalImportarTareas  = new bootstrap.Modal(document.getElementById('modalImportarTareas'));
+  modalIa              = new bootstrap.Modal(document.getElementById('modalIa'));
+
+  if (!IA.disponible) {
+    const boton = document.getElementById('btnIa');
+    boton.disabled = true;
+    boton.style.opacity = .5;
+    boton.title = 'IA no disponible: ' + (IA.motivo || '');
+  }
+
+  cargarPlanes().then(() => {
+    const accion = new URLSearchParams(location.search).get('accion');
+    if (accion === 'nuevo')    abrirPlan(null);
+    if (accion === 'importar' && planActivo) abrirImportarTareas();
+  });
+});
+
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c =>
+  ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+function aviso(mensaje, tipo = 'success') {
+  const caja = document.createElement('div');
+  caja.className = `alert alert-${tipo} shadow`;
+  caja.style.cssText = 'min-width:260px;max-width:420px;margin-bottom:8px';
+  caja.textContent = mensaje;
+  document.getElementById('toastZone').appendChild(caja);
+  setTimeout(() => caja.remove(), 5000);
+}
+
+async function pedir(url, opciones = {}) {
+  if (opciones.body) opciones.headers = {'Content-Type': 'application/json'};
+  return (await fetch(url, opciones)).json();
+}
+
+const aFecha = t => t ? new Date(t + 'T00:00:00') : null;
+const hoyIso = () => new Date().toISOString().slice(0, 10);
+
+// ——————————————————————————————————————————
+//  PLANES
+// ——————————————————————————————————————————
+async function cargarPlanes(seleccionar) {
+  planes = await pedir('/cronograma/api/planes');
+  const hay = planes.length > 0;
+  document.getElementById('sinPlanes').style.display = hay ? 'none' : '';
+  document.getElementById('zonaPlan').style.display  = hay ? '' : 'none';
+  document.getElementById('planPills').style.display = hay ? '' : 'none';
+  if (!hay) { planActivo = null; return; }
+
+  const id = seleccionar || (planActivo && planes.some(p => p.id === planActivo.id) ? planActivo.id : planes[0].id);
+  pintarPlanes(id);
+  await cargarActividades(id);
+}
+
+function pintarPlanes(idActivo) {
+  document.getElementById('planPills').innerHTML = planes.map(p => `
+    <button class="plan-pill ${p.id === idActivo ? 'active' : ''}"
+        style="border-color:${esc(p.color)};${p.id === idActivo ? 'background:' + esc(p.color) : 'color:' + esc(p.color)}"
+        onclick="cambiarPlan('${p.id}')">
+      ${esc(p.name)} <span class="pp-count">${p.done || 0}/${p.total || 0}</span>
+    </button>`).join('');
+}
+
+async function cambiarPlan(id) { pintarPlanes(id); await cargarActividades(id); }
+
+function abrirPlan(id) {
+  const p = id ? planes.find(x => x.id === id) : null;
+  document.getElementById('tituloPlan').textContent = p ? '⚙️ ' + p.name : 'Nuevo cronograma';
+  document.getElementById('pId').value = id || '';
+  document.getElementById('pNombre').value = p ? p.name : '';
+  document.getElementById('pDescripcion').value = (p && p.description) || '';
+  document.getElementById('pInicio').value = (p && p.start_date) || '';
+  document.getElementById('pFin').value = (p && p.end_date) || '';
+  document.getElementById('pColor').value = (p && p.color) || '#4f46e5';
+  document.getElementById('btnBorrarPlan').style.display = id ? '' : 'none';
+  modalPlan.show();
+}
+
+async function guardarPlan() {
+  const id = document.getElementById('pId').value;
+  const cuerpo = {
+    name: document.getElementById('pNombre').value.trim(),
+    description: document.getElementById('pDescripcion').value.trim(),
+    start_date: document.getElementById('pInicio').value,
+    end_date: document.getElementById('pFin').value,
+    color: document.getElementById('pColor').value,
+  };
+  if (!cuerpo.name) { aviso('El nombre es obligatorio', 'warning'); return; }
+  const r = await pedir(id ? `/cronograma/api/planes/${id}` : '/cronograma/api/planes',
+    {method: id ? 'PATCH' : 'POST', body: JSON.stringify(cuerpo)});
+  if (!r.success) { aviso(r.error || 'No se pudo guardar', 'danger'); return; }
+  modalPlan.hide();
+  aviso(id ? 'Cronograma actualizado' : 'Cronograma creado');
+  await cargarPlanes(id || (r.plan && r.plan.id));
+}
+
+async function borrarPlan() {
+  const id = document.getElementById('pId').value;
+  if (!confirm('¿Eliminar el cronograma y todas sus actividades?')) return;
+  const r = await pedir(`/cronograma/api/planes/${id}`, {method: 'DELETE'});
+  if (!r.success) { aviso(r.error || 'No se pudo eliminar', 'danger'); return; }
+  modalPlan.hide();
+  planActivo = null;
+  await cargarPlanes();
+  aviso('Cronograma eliminado');
+}
+
+// ——————————————————————————————————————————
+//  ACTIVIDADES
+// ——————————————————————————————————————————
+async function cargarActividades(planId) {
+  const r = await pedir(`/cronograma/api/planes/${planId}/actividades`);
+  if (r.success === false) { aviso(r.error, 'danger'); return; }
+  planActivo = r.plan;
+  actividades = r.actividades || [];
+  pintarEstadisticas();
+  pintarGantt();
+  pintarTablaActividades();
+}
+
+function pintarEstadisticas() {
+  const total = actividades.length;
+  const hechas = actividades.filter(a => a.status === 'done').length;
+  const avance = total ? Math.round(actividades.reduce((s, a) => s + (a.progress_pct || 0), 0) / total) : 0;
+  const vencidas = actividades.filter(a =>
+    a.status !== 'done' && a.end_date && aFecha(a.end_date) < hoy).length;
+  document.getElementById('stActividades').textContent = total;
+  document.getElementById('stCompletadas').textContent = hechas;
+  document.getElementById('stAvance').textContent = avance + '%';
+  document.getElementById('stVencidas').textContent = vencidas;
+}
+
+function pintarTablaActividades() {
+  const cuerpo = document.getElementById('actCuerpo');
+  if (!actividades.length) {
+    cuerpo.innerHTML = `<tr><td colspan="10" class="text-center text-muted py-4">
+      Sin actividades. Agrégalas o tráelas de tus pendientes del To-Do.</td></tr>`;
+    return;
+  }
+  cuerpo.innerHTML = actividades.map((a, i) => {
+    const vencida = a.status !== 'done' && a.end_date && aFecha(a.end_date) < hoy;
+    return `<tr class="${vencida ? 'vencida' : ''}">
+      <td class="text-muted">${i + 1}</td>
+      <td>
+        <div class="fw-semibold">${a.is_milestone ? '◆ ' : ''}${esc(a.name)}</div>
+        ${a.ai_generated ? '<span class="small" style="color:#7c3aed">🤖 planificada con IA</span>' : ''}
+      </td>
+      <td>${esc(a.responsible || '')}</td>
+      <td>${esc(a.start_date || '—')}</td>
+      <td>${vencida ? `<span class="text-danger fw-bold">${esc(a.end_date)}</span>` : esc(a.end_date || '—')}</td>
+      <td>${a.duration_days ?? '—'}</td>
+      <td>
+        <div class="progress" style="height:6px;width:70px">
+          <div class="progress-bar" style="width:${a.progress_pct || 0}%;background:${COLORES[a.status] || '#4f46e5'}"></div>
+        </div>
+        <span class="small text-muted">${a.progress_pct || 0}%</span>
+      </td>
+      <td><span class="badge-estado be-${esc(a.status)}">${esc(ESTADOS[a.status] || a.status)}</span></td>
+      <td>${a.task_id ? '<span class="small text-muted">✅ To-Do</span>' : '<span class="small text-muted">✍️ manual</span>'}</td>
+      <td><button class="btn-xs btn-xs-edit" onclick="abrirActividad('${a.id}')">Abrir</button></td>
+    </tr>`;
+  }).join('');
+}
+
+// ——————————————————————————————————————————
+//  GANTT
+// ——————————————————————————————————————————
+function pintarGantt() {
+  const caja = document.getElementById('ganttInterior');
+  const conFechas = actividades.filter(a => a.start_date || a.end_date);
+  if (!conFechas.length) {
+    caja.innerHTML = `<div class="vacio"><div class="v-ic">📊</div>
+      <p class="mt-2">Ninguna actividad tiene fechas todavía.<br>
+      Ponlas a mano o deja que la IA proponga el cronograma completo.</p></div>`;
+    return;
+  }
+
+  const fechas = [];
+  conFechas.forEach(a => {
+    if (a.start_date) fechas.push(aFecha(a.start_date));
+    if (a.end_date)   fechas.push(aFecha(a.end_date));
+  });
+  const min = new Date(Math.min(...fechas)); min.setDate(min.getDate() - 3);
+  const max = new Date(Math.max(...fechas)); max.setDate(max.getDate() + 3);
+  const total = max - min || 1;
+  const pct = f => Math.max(0, Math.min(100, (f - min) / total * 100));
+  const unDia = 86400000 / total * 100;   // ancho de un día, en %
+
+  // Sombreado de fines de semana y rejilla, según la escala elegida.
+  const escala = document.getElementById('zoom').value;
+  let fondo = '', encabezado = '';
+  const cursor = new Date(min);
+  while (cursor <= max) {
+    const izq = pct(cursor);
+    if (cursor.getDay() === 0 || cursor.getDay() === 6)
+      fondo += `<div class="g-weekend" style="left:${izq}%;width:${unDia}%"></div>`;
+    const marca = escala === 'dia' ||
+                  (escala === 'semana' && cursor.getDay() === 1) ||
+                  (escala === 'mes' && cursor.getDate() === 1);
+    if (marca) {
+      fondo += `<div class="g-grid" style="left:${izq}%"></div>`;
+      encabezado += `<span class="g-tick" style="left:${izq}%">${
+        escala === 'mes' ? cursor.toLocaleDateString('es', {month: 'short'})
+                         : cursor.getDate() + '/' + (cursor.getMonth() + 1)}</span>`;
+    }
+    cursor.setDate(cursor.getDate() + 1);
+  }
+
+  let meses = '';
+  const mes = new Date(min.getFullYear(), min.getMonth(), 1);
+  while (mes <= max) {
+    if (mes >= min)
+      meses += `<span class="g-month" style="left:${pct(mes)}%">${
+        mes.toLocaleDateString('es', {month: 'long', year: '2-digit'})}</span>`;
+    mes.setMonth(mes.getMonth() + 1);
+  }
+
+  const pctHoy = (hoy >= min && hoy <= max) ? pct(hoy) : null;
+  const lineaHoy = pctHoy === null ? '' : `<div class="g-today" style="left:${pctHoy}%"></div>`;
+
+  const filas = actividades.map(a => {
+    if (!(a.start_date || a.end_date)) {
+      return `<div class="g-row" onclick="abrirActividad('${a.id}')">
+        <div class="g-label"><span class="gl-text text-muted">${esc(a.name)}</span></div>
+        <div class="g-track"><span class="small text-muted" style="line-height:38px">sin fechas</span></div>
+      </div>`;
+    }
+    const ini = aFecha(a.start_date || a.end_date);
+    const fin = aFecha(a.end_date || a.start_date);
+    const izq = pct(ini);
+    const ancho = Math.max(pct(fin) + unDia - izq, unDia * 0.6);
+    const color = a.color || COLORES[a.status] || '#4f46e5';
+    const avance = a.progress_pct || 0;
+    const vencida = a.status !== 'done' && aFecha(a.end_date || a.start_date) < hoy;
+
+    const barra = a.is_milestone
+      ? `<div class="g-milestone" style="left:calc(${izq}% - 11px);background:${esc(color)}"
+              title="${esc(a.name)} — hito ${esc(a.end_date || a.start_date)}"></div>`
+      : `<div class="g-bar" style="left:${izq}%;width:${ancho}%;background:${esc(color)}"
+              title="${esc(a.name)} · ${esc(a.start_date || '?')} → ${esc(a.end_date || '?')} · ${avance}%">
+           <div class="g-fill" style="width:${avance}%"></div>
+           <span class="g-txt">${ancho > 7 ? esc(a.name.slice(0, 28)) : ''}</span>
+         </div>`;
+
+    return `<div class="g-row" onclick="abrirActividad('${a.id}')">
+      <div class="g-label" title="${esc(a.name)}">
+        <span class="badge-estado be-${esc(a.status)}">${esc((ESTADOS[a.status] || '').slice(0, 3))}</span>
+        <span class="gl-text">${a.is_milestone ? '◆ ' : ''}${esc(a.name)}</span>
+        ${vencida ? '<span class="text-danger">⛔</span>' : ''}
+      </div>
+      <div class="g-track">${lineaHoy}${barra}</div>
+    </div>`;
+  }).join('');
+
+  caja.innerHTML = `<div class="gantt-container">
+    <div class="g-head">
+      <div class="g-label-col">Actividad</div>
+      <div class="g-scale">${fondo}${meses}${encabezado}
+        ${pctHoy === null ? '' : `<div class="g-today" style="left:${pctHoy}%"></div>`}</div>
+    </div>
+    <div style="position:relative">${filas}</div>
+  </div>`;
+}
+
+// ——————————————————————————————————————————
+//  FICHA DE ACTIVIDAD
+// ——————————————————————————————————————————
+function abrirActividad(id) {
+  const a = id ? actividades.find(x => x.id === id) : null;
+  document.getElementById('tituloActividad').textContent = a ? '📌 ' + a.name : 'Nueva actividad';
+  document.getElementById('aId').value = id || '';
+  document.getElementById('aNombre').value = a ? a.name : '';
+  document.getElementById('aDescripcion').value = (a && a.description) || '';
+  document.getElementById('aResponsable').value = (a && a.responsible) || '';
+  document.getElementById('aInicio').value = (a && a.start_date) || '';
+  document.getElementById('aFin').value = (a && a.end_date) || '';
+  document.getElementById('aAvance').value = (a && a.progress_pct) || 0;
+  document.getElementById('aEstado').value = (a && a.status) || 'pending';
+  document.getElementById('aPrioridad').value = (a && a.priority) || 'medium';
+  document.getElementById('aHito').checked = !!(a && a.is_milestone);
+  recalcularDias();
+
+  // Una actividad no puede depender de sí misma.
+  const dependencias = (a && a.depends_on) || [];
+  document.getElementById('aDependencias').innerHTML = actividades
+    .filter(x => !id || x.id !== id)
+    .map(x => `<option value="${x.id}" ${dependencias.includes(x.id) ? 'selected' : ''}>${esc(x.name)}</option>`)
+    .join('');
+
+  const nota = document.getElementById('aNotaIa');
+  if (a && a.ai_notes) {
+    nota.style.display = '';
+    nota.innerHTML = `<strong>🤖 Justificación de la IA:</strong> <span class="ia-nota">${esc(a.ai_notes)}</span>`;
+  } else {
+    nota.style.display = 'none';
+  }
+
+  document.getElementById('btnBorrarActividad').style.display = id ? '' : 'none';
+  modalActividad.show();
+}
+
+function recalcularDias() {
+  const ini = document.getElementById('aInicio').value;
+  const fin = document.getElementById('aFin').value;
+  const caja = document.getElementById('aDias');
+  if (!ini || !fin) { caja.value = ''; return; }
+  let dias = 0;
+  const cursor = aFecha(ini), tope = aFecha(fin);
+  if (tope < cursor) { caja.value = 'fin anterior al inicio'; return; }
+  while (cursor <= tope) {
+    if (cursor.getDay() !== 0 && cursor.getDay() !== 6) dias++;
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  caja.value = dias;
+}
+
+async function guardarActividad() {
+  const id = document.getElementById('aId').value;
+  const cuerpo = {
+    name: document.getElementById('aNombre').value.trim(),
+    description: document.getElementById('aDescripcion').value.trim(),
+    responsible: document.getElementById('aResponsable').value.trim(),
+    start_date: document.getElementById('aInicio').value,
+    end_date: document.getElementById('aFin').value,
+    progress_pct: document.getElementById('aAvance').value,
+    status: document.getElementById('aEstado').value,
+    priority: document.getElementById('aPrioridad').value,
+    is_milestone: document.getElementById('aHito').checked,
+    depends_on: [...document.getElementById('aDependencias').selectedOptions].map(o => o.value),
+  };
+  if (!cuerpo.name) { aviso('El nombre es obligatorio', 'warning'); return; }
+  const r = await pedir(id ? `/cronograma/api/actividades/${id}`
+                           : `/cronograma/api/planes/${planActivo.id}/actividades`,
+    {method: id ? 'PATCH' : 'POST', body: JSON.stringify(cuerpo)});
+  if (!r.success) { aviso(r.error || 'No se pudo guardar', 'danger'); return; }
+  modalActividad.hide();
+  aviso(id ? 'Actividad actualizada' : 'Actividad creada');
+  await cargarPlanes(planActivo.id);
+}
+
+async function borrarActividad() {
+  const id = document.getElementById('aId').value;
+  if (!confirm('¿Eliminar esta actividad del cronograma?')) return;
+  const r = await pedir(`/cronograma/api/actividades/${id}`, {method: 'DELETE'});
+  if (!r.success) { aviso(r.error || 'No se pudo eliminar', 'danger'); return; }
+  modalActividad.hide();
+  await cargarPlanes(planActivo.id);
+  aviso('Actividad eliminada');
+}
+
+// ——————————————————————————————————————————
+//  TRAER DEL TO-DO
+// ——————————————————————————————————————————
+async function abrirImportarTareas() {
+  tareasDisponibles = await pedir(`/cronograma/api/planes/${planActivo.id}/tareas-disponibles`);
+  if (tareasDisponibles.success === false) { aviso(tareasDisponibles.error, 'danger'); return; }
+  document.getElementById('buscarTarea').value = '';
+  pintarTareasDisponibles();
+  modalImportarTareas.show();
+}
+
+function pintarTareasDisponibles() {
+  const texto = document.getElementById('buscarTarea').value.trim().toLowerCase();
+  const filas = tareasDisponibles.filter(t =>
+    !texto || [t.title, t.phase, t.proyecto, t.assigned_to]
+      .some(v => String(v || '').toLowerCase().includes(texto)));
+  document.getElementById('tareasVacio').style.display = filas.length ? 'none' : '';
+  document.getElementById('tareasCuerpo').innerHTML = filas.map(t => `
+    <tr>
+      <td><input type="checkbox" class="chk-tarea" value="${t.id}"></td>
+      <td>
+        <div class="fw-semibold">${esc(t.title)}</div>
+        ${t.assigned_to ? `<div class="small text-muted">${esc(t.assigned_to)}</div>` : ''}
+      </td>
+      <td class="small text-muted">${esc(t.proyecto || t.phase || '')}</td>
+      <td>${esc(t.due_date || '—')}</td>
+      <td><span class="badge-estado be-${esc(t.status || 'pending')}">${esc(ESTADOS[t.status] || t.status || '')}</span></td>
+    </tr>`).join('');
+}
+
+function marcarTareas(marcado) {
+  document.querySelectorAll('.chk-tarea').forEach(c => c.checked = marcado);
+}
+
+async function importarTareas() {
+  const ids = [...document.querySelectorAll('.chk-tarea:checked')].map(c => c.value);
+  if (!ids.length) { aviso('No marcaste ninguna tarea', 'warning'); return; }
+  const r = await pedir(`/cronograma/api/planes/${planActivo.id}/importar-tareas`,
+    {method: 'POST', body: JSON.stringify({task_ids: ids})});
+  if (!r.success) { aviso(r.error || 'No se pudo importar', 'danger'); return; }
+  modalImportarTareas.hide();
+  aviso(`${r.importadas} actividad(es) traída(s) del To-Do`);
+  await cargarPlanes(planActivo.id);
+}
+
+async function sincronizarTareas() {
+  const r = await pedir(`/cronograma/api/planes/${planActivo.id}/sincronizar-tareas`, {method: 'POST'});
+  if (!r.success) { aviso(r.error || 'No se pudo sincronizar', 'danger'); return; }
+  aviso(r.mensaje || `${r.actualizadas} actividad(es) actualizada(s) desde el To-Do`);
+  if (r.actualizadas) await cargarPlanes(planActivo.id);
+}
+
+// ——————————————————————————————————————————
+//  PLANIFICACIÓN CON IA
+// ——————————————————————————————————————————
+function abrirPlanificacion() {
+  volverConfigIa();
+  document.getElementById('iaInicio').value = planActivo.start_date || hoyIso();
+  document.getElementById('iaLimite').value = planActivo.end_date || '';
+  document.getElementById('iaContexto').value = planActivo.description || '';
+  modalIa.show();
+}
+
+function volverConfigIa() {
+  document.getElementById('iaPasoConfig').style.display = '';
+  document.getElementById('iaPasoPropuesta').style.display = 'none';
+  document.getElementById('btnIaAplicar').style.display = 'none';
+  document.getElementById('btnIaVolver').style.display = 'none';
+  document.getElementById('iaEstado').textContent = '';
+  propuestas = [];
+}
+
+async function pedirPlanificacion() {
+  const estado = document.getElementById('iaEstado');
+  estado.textContent = 'Pensando el cronograma… puede tardar medio minuto.';
+  const r = await pedir(`/cronograma/api/planes/${planActivo.id}/planificar`, {
+    method: 'POST',
+    body: JSON.stringify({
+      contexto: document.getElementById('iaContexto').value.trim(),
+      fecha_inicio: document.getElementById('iaInicio').value,
+      fecha_limite: document.getElementById('iaLimite').value,
+      jornada: document.getElementById('iaJornada').value.trim(),
+      solo_sin_fechas: document.getElementById('iaSoloVacias').checked,
+    }),
+  });
+  estado.textContent = '';
+  if (!r.success) { aviso(r.error || 'La IA no pudo planificar', 'danger'); return; }
+
+  propuestas = r.propuestas || [];
+  document.getElementById('iaPasoConfig').style.display = 'none';
+  document.getElementById('iaPasoPropuesta').style.display = '';
+  document.getElementById('btnIaAplicar').style.display = '';
+  document.getElementById('btnIaVolver').style.display = '';
+
+  document.getElementById('iaResumen').innerHTML =
+    `${esc(r.resumen || '')}${(r.ruta_critica || []).length
+      ? `<div class="small mt-1"><strong>Ruta crítica:</strong> ${r.ruta_critica.map(esc).join(' → ')}</div>` : ''}`;
+  document.getElementById('iaRiesgos').innerHTML = (r.riesgos || []).length
+    ? `<div class="alert alert-warning py-2 small"><strong>⚠ A tener en cuenta:</strong><ul class="mb-0">
+       ${r.riesgos.map(x => `<li>${esc(x)}</li>`).join('')}</ul></div>` : '';
+
+  document.getElementById('iaCuerpo').innerHTML = propuestas.map((p, i) => {
+    const c = p.cambios || {}, antes = p.antes || {};
+    const cambioFecha = (etiqueta, viejo, nuevo) => !nuevo ? '' :
+      `<div class="prop-cambio">${etiqueta}:
+        ${viejo && viejo !== nuevo ? `<span class="prop-antes">${esc(viejo)}</span> → ` : ''}
+        <span class="prop-despues">${esc(nuevo)}</span></div>`;
+    return `<tr>
+      <td><input type="checkbox" class="chk-prop" data-indice="${i}" checked></td>
+      <td>
+        <div class="fw-semibold">${esc(p.nombre)}</div>
+        ${p.nueva ? '<span class="small text-primary">actividad nueva propuesta</span>' : ''}
+        ${c.is_milestone ? '<span class="small" style="color:#7c3aed">◆ hito</span>' : ''}
+      </td>
+      <td>
+        ${cambioFecha('Inicio', antes.start_date, c.start_date)}
+        ${cambioFecha('Fin', antes.end_date, c.end_date)}
+      </td>
+      <td>${c.duration_days ?? '—'}</td>
+      <td>${cambioFecha('', antes.responsible, c.responsible) || '<span class="text-muted">—</span>'}</td>
+      <td class="ia-nota">${esc(c.ai_notes || '')}</td>
+    </tr>`;
+  }).join('');
+}
+
+function marcarPropuestas(marcado) {
+  document.querySelectorAll('.chk-prop').forEach(c => c.checked = marcado);
+}
+
+async function aplicarPropuesta() {
+  const indices = [...document.querySelectorAll('.chk-prop:checked')]
+    .map(c => parseInt(c.dataset.indice, 10));
+  if (!indices.length) { aviso('No aprobaste ninguna propuesta', 'warning'); return; }
+  const boton = document.getElementById('btnIaAplicar');
+  boton.disabled = true; boton.textContent = 'Aplicando…';
+  const r = await pedir(`/cronograma/api/planes/${planActivo.id}/aplicar-plan`,
+    {method: 'POST', body: JSON.stringify({propuestas: indices.map(i => propuestas[i])})});
+  boton.disabled = false; boton.textContent = '✅ Aplicar lo aprobado';
+  if (!r.success) { aviso(r.error || 'No se pudo aplicar', 'danger'); return; }
+  modalIa.hide();
+  aviso(`${r.aplicadas} actividad(es) replanificada(s)` + (r.creadas ? `, ${r.creadas} nueva(s)` : ''));
+  await cargarPlanes(planActivo.id);
+}
+</script>
+{% endblock %}

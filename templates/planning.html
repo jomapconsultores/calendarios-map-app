@@ -4,14 +4,9 @@
 {% block page_sub %}<p class="page-sub">{{ page_sub|default('Proyectos, tareas y seguimiento de procesos') }}</p>{% endblock %}
 
 {% block head %}
-<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
 <style>
 /* ===== PLANNING STYLES ===== */
 .plan-toolbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:12px}
-.view-tabs{display:flex;gap:4px}
-.view-tab{padding:6px 14px;border:1.5px solid #e2e8f0;border-radius:20px;background:#fff;
-  font-size:.8rem;font-weight:600;cursor:pointer;color:#64748b;transition:.15s}
-.view-tab.active{background:#4f46e5;color:#fff;border-color:#4f46e5}
 .quick-add-bar{display:flex;gap:8px;align-items:center;background:#fff;border:1.5px solid #e2e8f0;
   border-radius:14px;padding:8px 12px;margin-bottom:14px;box-shadow:0 1px 4px rgba(0,0,0,.06)}
 .quick-add-bar input{flex:1;border:none;outline:none;font-size:.92rem;color:#1e293b;background:transparent}
@@ -59,57 +54,6 @@
 .days-ok{background:#f0fdf4;color:#166534}
 .days-warn{background:#fffbeb;color:#92400e}
 .days-over{background:#fee2e2;color:#991b1b}
-
-/* KANBAN */
-.kanban-board{display:flex;gap:12px;overflow-x:auto;padding-bottom:12px;min-height:400px}
-.kanban-col{flex:0 0 220px;background:#f8fafc;border-radius:12px;padding:10px;border:1.5px solid #e2e8f0}
-.kanban-col-header{font-size:.78rem;font-weight:700;padding:6px 10px;border-radius:8px;
-  margin-bottom:8px;text-align:center;border-left:3px solid currentColor}
-.kanban-cards{display:flex;flex-direction:column;gap:8px;min-height:60px}
-.kanban-card{background:#fff;border-radius:10px;padding:10px 12px;cursor:pointer;
-  border:1.5px solid #e2e8f0;box-shadow:0 1px 3px rgba(0,0,0,.06);transition:.15s;user-select:none}
-.kanban-card:hover{border-color:#a5b4fc;box-shadow:0 2px 8px rgba(79,70,229,.12)}
-.kanban-card.dragging{opacity:.5}
-.kanban-card.overdue{border-color:#fca5a5;background:#fff5f5}
-.kanban-card.due-soon{border-color:#fcd34d;background:#fffbeb}
-.kc-title{font-size:.82rem;font-weight:600;color:#1e293b;margin-bottom:4px;line-height:1.3}
-.kc-project{font-size:.72rem;color:#8b5cf6;margin-bottom:5px;font-weight:500}
-.kc-footer{display:flex;align-items:center;gap:5px;flex-wrap:wrap}
-.kc-assigned{font-size:.7rem;color:#64748b;background:#f1f5f9;padding:1px 6px;border-radius:10px}
-.kc-progress{height:4px;background:#e2e8f0;border-radius:2px;margin-top:6px;overflow:hidden}
-.kc-progress div{height:100%;background:#4f46e5;border-radius:2px}
-.kanban-col.drag-over .kanban-cards{background:#ede9fe;border-radius:8px}
-.kanban-drop-hint{text-align:center;color:#a5b4fc;font-size:.78rem;padding:10px;display:none}
-.kanban-col.drag-over .kanban-drop-hint{display:block}
-
-/* GANTT */
-.gantt-wrap{overflow-x:auto}
-.gantt-container{min-width:800px;font-size:.8rem}
-.gantt-axis{display:flex;border-bottom:2px solid #e2e8f0;margin-bottom:4px;position:relative;height:28px}
-.gantt-month-label{position:absolute;font-size:.72rem;color:#64748b;font-weight:600;padding-top:6px}
-.gantt-today-label{position:absolute;font-size:.7rem;color:#ef4444;font-weight:700;padding-top:2px;
-  transform:translateX(-50%);white-space:nowrap}
-.gantt-rows{position:relative}
-.gantt-row{display:flex;align-items:center;height:34px;border-bottom:1px solid #f1f5f9}
-.gantt-row:hover{background:#fafbff}
-.gantt-label{width:200px;flex-shrink:0;padding-right:12px;font-size:.8rem;color:#1e293b;
-  font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer}
-.gantt-label:hover{color:#4f46e5}
-.gantt-timeline{flex:1;position:relative;height:100%;display:flex;align-items:center}
-.gantt-bar{position:absolute;height:18px;border-radius:4px;opacity:.9;cursor:pointer;
-  display:flex;align-items:center;padding:0 6px;font-size:.7rem;font-weight:600;color:#fff;
-  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:4px}
-.gantt-bar:hover{opacity:1;z-index:10}
-.gantt-today-line{position:absolute;top:0;bottom:0;width:2px;background:#ef4444;z-index:5;pointer-events:none}
-.gantt-gridline{position:absolute;top:0;bottom:0;width:1px;background:#f1f5f9;z-index:1}
-
-/* PROCESS MAP */
-.map-wrap{background:#fff;border-radius:14px;border:1.5px solid #e2e8f0;padding:24px;min-height:300px;overflow:auto}
-.map-legend{display:flex;gap:16px;flex-wrap:wrap;margin-bottom:16px;padding:10px 16px;
-  background:#f8fafc;border-radius:10px;font-size:.78rem}
-.map-legend-item{display:flex;align-items:center;gap:5px;font-weight:500}
-.map-legend-dot{width:12px;height:12px;border-radius:3px}
-.mermaid-container svg{max-width:100%;height:auto}
 
 /* PROJECT PILLS (usadas por los chips de tiempo fusionados) */
 .project-pills{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px}
@@ -159,7 +103,6 @@ input[type=range].prog-range{accent-color:#4f46e5;width:100%}
 @media(max-width:768px){
   .stats-row{grid-template-columns:1fr 1fr}
   .plan-toolbar{flex-direction:column;align-items:stretch}
-  .view-tabs{overflow-x:auto}
 }
 
 /* ===== POLISH PROFESIONAL ===== */
@@ -246,13 +189,6 @@ input[type=range].prog-range{accent-color:#4f46e5;width:100%}
 
 <!-- TOOLBAR -->
 <div class="plan-toolbar">
-  <div class="view-tabs">
-    <button class="view-tab active" data-view="list" onclick="setView('list')">📋 Lista</button>
-    <button class="view-tab" data-view="kanban" onclick="setView('kanban')">🗂 Kanban</button>
-    <button class="view-tab" data-view="gantt" onclick="setView('gantt')">📊 Gantt</button>
-    <button class="view-tab" data-view="map" onclick="setView('map')">🗺 Mapa proceso</button>
-  </div>
-  <div style="flex:1"></div>
   <input id="searchInput" class="form-control form-control-sm" style="max-width:200px"
     placeholder="🔍 Buscar tarea..." oninput="renderCurrentView()">
   <select id="filterStatus" class="form-select form-select-sm" style="max-width:160px" onchange="renderCurrentView()">
@@ -287,11 +223,22 @@ input[type=range].prog-range{accent-color:#4f46e5;width:100%}
     📋 Sincronizar To-Do
   </button>
   <span id="syncStatus" class="small text-muted" style="display:inline-flex;align-items:center;gap:4px"></span>
+  {% if is_admin_user %}
+  <button class="btn btn-outline-secondary btn-sm rounded-pill" onclick="openTodoTargetModal()"
+          title="Elegir a qué lista de Microsoft To-Do van las tareas creadas aquí">
+    ⚙️ Lista por defecto
+  </button>
+  {% endif %}
   {% else %}
   <a href="/auth/microsoft" class="btn btn-outline-secondary btn-sm rounded-pill" title="Conectar Microsoft To-Do">
     🔗 Conectar Microsoft To-Do
   </a>
   {% endif %}
+</div>
+
+<!-- Estado de la sincronización de ida y vuelta -->
+<div id="syncBanner" class="alert alert-light border py-2 px-3 small" style="display:none">
+  <span id="syncBannerText"></span>
 </div>
 
 <!-- PESTAÑA PRINCIPAL: cuentas MS (/todo) o proyectos (/planning) -->
@@ -338,7 +285,7 @@ input[type=range].prog-range{accent-color:#4f46e5;width:100%}
   <button class="btn-qa" onclick="quickAdd()">+ Agregar</button>
 </div>
 
-<!-- ===== VIEWS ===== -->
+<!-- ===== LISTA DE ACTIVIDADES ===== -->
 <div id="view-list">
   <div class="table-responsive">
     <table class="task-table">
@@ -356,18 +303,6 @@ input[type=range].prog-range{accent-color:#4f46e5;width:100%}
       No hay tareas. Agrega la primera usando la barra de arriba.
     </div>
   </div>
-</div>
-
-<div id="view-kanban" style="display:none"></div>
-<div id="view-gantt" style="display:none"><div class="gantt-wrap" id="ganttInner"></div></div>
-<div id="view-map" style="display:none">
-  <div class="map-legend">
-    <span class="map-legend-item"><span class="map-legend-dot" style="background:#fef3c7;border:1px solid #f59e0b"></span> Pendiente</span>
-    <span class="map-legend-item"><span class="map-legend-dot" style="background:#dbeafe;border:1px solid #3b82f6"></span> En Progreso</span>
-    <span class="map-legend-item"><span class="map-legend-dot" style="background:#d1fae5;border:1px solid #10b981"></span> Completada</span>
-    <span class="map-legend-item"><span class="map-legend-dot" style="background:#fee2e2;border:1px solid #ef4444"></span> Bloqueada</span>
-  </div>
-  <div class="map-wrap"><div id="mapDiagram"></div></div>
 </div>
 
 <!-- ========= TASK MODAL ========= -->
@@ -656,17 +591,55 @@ input[type=range].prog-range{accent-color:#4f46e5;width:100%}
   </div>
 </div>
 
+<!-- ========= LISTA DE TO-DO POR DEFECTO (sincronización de ida y vuelta) ========= -->
+{% if is_admin_user %}
+<div class="modal fade" id="todoTargetModal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content border-0 shadow">
+      <div class="modal-header" style="background:#0078d4;color:#fff">
+        <h6 class="modal-title">⚙️ Lista de To-Do por defecto</h6>
+        <button class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <p class="small text-muted">
+          Lo que se crea en Microsoft To-Do baja al sistema solo. Esta opción cierra el otro
+          sentido: toda tarea creada <strong>aquí</strong> se publica también en la lista que elijas,
+          de modo que las dos caras muestren siempre lo mismo.
+        </p>
+        <label class="form-label fw-semibold small">CUENTA DE MICROSOFT</label>
+        <select id="ttAccount" class="form-select form-select-sm" onchange="loadTodoTargetLists()"></select>
+        <label class="form-label fw-semibold small mt-3">LISTA</label>
+        <select id="ttList" class="form-select form-select-sm"></select>
+        <div id="ttCurrent" class="small text-muted mt-3"></div>
+        <hr>
+        <div class="small text-muted">
+          Fijar la lista afecta a las tareas <strong>nuevas</strong>. Lo que ya existía en el
+          sistema sin subir a To-Do se arrastra una sola vez con este botón:
+        </div>
+        <button class="btn btn-outline-primary btn-sm rounded-pill mt-2" onclick="pushPendingToTodo()">
+          ⬆️ Subir a To-Do lo que falta
+        </button>
+        <div id="ttPushResult" class="small mt-2"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-outline-danger btn-sm rounded-pill me-auto" onclick="saveTodoTarget(true)">
+          Desactivar
+        </button>
+        <button class="btn btn-secondary btn-sm rounded-pill" data-bs-dismiss="modal">Cancelar</button>
+        <button class="btn btn-primary btn-sm rounded-pill" onclick="saveTodoTarget(false)">💾 Guardar</button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+
 <!-- ===== SCRIPT ===== -->
 <script>
-mermaid.initialize({ startOnLoad: false, theme: 'default',
-  flowchart: { curve: 'basis', nodeSpacing: 40, rankSpacing: 60 } });
-
 // ——————————————————————————————————————————
 //  STATE
 // ——————————————————————————————————————————
-let allTasks = [], allProjects = [], curProject = null, curView = 'list';
+let allTasks = [], allProjects = [], curProject = null;
 let editingTaskId = null, editingProjectId = null;
-let dragTaskId = null;
 const today = new Date(); today.setHours(0,0,0,0);
 
 const STATUS_LABELS = {
@@ -687,10 +660,6 @@ const STATUS_KEY_BY_LABEL = Object.fromEntries(
   Object.entries(STATUS_LABELS).map(([k, v]) => [v, k]));
 const STATUS_GROUP_ICON = {
   pending:'⏳', in_progress:'🔄', review:'👀', blocked:'⛔', done:'✅'
-};
-const BAR_COLORS = {
-  pending:'#f59e0b', in_progress:'#4f46e5', review:'#8b5cf6',
-  done:'#10b981', blocked:'#ef4444'
 };
 
 // ¿Es una tarea que en realidad es un correo marcado importado de Outlook?
@@ -732,8 +701,6 @@ const SYNC_INTERVAL_MIN = 5;  // minutos entre auto-pulls
 
 document.addEventListener('DOMContentLoaded', () => {
   const params = new URLSearchParams(location.search);
-  const v = params.get('view');
-  if (v && ['list','kanban','gantt','map'].includes(v)) setView(v, false);
   // Filtro temporal pasado por URL desde el dashboard
   const tf = params.get('tf');
   if (tf && ['my-day','overdue','today','tomorrow','week','no-date'].includes(tf)) {
@@ -741,10 +708,30 @@ document.addEventListener('DOMContentLoaded', () => {
   }
   loadData();
   updateSyncIndicator();
+  loadTodoTarget();
   // Polling: refrescar tareas cada 60s en silencio.
   // El pull desde Microsoft lo hace el servidor en segundo plano cada 5 min
   // (start_todo_autosync), así que aquí solo refrescamos la vista desde la BD.
-  setInterval(() => { if (!document.hidden) loadData(true); }, 60000);
+  //
+  // Además de estar visible, se exige que haya habido actividad real hace poco.
+  // Sin esa condición este sondeo anularía el cierre por inactividad: cada
+  // petición renueva la cookie de sesión (ventana deslizante), así que una
+  // pestaña de Planificación abierta y olvidada en una pantalla encendida
+  // mantendría la sesión viva indefinidamente sin nadie delante. La marca la
+  // escribe el temporizador de base.html.
+  const ACTIVIDAD_KEY = '__idle_last_activity';
+  const MAX_SIN_ACTIVIDAD_MS = 5 * 60 * 1000;
+  function huboActividadReciente() {
+    try {
+      const t = parseInt(localStorage.getItem(ACTIVIDAD_KEY) || '0', 10);
+      // Si nunca se escribió la marca no se bloquea el refresco: se prefiere
+      // que la pantalla siga funcionando a romperla por una clave ausente.
+      return !t || (Date.now() - t) < MAX_SIN_ACTIVIDAD_MS;
+    } catch (e) { return true; }
+  }
+  setInterval(() => {
+    if (!document.hidden && huboActividadReciente()) loadData(true);
+  }, 60000);
   if (IS_ADMIN && MS_CONNECTED) {
     setInterval(updateSyncIndicator, 30000);
   }
@@ -1220,8 +1207,6 @@ function updateStats() {
 
 function filterOverdue() {
   document.getElementById('filterStatus').value = '';
-  setView('list');
-  // highlight overdue
   document.getElementById('searchInput').value = '';
   renderCurrentView();
   setTimeout(() => {
@@ -1245,24 +1230,10 @@ function fillProjectSelects() {
   });
 }
 
-// ——————————————————————————————————————————
-//  VIEW SWITCHING
-// ——————————————————————————————————————————
-function setView(v, render=true) {
-  curView = v;
-  document.querySelectorAll('.view-tab').forEach(b =>
-    b.classList.toggle('active', b.dataset.view === v));
-  ['list','kanban','gantt','map'].forEach(name =>
-    document.getElementById('view-'+name).style.display = (name===v ? '' : 'none'));
-  if (render) renderCurrentView();
-}
-
-function renderCurrentView() {
-  if (curView === 'list') renderList();
-  else if (curView === 'kanban') renderKanban();
-  else if (curView === 'gantt') renderGantt();
-  else if (curView === 'map') renderMap();
-}
+// La única vista del módulo es la lista de actividades. El tablero Kanban, el
+// Gantt y el mapa de procesos se retiraron de aquí: el Gantt vive ahora en su
+// propio módulo (/cronograma), con planificación asistida.
+function renderCurrentView() { renderList(); }
 
 // ——————————————————————————————————————————
 //  LIST VIEW
@@ -1477,262 +1448,6 @@ function daysBadgeHtml(dl, status) {
   if (dl < 0) return `<span class="days-badge days-over">Vencida ${Math.abs(dl)}d</span>`;
   if (dl <= 3) return `<span class="days-badge days-warn">⚠️ ${dl}d</span>`;
   return `<span class="days-badge days-ok">${dl}d</span>`;
-}
-
-// ——————————————————————————————————————————
-//  KANBAN VIEW
-// ——————————————————————————————————————————
-function renderKanban() {
-  const tasks = filteredTasks();
-  const COLS = [
-    { key:'pending', label:'Pendiente', icon:'⏳' },
-    { key:'in_progress', label:'En Progreso', icon:'⚙️' },
-    { key:'review', label:'En Revisión', icon:'🔍' },
-    { key:'done', label:'Completado', icon:'✅' },
-    { key:'blocked', label:'Bloqueado', icon:'🚫' },
-  ];
-  const wrap = document.getElementById('view-kanban');
-  wrap.innerHTML = '<div class="kanban-board">' + COLS.map(col => {
-    const cTasks = tasks.filter(t => (t.status||'pending') === col.key);
-    return `<div class="kanban-col" data-status="${col.key}"
-        ondragover="event.preventDefault(); this.classList.add('drag-over')"
-        ondragleave="this.classList.remove('drag-over')"
-        ondrop="onDrop(event,'${col.key}')">
-      <div class="kanban-col-header" style="color:${STATUS_COLS[col.key]};border-color:${STATUS_COLS[col.key]}">
-        ${col.icon} ${col.label} <span class="badge bg-secondary ms-1" style="font-size:.72rem">${cTasks.length}</span>
-      </div>
-      <div class="kanban-cards" id="kcol-${col.key}">
-        <div class="kanban-drop-hint">Soltar aquí</div>
-        ${cTasks.map(t => kanbanCard(t)).join('')}
-      </div>
-    </div>`;
-  }).join('') + '</div>';
-}
-
-function kanbanCard(t) {
-  const proj = allProjects.find(p => p.id === t.project_id);
-  const dl = daysLeft(t.due_date, t.status);
-  const cls = (dl !== null && dl < 0 && t.status !== 'done') ? 'overdue' :
-              (dl !== null && dl <= 3 && t.status !== 'done') ? 'due-soon' : '';
-  const prog = t.progress_pct || 0;
-  const accColor = colorForAccount(t.ms_email);
-  const srcLabel = t.ms_email
-    ? `<span style="background:${accColor};color:#fff;padding:1px 6px;border-radius:8px;font-size:.62rem" title="${esc(t.ms_email)}">📋 ${esc(shortAccount(t.ms_email))}</span>`
-    : `<span style="background:#4f46e5;color:#fff;padding:1px 6px;border-radius:8px;font-size:.62rem">✍️ Sistema</span>`;
-  return `<div class="kanban-card ${cls}" draggable="true"
-      ondragstart="onDragStart(event,'${t.id}')"
-      onclick="openTask('${t.id}')"
-      style="border-left:4px solid ${accColor}">
-    <div class="kc-title">${esc(t.title)}</div>
-    <div style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:4px">${srcLabel}${t.created_at ? `<span class="text-muted" style="font-size:.62rem">⏱ ${timeAgo(t.created_at)}</span>` : ''}</div>
-    ${proj ? `<div class="kc-project" style="color:${proj.color}">📁 ${esc(proj.name)}</div>` : ''}
-    <div class="kc-footer">
-      <span class="badge-prio bp-${t.priority||'medium'}" style="font-size:.68rem">${PRIO_LABELS[t.priority||'medium']}</span>
-      ${dl !== null ? daysBadgeHtml(dl, t.status) : ''}
-      ${t.assigned_to ? `<span class="kc-assigned">${esc(t.assigned_to.split(' ')[0])}</span>` : ''}
-    </div>
-    ${prog > 0 ? `<div class="kc-progress"><div style="width:${prog}%;background:${STATUS_COLS[t.status||'pending']}"></div></div>` : ''}
-  </div>`;
-}
-
-function onDragStart(e, tid) {
-  dragTaskId = tid;
-  setTimeout(() => { const el = e.target; if(el) el.classList.add('dragging'); }, 0);
-}
-
-function onDrop(e, newStatus) {
-  e.preventDefault();
-  document.querySelectorAll('.kanban-col').forEach(c => c.classList.remove('drag-over'));
-  if (!dragTaskId) return;
-  const t = allTasks.find(x => x.id === dragTaskId);
-  if (!t || t.status === newStatus) return;
-  const patch = { status: newStatus };
-  if (newStatus === 'done' && !t.completed_date)
-    patch.completed_date = new Date().toISOString().split('T')[0];
-  fetch(`/planning/api/tasks/${dragTaskId}`, {
-    method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify(patch)
-  }).then(r => r.json()).then(d => {
-    if (d.success) { t.status = newStatus; if(patch.completed_date) t.completed_date = patch.completed_date; renderAll(); }
-  });
-  dragTaskId = null;
-}
-
-// ——————————————————————————————————————————
-//  GANTT VIEW
-// ——————————————————————————————————————————
-function renderGantt() {
-  const tasks = filteredTasks().filter(t => t.start_date || t.due_date);
-  const el = document.getElementById('ganttInner');
-  if (!tasks.length) {
-    el.innerHTML = '<div class="text-center text-muted py-5">📊 No hay tareas con fechas. Asigna fechas de inicio y vencimiento.</div>';
-    return;
-  }
-  // Compute bounds
-  const allDates = [];
-  tasks.forEach(t => {
-    if (t.start_date) allDates.push(new Date(t.start_date));
-    if (t.due_date)   allDates.push(new Date(t.due_date));
-  });
-  const minD = new Date(Math.min(...allDates)); minD.setDate(minD.getDate()-3);
-  const maxD = new Date(Math.max(...allDates)); maxD.setDate(maxD.getDate()+3);
-  const span = maxD - minD;
-  const pct = d => Math.max(0, Math.min(100, (new Date(d) - minD) / span * 100));
-  const todayPct = pct(today);
-
-  // Month axis labels
-  let axisHtml = '';
-  let cur = new Date(minD); cur.setDate(1);
-  while (cur <= maxD) {
-    const p = pct(cur);
-    axisHtml += `<span class="gantt-month-label" style="left:${p.toFixed(1)}%">
-      ${cur.toLocaleString('es',{month:'short'})} ${cur.getFullYear().toString().slice(-2)}
-    </span>`;
-    cur.setMonth(cur.getMonth()+1);
-  }
-
-  // Sort by start_date or due_date
-  const sorted = [...tasks].sort((a,b) =>
-    (a.start_date||a.due_date||'') < (b.start_date||b.due_date||'') ? -1 : 1);
-
-  // Group by project
-  const projMap = {};
-  sorted.forEach(t => { const k = t.project_id||'__none'; if(!projMap[k]) projMap[k]=[]; projMap[k].push(t); });
-
-  let rowsHtml = '';
-  Object.entries(projMap).forEach(([pid, ptasks]) => {
-    const proj = allProjects.find(p => p.id === pid);
-    if (proj) rowsHtml += `<div class="gantt-row" style="background:#f8fafc">
-      <div class="gantt-label" style="color:${proj.color};font-size:.78rem;font-weight:700">📁 ${esc(proj.name)}</div>
-      <div class="gantt-timeline"></div>
-    </div>`;
-    ptasks.forEach(t => {
-      const sD = t.start_date ? new Date(t.start_date) : new Date(t.due_date);
-      const eD = t.due_date   ? new Date(t.due_date)   : new Date(t.start_date);
-      const left = pct(sD); const right = pct(eD);
-      const width = Math.max(right - left, 0.5);
-      const dl = daysLeft(t.due_date, t.status);
-      const bColor = BAR_COLORS[t.status||'pending'];
-      rowsHtml += `<div class="gantt-row" onclick="openTask('${t.id}')" title="${esc(t.title)}: ${esc(t.assigned_to||'')}">
-        <div class="gantt-label">${esc(t.title)}</div>
-        <div class="gantt-timeline" style="position:relative">
-          <div class="gantt-today-line" style="left:${todayPct.toFixed(1)}%"></div>
-          <div class="gantt-bar" style="left:${left.toFixed(1)}%;width:${width.toFixed(1)}%;background:${bColor}"
-            title="${esc(t.title)} — ${STATUS_LABELS[t.status||'pending']}">
-            ${width > 8 ? esc(t.title.substring(0,20)) : ''}
-          </div>
-        </div>
-      </div>`;
-    });
-  });
-
-  el.innerHTML = `<div class="gantt-container">
-    <div class="gantt-axis" style="position:relative;height:32px;border-bottom:2px solid #e2e8f0;margin-bottom:2px">
-      <div style="position:absolute;width:200px;flex-shrink:0"></div>
-      <div style="position:relative;flex:1;left:200px;right:0;height:100%">
-        ${axisHtml}
-        <span class="gantt-today-label" style="left:${todayPct.toFixed(1)}%">▼ Hoy</span>
-      </div>
-    </div>
-    <div class="gantt-rows">${rowsHtml}</div>
-  </div>`;
-}
-
-// ——————————————————————————————————————————
-//  PROCESS MAP (Mermaid)
-// ——————————————————————————————————————————
-async function renderMap() {
-  const tasks = filteredTasks();
-  if (!tasks.length) {
-    document.getElementById('mapDiagram').innerHTML =
-      '<div class="text-center text-muted py-5">🗺 No hay tareas. Crea tareas y asígnales una fase para ver el mapa de proceso.</div>';
-    return;
-  }
-
-  // Group tasks by phase
-  const phases = {};
-  tasks.forEach(t => {
-    const ph = (t.phase || 'General').trim();
-    if (!phases[ph]) phases[ph] = [];
-    phases[ph].push(t);
-  });
-
-  const phaseKeys = Object.keys(phases);
-  let diagram = '%%{init: {"theme": "base", "themeVariables": {"primaryColor":"#4f46e5","primaryTextColor":"#fff","lineColor":"#94a3b8"}}}%%\nflowchart LR\n';
-
-  // Classify each phase
-  function phaseStatus(ptasks) {
-    const done = ptasks.filter(t => t.status === 'done').length;
-    const blocked = ptasks.filter(t => t.status === 'blocked').length;
-    const inProg = ptasks.filter(t => t.status === 'in_progress').length;
-    if (done === ptasks.length) return 'done';
-    if (blocked > 0) return 'blocked';
-    if (inProg > 0 || done > 0) return 'in_progress';
-    return 'pending';
-  }
-
-  function phaseIcon(s) {
-    return {pending:'⏳', in_progress:'⚙️', done:'✅', blocked:'🚫', review:'🔍'}[s] || '📋';
-  }
-
-  // Days info
-  function daysInfo(ptasks) {
-    const started = ptasks.filter(t => t.start_date);
-    if (!started.length) return '';
-    const minStart = new Date(Math.min(...started.map(t => new Date(t.start_date))));
-    const elapsed = Math.floor((today - minStart) / 86400000);
-    const hasDue = ptasks.filter(t => t.due_date && t.status !== 'done');
-    if (!hasDue.length) return `${elapsed}d transcurridos`;
-    const maxDue = new Date(Math.max(...hasDue.map(t => new Date(t.due_date))));
-    const rem = Math.ceil((maxDue - today) / 86400000);
-    return `${elapsed}d ≡ ${rem >= 0 ? rem+'d restantes' : Math.abs(rem)+'d vencida'}`;
-  }
-
-  phaseKeys.forEach((ph, i) => {
-    const ptasks = phases[ph];
-    const done = ptasks.filter(t => t.status === 'done').length;
-    const total = ptasks.length;
-    const st = phaseStatus(ptasks);
-    const icon = phaseIcon(st);
-    const days = daysInfo(ptasks);
-    const nodeId = `P${i}`;
-    const label = `"${icon} ${ph}\\n${done}/${total} ✅${days ? '\\n⏱ '+days : ''}"`;
-    diagram += `  ${nodeId}[${label}]:::${st}\n`;
-  });
-
-  // Connect phases in order
-  for (let i = 0; i < phaseKeys.length - 1; i++)
-    diagram += `  P${i} --> P${i+1}\n`;
-
-  // Task detail nodes for in-progress and blocked phases
-  phaseKeys.forEach((ph, i) => {
-    const ptasks = phases[ph];
-    const st = phaseStatus(ptasks);
-    if (['in_progress','blocked'].includes(st)) {
-      ptasks.filter(t => t.status !== 'done').forEach((t, j) => {
-        const tid = `T${i}_${j}`;
-        const dl = daysLeft(t.due_date, t.status);
-        const dStr = dl !== null ? (dl < 0 ? `\\n🔴 ${Math.abs(dl)}d vencida` : dl <= 3 ? `\\n⚠️ ${dl}d` : `\\n✓ ${dl}d`) : '';
-        const stIcon = {pending:'⏳',in_progress:'⚙️',review:'🔍',blocked:'🚫'}[t.status]||'📋';
-        diagram += `  ${tid}["${stIcon} ${t.title.substring(0,25).replace(/"/g,"'")}${dStr}"]:::${t.status}\n`;
-        diagram += `  P${i} --> ${tid}\n`;
-      });
-    }
-  });
-
-  diagram += `  classDef pending fill:#fef3c7,stroke:#f59e0b,color:#000,rx:8\n`;
-  diagram += `  classDef in_progress fill:#dbeafe,stroke:#3b82f6,color:#000,rx:8\n`;
-  diagram += `  classDef review fill:#ede9fe,stroke:#8b5cf6,color:#000,rx:8\n`;
-  diagram += `  classDef done fill:#d1fae5,stroke:#10b981,color:#065f46,rx:8\n`;
-  diagram += `  classDef blocked fill:#fee2e2,stroke:#ef4444,color:#991b1b,rx:8\n`;
-
-  const container = document.getElementById('mapDiagram');
-  try {
-    const { svg } = await mermaid.render('mermaid-map-' + Date.now(), diagram);
-    container.innerHTML = svg;
-    container.querySelector('svg').style.maxWidth = '100%';
-  } catch(e) {
-    container.innerHTML = `<div class="alert alert-warning">No se pudo generar el diagrama. Asegúrate de que las fases tienen nombres válidos (sin caracteres especiales).<br><small>${e.message}</small></div>`;
-  }
 }
 
 // ——————————————————————————————————————————
@@ -2304,6 +2019,86 @@ async function doImportTodo() {
   } else {
     res.innerHTML = `<div class="alert alert-danger py-2">❌ ${r.error}</div>`;
   }
+}
+
+// ——————————————————————————————————————————
+//  SINCRONIZACIÓN DE IDA Y VUELTA
+//  El sistema ya baja de To-Do lo que se crea allá. Estas funciones configuran
+//  el otro sentido: la lista a la que suben las tareas creadas aquí.
+// ——————————————————————————————————————————
+let todoTarget = null;
+
+async function loadTodoTarget() {
+  try {
+    const r = await fetch('/planning/api/todo-target').then(x => x.json());
+    todoTarget = r.target || null;
+  } catch (e) { todoTarget = null; }
+  const banner = document.getElementById('syncBanner');
+  const texto  = document.getElementById('syncBannerText');
+  if (!banner || !MS_CONNECTED) return;
+  banner.style.display = '';
+  if (todoTarget && todoTarget.list_id) {
+    texto.innerHTML = `🔄 <strong>Sincronización de ida y vuelta activa.</strong> ` +
+      `Lo que crees aquí aparece en <strong>${esc(todoTarget.list_name || 'To-Do')}</strong> ` +
+      `de ${esc(todoTarget.email)}, y lo que crees en To-Do baja al sistema.`;
+  } else {
+    texto.innerHTML = `↙️ Ahora mismo la sincronización va en un solo sentido: lo de To-Do baja al sistema, ` +
+      `pero lo que se crea aquí no sube.` +
+      (IS_ADMIN ? ` <a href="#" onclick="openTodoTargetModal(); return false">Elegir una lista por defecto</a>.` : '');
+  }
+}
+
+async function openTodoTargetModal() {
+  const cuentas = await fetch('/planning/api/ms-accounts').then(r => r.json());
+  const selCuenta = document.getElementById('ttAccount');
+  selCuenta.innerHTML = cuentas.map(e =>
+    `<option value="${esc(e)}" ${todoTarget && todoTarget.email === e ? 'selected' : ''}>${esc(e)}</option>`).join('');
+  document.getElementById('ttCurrent').textContent = todoTarget && todoTarget.list_id
+    ? `Actualmente: ${todoTarget.list_name || todoTarget.list_id} (${todoTarget.email})`
+    : 'Actualmente no hay ninguna lista por defecto.';
+  await loadTodoTargetLists();
+  new bootstrap.Modal(document.getElementById('todoTargetModal')).show();
+}
+
+async function loadTodoTargetLists() {
+  const email = document.getElementById('ttAccount').value;
+  const selLista = document.getElementById('ttList');
+  selLista.innerHTML = '<option>Cargando…</option>';
+  const listas = await fetch('/planning/api/ms-lists?email=' + encodeURIComponent(email)).then(r => r.json());
+  selLista.innerHTML = listas.map(l =>
+    `<option value="${esc(l.id)}" ${todoTarget && todoTarget.list_id === l.id ? 'selected' : ''}>${esc(l.name)}</option>`).join('')
+    || '<option value="">— sin listas —</option>';
+}
+
+async function pushPendingToTodo() {
+  const caja = document.getElementById('ttPushResult');
+  caja.innerHTML = '<span class="text-muted">⏳ Subiendo… puede tardar según cuántas falten.</span>';
+  const r = await fetch('/planning/api/push-pending-to-todo', {
+    method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}',
+  }).then(x => x.json());
+  if (!r.success) { caja.innerHTML = `<span class="text-danger">❌ ${esc(r.error)}</span>`; return; }
+  caja.innerHTML = `<span class="text-success">✅ ${r.subidas} de ${r.pendientes} subida(s)` +
+    (r.errores ? `, ${r.errores} con error` : '') +
+    (r.parcial ? '. Quedaron más: vuelve a pulsar para continuar.' : '') + '</span>';
+  await loadData();
+}
+
+async function saveTodoTarget(desactivar) {
+  const email = desactivar ? '' : document.getElementById('ttAccount').value;
+  const sel   = document.getElementById('ttList');
+  const r = await fetch('/planning/api/todo-target', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({
+      email,
+      list_id:   desactivar ? '' : sel.value,
+      list_name: desactivar ? '' : (sel.selectedOptions[0] ? sel.selectedOptions[0].textContent : ''),
+    }),
+  }).then(x => x.json());
+  if (!r.success) { showToast('❌ ' + (r.error || 'No se pudo guardar'), 'danger'); return; }
+  bootstrap.Modal.getInstance(document.getElementById('todoTargetModal')).hide();
+  showToast(desactivar ? '✅ Sincronización hacia To-Do desactivada'
+                       : '✅ Lista por defecto guardada', 'success');
+  await loadTodoTarget();
 }
 
 // ——————————————————————————————————————————

@@ -2,12 +2,37 @@
 # Desarrollado por Marco Antonio Posligua San Martín
 # ------------------------------------------------------------
 import os
+from datetime import timedelta
 from dotenv import load_dotenv
 load_dotenv()
 
 class Config:
     APP_NAME = 'calendarios-map'
     SECRET_KEY = os.getenv('SECRET_KEY')
+
+    # ── Sesión: endurecida y con cierre por inactividad a los 20 minutos ──
+    # No había ninguna directiva de sesión en todo el proyecto. La cookie era de
+    # navegador —sin caducidad— así que la sesión duraba lo que durase el
+    # navegador abierto; y con «restaurar pestañas» de Chrome y Edge, en la
+    # práctica, indefinidamente. El temporizador de JavaScript de base.html no
+    # cerraba nada: bastaba recargar para reiniciarlo.
+    #
+    # Flask firma la cookie con una marca de tiempo y la rechaza en el SERVIDOR
+    # si supera este plazo, así que no se puede evadir desde el navegador. Para
+    # que la ventana sea DESLIZANTE hacen falta las tres cosas juntas: este
+    # plazo, session.permanent = True (before_request de app/__init__.py) y
+    # SESSION_REFRESH_EACH_REQUEST, que reemite la cookie en cada petición.
+    PERMANENT_SESSION_LIFETIME = timedelta(minutes=20)
+    SESSION_REFRESH_EACH_REQUEST = True
+    SESSION_COOKIE_HTTPONLY = True
+    SESSION_COOKIE_SAMESITE = 'Lax'
+    # En desarrollo local por http: FLASK_INSECURE_COOKIES=1
+    SESSION_COOKIE_SECURE = os.getenv('FLASK_INSECURE_COOKIES') != '1'
+    REMEMBER_COOKIE_HTTPONLY = True
+    REMEMBER_COOKIE_SECURE = os.getenv('FLASK_INSECURE_COOKIES') != '1'
+    # El "recuérdame" de flask_login revive la sesión saltándose lo anterior:
+    # se acota al mismo plazo para que no sea una puerta trasera.
+    REMEMBER_COOKIE_DURATION = timedelta(minutes=20)
     SUPABASE_URL = os.getenv('SUPABASE_URL', '')
     SUPABASE_KEY = os.getenv('SUPABASE_KEY', '')
     GOOGLE_CLIENT_ID = os.getenv('GOOGLE_CLIENT_ID', '')

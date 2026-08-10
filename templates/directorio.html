@@ -1,0 +1,976 @@
+{% extends "base.html" %}
+{% block title %}{{ page_title }} — CalendarioMAP{% endblock %}
+{% block page_title %}{{ page_title }}{% endblock %}
+{% block page_sub %}<p class="page-sub">{{ page_sub }}</p>{% endblock %}
+
+{% block head %}
+<style>
+/* ===== DIRECTORIO ===== */
+.dir-toolbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:14px}
+.stats-row{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:14px}
+.stat-card{background:#fff;border-radius:12px;padding:12px 16px;border:1.5px solid #e2e8f0;
+  display:flex;flex-direction:column;gap:2px;box-shadow:0 1px 3px rgba(0,0,0,.05)}
+.stat-card .sc-num{font-size:1.6rem;font-weight:700;line-height:1}
+.stat-card .sc-lbl{font-size:.75rem;color:#64748b;font-weight:500}
+.stat-card.info .sc-num{color:#4f46e5}
+.stat-card.success .sc-num{color:#10b981}
+.stat-card.warning .sc-num{color:#f59e0b}
+.stat-card.danger .sc-num{color:#ef4444}
+
+.sector-pills{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px}
+.sector-pill{padding:5px 14px;border-radius:20px;font-size:.8rem;font-weight:600;cursor:pointer;
+  border:1.5px solid #e2e8f0;background:#fff;color:#475569;transition:.15s;white-space:nowrap}
+.sector-pill:hover{transform:translateY(-1px);box-shadow:0 3px 8px rgba(0,0,0,.07)}
+.sector-pill.active{color:#fff;box-shadow:0 4px 12px rgba(79,70,229,.25)}
+.sector-pill .sp-count{background:rgba(0,0,0,.08);border-radius:10px;padding:0 6px;margin-left:5px;font-size:.72rem}
+.sector-pill.active .sp-count{background:rgba(255,255,255,.25)}
+
+.dir-table{width:100%;border-collapse:collapse;font-size:.84rem}
+.dir-table th{background:#f8fafc;color:#64748b;font-size:.74rem;font-weight:600;text-transform:uppercase;
+  letter-spacing:.04em;padding:9px 12px;border-bottom:1.5px solid #e2e8f0;white-space:nowrap;
+  position:sticky;top:0;z-index:5}
+.dir-table td{padding:9px 12px;border-bottom:1px solid #f1f5f9;vertical-align:middle}
+.dir-table tr:hover td{background:#f5f7ff}
+.doc-chip{font-family:ui-monospace,Menlo,monospace;font-size:.8rem;font-weight:600}
+.badge-doc{display:inline-block;padding:2px 8px;border-radius:20px;font-size:.68rem;font-weight:700;
+  text-transform:uppercase;letter-spacing:.03em}
+.bd-ruc{background:#ede9fe;color:#5b21b6}
+.bd-cedula{background:#dbeafe;color:#1e40af}
+.bd-pasaporte{background:#fef3c7;color:#92400e}
+.chip-ok{color:#059669;font-weight:700}
+.chip-bad{color:#dc2626;font-weight:700}
+.sector-tag{display:inline-block;padding:2px 9px;border-radius:20px;font-size:.7rem;font-weight:600;color:#fff}
+
+.btn-xs{padding:3px 10px;font-size:.73rem;border-radius:8px;border:none;cursor:pointer;font-weight:600}
+.btn-xs-edit{background:#ede9fe;color:#5b21b6}
+.btn-xs-edit:hover{background:#ddd6fe}
+.btn-xs-del{background:#fee2e2;color:#991b1b}
+.btn-xs-del:hover{background:#fecaca}
+
+.dir-modal .modal-header{background:linear-gradient(135deg,#4f46e5,#7c3aed);color:#fff}
+.modal-section-label{font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;
+  color:#64748b;margin:14px 0 6px}
+.social-row{display:flex;gap:6px;align-items:center;margin-bottom:6px}
+.social-row select{max-width:150px}
+
+.doc-feedback{font-size:.8rem;margin-top:5px;min-height:20px}
+.act-list{max-height:180px;overflow-y:auto;border:1px solid #e2e8f0;border-radius:10px;padding:8px 12px;background:#f8fafc}
+.act-list li{font-size:.8rem;margin-bottom:4px}
+
+.prev-row-nuevo td{background:#f0fdf4}
+.prev-row-duplicado td{background:#fef2f2}
+.prev-row-documento_invalido td{background:#fffbeb}
+.prev-row-incompleto td{background:#f8fafc;color:#64748b}
+.estado-badge{display:inline-block;padding:2px 9px;border-radius:20px;font-size:.7rem;font-weight:700;white-space:nowrap}
+.eb-nuevo{background:#d1fae5;color:#065f46}
+.eb-duplicado{background:#fee2e2;color:#991b1b}
+.eb-documento_invalido{background:#fef3c7;color:#92400e}
+.eb-incompleto{background:#e2e8f0;color:#475569}
+
+.audit-item{border-left:3px solid #c7d2fe;padding:8px 0 8px 12px;margin-bottom:10px}
+.audit-item .ai-meta{font-size:.74rem;color:#64748b}
+.audit-item .ai-reason{font-size:.82rem;color:#1e293b;font-style:italic}
+.audit-item .ai-change{font-size:.8rem;background:#f8fafc;border-radius:8px;padding:4px 8px;margin-top:4px}
+.audit-item .ai-old{color:#b91c1c;text-decoration:line-through}
+.audit-item .ai-new{color:#047857;font-weight:600}
+
+@media(max-width:768px){ .stats-row{grid-template-columns:1fr 1fr} }
+</style>
+{% endblock %}
+
+{% block topbar_actions %}
+<button class="btn btn-primary btn-sm rounded-pill" onclick="abrirContacto(null)">+ Nuevo registro</button>
+<button class="btn btn-outline-secondary btn-sm rounded-pill" onclick="abrirImportacion()">📥 Importar</button>
+<button class="btn btn-outline-secondary btn-sm rounded-pill" onclick="exportar()">📤 Excel</button>
+{% endblock %}
+
+{% block content %}
+
+<div class="stats-row">
+  <div class="stat-card info"><div class="sc-num" id="stTotal">0</div><div class="sc-lbl">Registros</div></div>
+  <div class="stat-card success"><div class="sc-num" id="stSri">0</div><div class="sc-lbl">Verificados en el SRI</div></div>
+  <div class="stat-card warning"><div class="sc-num" id="stSectores">0</div><div class="sc-lbl">Sectores</div></div>
+  <div class="stat-card danger"><div class="sc-num" id="stInvalidos">0</div><div class="sc-lbl">Documentos por revisar</div></div>
+</div>
+
+<div class="sector-pills" id="sectorPills"></div>
+
+<div class="dir-toolbar">
+  <input id="buscar" class="form-control form-control-sm" style="max-width:280px"
+         placeholder="🔍 Buscar por nombre, cédula, RUC, correo o teléfono…" oninput="pintarTabla()">
+  <select id="filtroTipo" class="form-select form-select-sm" style="max-width:170px" onchange="pintarTabla()">
+    <option value="">Todo tipo de documento</option>
+    <option value="ruc">Sólo RUC</option>
+    <option value="cedula">Sólo cédula</option>
+    <option value="pasaporte">Sólo pasaporte</option>
+  </select>
+  <div style="flex:1"></div>
+  <button class="btn btn-outline-dark btn-sm rounded-pill" onclick="abrirSectores()">🏷️ Administrar sectores</button>
+</div>
+
+<div class="table-responsive" style="max-height:60vh;overflow:auto">
+  <table class="dir-table">
+    <thead>
+      <tr>
+        <th>Documento</th><th>Nombre / Razón social</th><th>Sector</th>
+        <th>Celular</th><th>Convencional</th><th>Correo</th><th>Ciudad</th><th>SRI</th><th></th>
+      </tr>
+    </thead>
+    <tbody id="tablaCuerpo"></tbody>
+  </table>
+  <div id="tablaVacia" class="text-center text-muted py-5" style="display:none">
+    <div style="font-size:2rem">🗂️</div>
+    No hay registros con estos criterios.
+  </div>
+</div>
+
+<!-- ============ FICHA DE CONTACTO ============ -->
+<div class="modal fade dir-modal" id="modalContacto" tabindex="-1">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-content border-0 shadow">
+      <div class="modal-header">
+        <h5 class="modal-title text-white" id="tituloContacto">Nuevo registro</h5>
+        <button class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="cId">
+
+        <ul class="nav nav-tabs mb-3">
+          <li class="nav-item"><a class="nav-link active" data-bs-toggle="tab" href="#tabDatos">📇 Datos</a></li>
+          <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#tabRedes">🌐 Redes y direcciones</a></li>
+          <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#tabSri">🧾 SRI</a></li>
+          <li class="nav-item" id="liBitacora" style="display:none"><a class="nav-link" data-bs-toggle="tab" href="#tabBitacora" onclick="cargarBitacora()">🕘 Bitácora</a></li>
+        </ul>
+
+        <div class="tab-content">
+          <!-- DATOS -->
+          <div class="tab-pane fade show active" id="tabDatos">
+            <div class="row g-2">
+              <div class="col-md-4">
+                <label class="form-label fw-semibold small">TIPO DE DOCUMENTO</label>
+                <select id="cDocType" class="form-select form-select-sm" onchange="validarDocumento()">
+                  <option value="cedula">Cédula</option>
+                  <option value="ruc">RUC</option>
+                  <option value="pasaporte">Pasaporte</option>
+                </select>
+              </div>
+              <div class="col-md-8">
+                <label class="form-label fw-semibold small">NÚMERO *</label>
+                <div class="input-group input-group-sm">
+                  <input id="cDocNumber" class="form-control" placeholder="Cédula, RUC o pasaporte"
+                         oninput="programarValidacion()">
+                  <button class="btn btn-outline-primary" type="button" onclick="validarDocumento(true)">
+                    🔎 Verificar
+                  </button>
+                </div>
+                <div class="doc-feedback" id="docFeedback"></div>
+              </div>
+
+              <div class="col-md-6">
+                <label class="form-label fw-semibold small">NOMBRES</label>
+                <input id="cFirstName" class="form-control form-control-sm">
+              </div>
+              <div class="col-md-6">
+                <label class="form-label fw-semibold small">APELLIDOS</label>
+                <input id="cLastName" class="form-control form-control-sm">
+              </div>
+              <div class="col-md-6">
+                <label class="form-label fw-semibold small">RAZÓN SOCIAL</label>
+                <input id="cBusinessName" class="form-control form-control-sm">
+              </div>
+              <div class="col-md-6">
+                <label class="form-label fw-semibold small">NOMBRE COMERCIAL</label>
+                <input id="cTradeName" class="form-control form-control-sm">
+              </div>
+
+              <div class="col-md-6">
+                <label class="form-label fw-semibold small">CELULAR</label>
+                <input id="cMobile" class="form-control form-control-sm" placeholder="09XXXXXXXX">
+              </div>
+              <div class="col-md-6">
+                <label class="form-label fw-semibold small">CONVENCIONAL</label>
+                <input id="cLandline" class="form-control form-control-sm" placeholder="0XXXXXXXX">
+              </div>
+              <div class="col-md-6">
+                <label class="form-label fw-semibold small">CORREO ELECTRÓNICO</label>
+                <input id="cEmail" type="email" class="form-control form-control-sm">
+              </div>
+              <div class="col-md-6">
+                <label class="form-label fw-semibold small">SECTOR</label>
+                <select id="cSector" class="form-select form-select-sm"></select>
+              </div>
+            </div>
+          </div>
+
+          <!-- REDES Y DIRECCIONES -->
+          <div class="tab-pane fade" id="tabRedes">
+            <div class="modal-section-label">Dirección web</div>
+            <input id="cWebsite" class="form-control form-control-sm" placeholder="https://…">
+
+            <div class="modal-section-label d-flex justify-content-between align-items-center">
+              <span>Redes sociales</span>
+              <button class="btn btn-sm btn-outline-primary rounded-pill py-0" onclick="agregarRed()">+ Agregar red</button>
+            </div>
+            <div id="redesLista"></div>
+
+            <div class="modal-section-label">Dirección de trabajo</div>
+            <textarea id="cWorkAddress" class="form-control form-control-sm" rows="2"></textarea>
+
+            <div class="modal-section-label">Dirección domiciliaria</div>
+            <textarea id="cHomeAddress" class="form-control form-control-sm" rows="2"></textarea>
+
+            <div class="row g-2 mt-1">
+              <div class="col-md-6">
+                <label class="form-label fw-semibold small">CIUDAD</label>
+                <input id="cCity" class="form-control form-control-sm">
+              </div>
+              <div class="col-md-6">
+                <label class="form-label fw-semibold small">PROVINCIA</label>
+                <input id="cProvince" class="form-control form-control-sm">
+              </div>
+            </div>
+
+            <div class="modal-section-label">Observaciones</div>
+            <textarea id="cNotes" class="form-control form-control-sm" rows="3"></textarea>
+          </div>
+
+          <!-- SRI -->
+          <div class="tab-pane fade" id="tabSri">
+            <div id="sriVacio" class="text-muted text-center py-4">
+              Los datos del SRI aparecen aquí cuando el documento es un RUC verificado.
+            </div>
+            <div id="sriPanel" style="display:none">
+              <div class="d-flex justify-content-between align-items-center mb-2">
+                <strong>Información del contribuyente</strong>
+                <button class="btn btn-sm btn-outline-primary rounded-pill" id="btnRefrescarSri" onclick="refrescarSri()">
+                  🔄 Volver a consultar al SRI
+                </button>
+              </div>
+              <table class="table table-sm">
+                <tbody>
+                  <tr><th style="width:220px">Estado</th><td id="sriEstado">—</td></tr>
+                  <tr><th>Tipo de contribuyente</th><td id="sriTipo">—</td></tr>
+                  <tr><th>Régimen / clase</th><td id="sriClase">—</td></tr>
+                  <tr><th>Obligado a llevar contabilidad</th><td id="sriContabilidad">—</td></tr>
+                  <tr><th>Inicio de actividades</th><td id="sriInicio">—</td></tr>
+                  <tr><th>Cese de actividades</th><td id="sriCese">—</td></tr>
+                </tbody>
+              </table>
+              <div class="modal-section-label">Actividades económicas registradas</div>
+              <ul class="act-list" id="sriActividades"></ul>
+              <div class="modal-section-label">Establecimientos</div>
+              <ul class="act-list" id="sriEstablecimientos"></ul>
+            </div>
+          </div>
+
+          <!-- BITÁCORA -->
+          <div class="tab-pane fade" id="tabBitacora">
+            <div id="bitacoraLista" class="text-muted">Cargando…</div>
+          </div>
+        </div>
+
+        <div class="alert alert-warning mt-3 mb-0" id="cajaMotivo" style="display:none">
+          <label class="form-label fw-semibold small mb-1">MOTIVO DEL CAMBIO *</label>
+          <input id="cReason" class="form-control form-control-sm"
+                 placeholder="Ej.: el cliente cambió de número de celular">
+          <div class="small text-muted mt-1">
+            Queda registrado en la bitácora junto con tu nombre y el valor anterior de cada campo.
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-outline-danger btn-sm rounded-pill me-auto" id="btnEliminar"
+                style="display:none" onclick="eliminarContacto()">🗑 Eliminar</button>
+        <button class="btn btn-secondary btn-sm rounded-pill" data-bs-dismiss="modal">Cancelar</button>
+        <button class="btn btn-primary btn-sm rounded-pill" onclick="guardarContacto()">💾 Guardar</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ IMPORTACIÓN ============ -->
+<div class="modal fade dir-modal" id="modalImportar" tabindex="-1">
+  <div class="modal-dialog modal-xl modal-dialog-scrollable">
+    <div class="modal-content border-0 shadow">
+      <div class="modal-header">
+        <h5 class="modal-title text-white">📥 Importar registros</h5>
+        <button class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div id="pasoArchivo">
+          <p class="text-muted small">
+            Se aceptan Excel (.xlsx), CSV, PDF y Word (.docx). La IA lee el archivo y coloca cada dato
+            en la columna que le corresponde. Antes de guardar nada verás una vista previa con los
+            duplicados marcados: <strong>los repetidos no se insertan</strong>.
+          </p>
+          <div class="row g-3">
+            <div class="col-md-6">
+              <label class="form-label fw-semibold small">ARCHIVO</label>
+              <input type="file" id="archivoImport" class="form-control form-control-sm"
+                     accept=".xlsx,.xlsm,.xls,.csv,.pdf,.docx">
+            </div>
+            <div class="col-md-6">
+              <label class="form-label fw-semibold small">SECTOR AL QUE PERTENECEN</label>
+              <select id="sectorImport" class="form-select form-select-sm"></select>
+            </div>
+            <div class="col-12">
+              <div class="form-check">
+                <input class="form-check-input" type="checkbox" id="usarIa" checked>
+                <label class="form-check-label small" for="usarIa">
+                  Clasificar con IA
+                  <span class="text-muted" id="estadoIa"></span>
+                </label>
+              </div>
+              <div class="form-check">
+                <input class="form-check-input" type="checkbox" id="consultarSri">
+                <label class="form-check-label small" for="consultarSri">
+                  Consultar cada RUC en el SRI al guardar
+                  <span class="text-muted">(más lento, pero trae razón social y actividades)</span>
+                </label>
+              </div>
+            </div>
+          </div>
+          <div class="mt-3">
+            <button class="btn btn-primary btn-sm rounded-pill" onclick="analizarArchivo()">
+              🔍 Analizar archivo
+            </button>
+            <span id="estadoAnalisis" class="small text-muted ms-2"></span>
+          </div>
+        </div>
+
+        <div id="pasoPrevia" style="display:none">
+          <div class="alert alert-info py-2" id="resumenPrevia"></div>
+          <div id="avisosPrevia"></div>
+          <div class="table-responsive" style="max-height:45vh;overflow:auto">
+            <table class="dir-table">
+              <thead><tr>
+                <th style="width:36px"><input type="checkbox" id="marcarTodos" onchange="marcarTodos(this.checked)"></th>
+                <th>Estado</th><th>Documento</th><th>Nombre</th><th>Celular</th>
+                <th>Correo</th><th>Detalle</th>
+              </tr></thead>
+              <tbody id="previaCuerpo"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-outline-secondary btn-sm rounded-pill me-auto" id="btnVolverArchivo"
+                style="display:none" onclick="volverAArchivo()">← Elegir otro archivo</button>
+        <button class="btn btn-secondary btn-sm rounded-pill" data-bs-dismiss="modal">Cerrar</button>
+        <button class="btn btn-success btn-sm rounded-pill" id="btnConfirmarImport"
+                style="display:none" onclick="confirmarImportacion()">💾 Guardar seleccionados</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ SECTORES ============ -->
+<div class="modal fade dir-modal" id="modalSectores" tabindex="-1">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content border-0 shadow">
+      <div class="modal-header">
+        <h5 class="modal-title text-white">🏷️ Sectores</h5>
+        <button class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <p class="text-muted small">
+          Cada base de datos se distingue por su sector: de dónde viene el registro y qué servicio recibe.
+        </p>
+        <div class="row g-2 align-items-end mb-3">
+          <div class="col-md-4">
+            <label class="form-label fw-semibold small">NOMBRE</label>
+            <input id="sNombre" class="form-control form-control-sm" placeholder="Ej.: Auditorías">
+          </div>
+          <div class="col-md-4">
+            <label class="form-label fw-semibold small">DESCRIPCIÓN</label>
+            <input id="sDescripcion" class="form-control form-control-sm">
+          </div>
+          <div class="col-md-2">
+            <label class="form-label fw-semibold small">ÍCONO</label>
+            <input id="sIcono" class="form-control form-control-sm" value="📁" maxlength="4">
+          </div>
+          <div class="col-md-1">
+            <label class="form-label fw-semibold small">COLOR</label>
+            <input id="sColor" type="color" class="form-control form-control-color form-control-sm" value="#4f46e5">
+          </div>
+          <div class="col-md-1">
+            <button class="btn btn-primary btn-sm w-100" onclick="crearSector()">+</button>
+          </div>
+        </div>
+        <table class="dir-table">
+          <thead><tr><th>Sector</th><th>Descripción</th><th>Registros</th><th></th></tr></thead>
+          <tbody id="sectoresCuerpo"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="toastZone" style="position:fixed;bottom:20px;right:20px;z-index:1100"></div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const IA = {{ ia|tojson }};
+const ES_ADMIN = {{ 'true' if is_admin_user else 'false' }};
+
+let contactos = [], sectores = [], sectorActivo = '';
+let redesActuales = [], contactoActual = null, previaFilas = [], previaMeta = {};
+let modalContacto, modalImportar, modalSectores, temporizadorDoc = null;
+
+document.addEventListener('DOMContentLoaded', () => {
+  modalContacto = new bootstrap.Modal(document.getElementById('modalContacto'));
+  modalImportar = new bootstrap.Modal(document.getElementById('modalImportar'));
+  modalSectores = new bootstrap.Modal(document.getElementById('modalSectores'));
+
+  const casilla = document.getElementById('usarIa');
+  if (!IA.disponible) {
+    casilla.checked = false; casilla.disabled = true;
+    document.getElementById('estadoIa').textContent = '— no disponible: ' + (IA.motivo || '');
+  } else {
+    document.getElementById('estadoIa').textContent = '(' + IA.modelo + ')';
+  }
+
+  cargarTodo().then(() => {
+    // Las entradas del menú lateral abren directamente la acción pedida.
+    const accion = new URLSearchParams(location.search).get('accion');
+    if (accion === 'nuevo')     abrirContacto(null);
+    if (accion === 'importar')  abrirImportacion();
+    if (accion === 'sectores')  abrirSectores();
+  });
+});
+
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c =>
+  ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+function aviso(mensaje, tipo = 'success') {
+  const caja = document.createElement('div');
+  caja.className = `alert alert-${tipo} shadow`;
+  caja.style.cssText = 'min-width:260px;max-width:420px;margin-bottom:8px';
+  caja.textContent = mensaje;
+  document.getElementById('toastZone').appendChild(caja);
+  setTimeout(() => caja.remove(), 5000);
+}
+
+async function pedir(url, opciones = {}) {
+  if (opciones.body && !(opciones.body instanceof FormData))
+    opciones.headers = Object.assign({'Content-Type': 'application/json'}, opciones.headers || {});
+  const r = await fetch(url, opciones);
+  return r.json();
+}
+
+// ——————————————————————————————————————————
+//  CARGA
+// ——————————————————————————————————————————
+async function cargarTodo() {
+  const [datosSectores, datosContactos] = await Promise.all([
+    pedir('/directorio/api/sectores'),
+    pedir('/directorio/api/contactos'),
+  ]);
+  sectores = datosSectores.sectores || [];
+  contactos = Array.isArray(datosContactos) ? datosContactos : [];
+  pintarSectores();
+  llenarSelectoresSector();
+  pintarTabla();
+  pintarEstadisticas();
+}
+
+function pintarEstadisticas() {
+  document.getElementById('stTotal').textContent = contactos.length;
+  document.getElementById('stSri').textContent = contactos.filter(c => c.sri_verified).length;
+  document.getElementById('stSectores').textContent = sectores.filter(s => s.active !== false).length;
+  document.getElementById('stInvalidos').textContent = contactos.filter(c => c.doc_valid === false).length;
+}
+
+function pintarSectores() {
+  const caja = document.getElementById('sectorPills');
+  const total = contactos.length;
+  let html = `<button class="sector-pill ${sectorActivo === '' ? 'active' : ''}"
+      style="${sectorActivo === '' ? 'background:#475569;border-color:#475569' : ''}"
+      onclick="filtrarSector('')">Todos <span class="sp-count">${total}</span></button>`;
+  html += sectores.filter(s => s.active !== false).map(s => `
+    <button class="sector-pill ${sectorActivo === s.id ? 'active' : ''}"
+        style="border-color:${esc(s.color)};${sectorActivo === s.id ? 'background:' + esc(s.color) : 'color:' + esc(s.color)}"
+        onclick="filtrarSector('${s.id}')">
+      ${esc(s.icon || '📁')} ${esc(s.name)} <span class="sp-count">${s.total || 0}</span>
+    </button>`).join('');
+  caja.innerHTML = html;
+}
+
+function filtrarSector(id) { sectorActivo = id; pintarSectores(); pintarTabla(); }
+
+function llenarSelectoresSector() {
+  const opciones = '<option value="">— Sin sector —</option>' +
+    sectores.filter(s => s.active !== false)
+            .map(s => `<option value="${s.id}">${esc(s.icon || '')} ${esc(s.name)}</option>`).join('');
+  document.getElementById('cSector').innerHTML = opciones;
+  document.getElementById('sectorImport').innerHTML = opciones;
+}
+
+function sectorDe(id) { return sectores.find(s => s.id === id); }
+
+// ——————————————————————————————————————————
+//  TABLA
+// ——————————————————————————————————————————
+function contactosFiltrados() {
+  const texto = document.getElementById('buscar').value.trim().toLowerCase();
+  const tipo  = document.getElementById('filtroTipo').value;
+  return contactos.filter(c => {
+    if (sectorActivo && c.sector_id !== sectorActivo) return false;
+    if (tipo && c.doc_type !== tipo) return false;
+    if (!texto) return true;
+    return [c.doc_number, c.first_name, c.last_name, c.business_name, c.trade_name,
+            c.email, c.mobile, c.landline, c.city]
+      .some(v => String(v || '').toLowerCase().includes(texto));
+  });
+}
+
+function nombreDe(c) {
+  return c.business_name || [c.last_name, c.first_name].filter(Boolean).join(' ') || '(sin nombre)';
+}
+
+function pintarTabla() {
+  const filas = contactosFiltrados();
+  const cuerpo = document.getElementById('tablaCuerpo');
+  document.getElementById('tablaVacia').style.display = filas.length ? 'none' : '';
+  cuerpo.innerHTML = filas.map(c => {
+    const sector = sectorDe(c.sector_id);
+    return `<tr>
+      <td>
+        <span class="badge-doc bd-${esc(c.doc_type || 'cedula')}">${esc(c.doc_type || '')}</span>
+        <div class="doc-chip">${esc(c.doc_number || '')}
+          ${c.doc_valid === false ? '<span class="chip-bad" title="El dígito verificador no cuadra">⚠</span>' : ''}
+        </div>
+      </td>
+      <td>
+        <div class="fw-semibold">${esc(nombreDe(c))}</div>
+        ${c.trade_name ? `<div class="small text-muted">${esc(c.trade_name)}</div>` : ''}
+      </td>
+      <td>${sector ? `<span class="sector-tag" style="background:${esc(sector.color)}">${esc(sector.icon || '')} ${esc(sector.name)}</span>` : '<span class="text-muted small">—</span>'}</td>
+      <td>${esc(c.mobile || '')}</td>
+      <td>${esc(c.landline || '')}</td>
+      <td>${esc(c.email || '')}</td>
+      <td>${esc(c.city || '')}</td>
+      <td>${c.sri_verified ? '<span class="chip-ok">✔</span>' : '<span class="text-muted">—</span>'}</td>
+      <td><button class="btn-xs btn-xs-edit" onclick="abrirContacto('${c.id}')">Abrir</button></td>
+    </tr>`;
+  }).join('');
+}
+
+// ——————————————————————————————————————————
+//  FICHA
+// ——————————————————————————————————————————
+function abrirContacto(id) {
+  contactoActual = id ? contactos.find(c => c.id === id) : null;
+  const c = contactoActual || {};
+  document.getElementById('tituloContacto').textContent =
+    id ? '📇 ' + nombreDe(c) : 'Nuevo registro';
+  document.getElementById('cId').value = id || '';
+  const valor = (campo, dato) => document.getElementById(campo).value = dato || '';
+  valor('cDocType', c.doc_type || 'cedula');
+  valor('cDocNumber', c.doc_number);
+  valor('cFirstName', c.first_name);
+  valor('cLastName', c.last_name);
+  valor('cBusinessName', c.business_name);
+  valor('cTradeName', c.trade_name);
+  valor('cMobile', c.mobile);
+  valor('cLandline', c.landline);
+  valor('cEmail', c.email);
+  valor('cWebsite', c.website);
+  valor('cWorkAddress', c.work_address);
+  valor('cHomeAddress', c.home_address);
+  valor('cCity', c.city);
+  valor('cProvince', c.province);
+  valor('cNotes', c.notes);
+  valor('cSector', c.sector_id || sectorActivo || '');
+  valor('cReason', '');
+  document.getElementById('docFeedback').innerHTML = '';
+
+  redesActuales = Array.isArray(c.socials) ? JSON.parse(JSON.stringify(c.socials)) : [];
+  pintarRedes();
+  pintarSri(c);
+
+  // El motivo sólo se exige al MODIFICAR: en el alta no hay valor anterior que
+  // justificar, el registro entero es el cambio.
+  document.getElementById('cajaMotivo').style.display = id ? '' : 'none';
+  document.getElementById('liBitacora').style.display = id ? '' : 'none';
+  document.getElementById('btnEliminar').style.display = (id && ES_ADMIN) ? '' : 'none';
+  document.querySelector('#modalContacto .nav-link').click();
+  modalContacto.show();
+}
+
+function pintarRedes() {
+  const REDES = ['Facebook', 'Instagram', 'LinkedIn', 'X', 'TikTok', 'YouTube', 'WhatsApp', 'Telegram', 'Web'];
+  const caja = document.getElementById('redesLista');
+  if (!redesActuales.length) {
+    caja.innerHTML = '<div class="text-muted small fst-italic">Sin redes registradas. Puedes agregar varias.</div>';
+    return;
+  }
+  caja.innerHTML = redesActuales.map((r, i) => `
+    <div class="social-row">
+      <select class="form-select form-select-sm" onchange="redesActuales[${i}].red = this.value">
+        ${REDES.map(n => `<option ${n === r.red ? 'selected' : ''}>${n}</option>`).join('')}
+      </select>
+      <input class="form-control form-control-sm" value="${esc(r.url || '')}"
+             placeholder="URL o usuario" oninput="redesActuales[${i}].url = this.value">
+      <button class="btn-xs btn-xs-del" onclick="redesActuales.splice(${i},1); pintarRedes()">✕</button>
+    </div>`).join('');
+}
+
+function agregarRed() { redesActuales.push({red: 'Facebook', url: ''}); pintarRedes(); }
+
+function pintarSri(c) {
+  const hayDatos = c && c.doc_type === 'ruc' && (c.sri_verified || (c.ruc_activities || []).length);
+  document.getElementById('sriVacio').style.display = hayDatos ? 'none' : '';
+  document.getElementById('sriPanel').style.display = hayDatos ? '' : 'none';
+  if (!hayDatos) return;
+  const texto = (campo, dato) => document.getElementById(campo).textContent = dato || '—';
+  texto('sriEstado', c.ruc_state);
+  texto('sriTipo', c.ruc_type);
+  texto('sriClase', c.ruc_class);
+  texto('sriContabilidad', c.ruc_obligado_contabilidad);
+  texto('sriInicio', c.ruc_start_date);
+  texto('sriCese', c.ruc_end_date);
+  document.getElementById('sriActividades').innerHTML =
+    (c.ruc_activities || []).map(a => `<li>${esc(a.descripcion || a)}
+      ${a.origen ? `<span class="text-muted small">(${esc(a.origen)})</span>` : ''}</li>`).join('')
+    || '<li class="text-muted">Sin actividades registradas</li>';
+  document.getElementById('sriEstablecimientos').innerHTML =
+    (c.ruc_establishments || []).map(e => `<li><strong>${esc(e.numero || '')}</strong>
+      ${esc(e.nombre || '')} — ${esc(e.direccion || '')}
+      <span class="text-muted small">${esc(e.estado || '')}</span></li>`).join('')
+    || '<li class="text-muted">Sin establecimientos registrados</li>';
+}
+
+// ——————————————————————————————————————————
+//  VALIDACIÓN DE DOCUMENTO + SRI
+// ——————————————————————————————————————————
+function programarValidacion() {
+  // Se espera a que el usuario deje de teclear: validar en cada pulsación
+  // dispararía una consulta al SRI por cada dígito.
+  clearTimeout(temporizadorDoc);
+  temporizadorDoc = setTimeout(() => validarDocumento(false), 700);
+}
+
+async function validarDocumento(consultarSri = null) {
+  const numero = document.getElementById('cDocNumber').value.trim();
+  const caja = document.getElementById('docFeedback');
+  if (!numero) { caja.innerHTML = ''; return; }
+  const tipo = document.getElementById('cDocType').value;
+  const pedirSri = consultarSri === null ? (tipo === 'ruc') : consultarSri;
+  caja.innerHTML = '<span class="text-muted">Verificando…</span>';
+
+  const r = await pedir('/directorio/api/validar-documento', {
+    method: 'POST',
+    body: JSON.stringify({doc_number: numero, doc_type: tipo,
+                          consultar_sri: pedirSri,
+                          excluir_id: document.getElementById('cId').value || null}),
+  });
+
+  let html = r.valido
+    ? `<span class="chip-ok">✔ ${esc(r.mensaje)}</span>`
+    : `<span class="chip-bad">✖ ${esc(r.mensaje)}</span>`;
+  if (r.tipo && r.tipo !== tipo) {
+    document.getElementById('cDocType').value = r.tipo;
+    html += ` <span class="text-muted small">(detectado como ${esc(r.tipo)})</span>`;
+  }
+  if (r.duplicado) {
+    html += `<div class="chip-bad mt-1">⛔ Ya existe: ${esc(r.duplicado.nombre)}.
+      <a href="#" onclick="modalContacto.hide(); setTimeout(()=>abrirContacto('${r.duplicado.id}'),300); return false">Abrir ese registro</a></div>`;
+  }
+  if (r.sri && !r.sri.ok && pedirSri) {
+    html += `<div class="text-warning small mt-1">⚠ ${esc(r.sri.error || 'El SRI no respondió')}</div>`;
+  }
+  if (r.campos) {
+    aplicarCamposSri(r.campos);
+    html += `<div class="chip-ok mt-1">✔ Datos traídos del SRI
+      (${(r.campos.ruc_activities || []).length} actividad(es))</div>`;
+  }
+  caja.innerHTML = html;
+}
+
+function aplicarCamposSri(campos) {
+  // Los datos del SRI no pisan lo que el usuario ya escribió a mano.
+  const rellenar = (campo, dato) => {
+    const el = document.getElementById(campo);
+    if (el && dato && !el.value.trim()) el.value = dato;
+  };
+  rellenar('cBusinessName', campos.business_name);
+  rellenar('cTradeName', campos.trade_name);
+  rellenar('cFirstName', campos.first_name);
+  rellenar('cLastName', campos.last_name);
+  rellenar('cWorkAddress', campos.work_address);
+  rellenar('cCity', campos.city);
+  rellenar('cProvince', campos.province);
+  contactoActual = Object.assign({}, contactoActual || {}, campos, {doc_type: 'ruc'});
+  pintarSri(contactoActual);
+}
+
+async function refrescarSri() {
+  const id = document.getElementById('cId').value;
+  if (!id) return;
+  const boton = document.getElementById('btnRefrescarSri');
+  boton.disabled = true; boton.textContent = 'Consultando…';
+  const r = await pedir(`/directorio/api/contactos/${id}/refrescar-sri`, {method: 'POST'});
+  boton.disabled = false; boton.textContent = '🔄 Volver a consultar al SRI';
+  if (!r.success) { aviso(r.error || 'No se pudo consultar al SRI', 'danger'); return; }
+  aviso(`Datos actualizados: ${r.actividades} actividad(es)`);
+  await cargarTodo();
+  abrirContacto(id);
+}
+
+// ——————————————————————————————————————————
+//  GUARDAR / ELIMINAR
+// ——————————————————————————————————————————
+function leerFormulario() {
+  const dato = campo => document.getElementById(campo).value.trim();
+  return {
+    doc_type: dato('cDocType'), doc_number: dato('cDocNumber'),
+    first_name: dato('cFirstName'), last_name: dato('cLastName'),
+    business_name: dato('cBusinessName'), trade_name: dato('cTradeName'),
+    mobile: dato('cMobile'), landline: dato('cLandline'), email: dato('cEmail'),
+    website: dato('cWebsite'), socials: redesActuales.filter(r => r.red && r.url),
+    work_address: dato('cWorkAddress'), home_address: dato('cHomeAddress'),
+    city: dato('cCity'), province: dato('cProvince'),
+    notes: dato('cNotes'), sector_id: dato('cSector') || null,
+  };
+}
+
+async function guardarContacto() {
+  const id = document.getElementById('cId').value;
+  const cuerpo = leerFormulario();
+  if (id) cuerpo.reason = document.getElementById('cReason').value.trim();
+
+  let r = await pedir(id ? `/directorio/api/contactos/${id}` : '/directorio/api/contactos',
+    {method: id ? 'PATCH' : 'POST', body: JSON.stringify(cuerpo)});
+
+  // Documento con dígito verificador incorrecto: se puede guardar igual, pero
+  // hay que confirmarlo. Hay archivos históricos con números incompletos.
+  if (!r.success && r.documento_invalido) {
+    if (!confirm(`${r.error}\n\n¿Guardar de todos modos con el número tal cual está?`)) return;
+    cuerpo.forzar_documento_invalido = true;
+    r = await pedir(id ? `/directorio/api/contactos/${id}` : '/directorio/api/contactos',
+      {method: id ? 'PATCH' : 'POST', body: JSON.stringify(cuerpo)});
+  }
+
+  if (!r.success) { aviso(r.error || 'No se pudo guardar', 'danger'); return; }
+  if (r.sin_cambios) { aviso(r.mensaje, 'info'); modalContacto.hide(); return; }
+  aviso(id ? `Guardado (${r.cambios} campo(s) modificado(s))` : 'Registro creado');
+  modalContacto.hide();
+  await cargarTodo();
+}
+
+async function eliminarContacto() {
+  const id = document.getElementById('cId').value;
+  if (!id) return;
+  const motivo = prompt('Motivo de la eliminación (queda en la bitácora):');
+  if (motivo === null) return;
+  const r = await pedir(`/directorio/api/contactos/${id}`,
+    {method: 'DELETE', body: JSON.stringify({reason: motivo})});
+  if (!r.success) { aviso(r.error || 'No se pudo eliminar', 'danger'); return; }
+  aviso('Registro eliminado');
+  modalContacto.hide();
+  await cargarTodo();
+}
+
+// ——————————————————————————————————————————
+//  BITÁCORA
+// ——————————————————————————————————————————
+async function cargarBitacora() {
+  const id = document.getElementById('cId').value;
+  const caja = document.getElementById('bitacoraLista');
+  if (!id) { caja.textContent = 'Guarda el registro para ver su historial.'; return; }
+  caja.textContent = 'Cargando…';
+  const filas = await pedir(`/directorio/api/contactos/${id}/bitacora`);
+  if (!filas.length) { caja.innerHTML = '<div class="text-muted">Sin movimientos registrados.</div>'; return; }
+
+  const ETIQUETA = {create: '🆕 Alta', update: '✏️ Modificación',
+                    delete: '🗑 Eliminación', import: '📥 Importación'};
+  caja.innerHTML = filas.map(f => `
+    <div class="audit-item">
+      <div class="ai-meta">
+        <strong>${ETIQUETA[f.action] || f.action}</strong> ·
+        ${esc(f.user_name || 'usuario')} ·
+        ${new Date(f.created_at).toLocaleString('es-EC')}
+      </div>
+      ${f.reason ? `<div class="ai-reason">«${esc(f.reason)}»</div>` : ''}
+      ${f.field ? `<div class="ai-change">
+        <strong>${esc(f.field_label || f.field)}:</strong>
+        <span class="ai-old">${esc(f.old_value || '(vacío)')}</span> →
+        <span class="ai-new">${esc(f.new_value || '(vacío)')}</span>
+      </div>` : ''}
+    </div>`).join('');
+}
+
+// ——————————————————————————————————————————
+//  IMPORTACIÓN
+// ——————————————————————————————————————————
+function abrirImportacion() {
+  volverAArchivo();
+  document.getElementById('sectorImport').value = sectorActivo || '';
+  modalImportar.show();
+}
+
+function volverAArchivo() {
+  document.getElementById('pasoArchivo').style.display = '';
+  document.getElementById('pasoPrevia').style.display = 'none';
+  document.getElementById('btnConfirmarImport').style.display = 'none';
+  document.getElementById('btnVolverArchivo').style.display = 'none';
+  document.getElementById('estadoAnalisis').textContent = '';
+  previaFilas = []; previaMeta = {};
+}
+
+async function analizarArchivo() {
+  const entrada = document.getElementById('archivoImport');
+  if (!entrada.files.length) { aviso('Elige un archivo primero', 'warning'); return; }
+  const estado = document.getElementById('estadoAnalisis');
+  estado.textContent = 'Leyendo y clasificando… esto puede tardar en archivos grandes.';
+
+  const formulario = new FormData();
+  formulario.append('file', entrada.files[0]);
+  formulario.append('usar_ia', document.getElementById('usarIa').checked ? '1' : '0');
+  const sector = document.getElementById('sectorImport').value;
+  if (sector) formulario.append('sector_id', sector);
+
+  const r = await pedir('/directorio/api/importar/analizar', {method: 'POST', body: formulario});
+  estado.textContent = '';
+  if (!r.success) { aviso(r.error || 'No se pudo analizar el archivo', 'danger'); return; }
+
+  previaFilas = r.filas || [];
+  previaMeta = {archivo: r.archivo, tipo: r.tipo, metodo: r.metodo};
+  pintarPrevia(r);
+}
+
+function pintarPrevia(r) {
+  document.getElementById('pasoArchivo').style.display = 'none';
+  document.getElementById('pasoPrevia').style.display = '';
+  document.getElementById('btnConfirmarImport').style.display = '';
+  document.getElementById('btnVolverArchivo').style.display = '';
+
+  const resumen = r.resumen || {};
+  document.getElementById('resumenPrevia').innerHTML =
+    `<strong>${resumen.total || 0}</strong> registro(s) leído(s) del ${esc(r.tipo)}
+     (clasificados ${r.metodo === 'ia' ? 'con IA' : 'por las cabeceras del archivo'}) ·
+     <span class="text-success fw-bold">${resumen.nuevo || 0} nuevos</span> ·
+     <span class="text-danger fw-bold">${resumen.duplicado || 0} duplicados</span> ·
+     <span class="text-warning fw-bold">${resumen.documento_invalido || 0} con documento inválido</span> ·
+     <span class="text-muted">${resumen.incompleto || 0} incompletos</span>
+     <div class="small mt-1">Sólo se guardarán las filas marcadas. Los duplicados vienen desmarcados.</div>`;
+
+  document.getElementById('avisosPrevia').innerHTML = (r.avisos || []).length
+    ? `<div class="alert alert-warning py-2 small">${r.avisos.map(esc).join('<br>')}</div>` : '';
+
+  document.getElementById('previaCuerpo').innerHTML = previaFilas.map(f => {
+    const reg = f.registro || {};
+    const marcable = f.estado === 'nuevo' || f.estado === 'documento_invalido';
+    return `<tr class="prev-row-${f.estado}">
+      <td><input type="checkbox" class="chk-previa" data-indice="${f.indice}"
+                 ${f.estado === 'nuevo' ? 'checked' : ''} ${marcable ? '' : 'disabled'}></td>
+      <td><span class="estado-badge eb-${f.estado}">${esc(f.estado.replace('_', ' '))}</span>
+          ${f.confianza === 'baja' ? '<div class="small text-warning">revisar</div>' : ''}</td>
+      <td class="doc-chip">${esc(reg.doc_number || '—')}</td>
+      <td>${esc(f.nombre)}</td>
+      <td>${esc(reg.mobile || '')}</td>
+      <td>${esc(reg.email || '')}</td>
+      <td class="small text-muted">${esc(f.detalle || '')}</td>
+    </tr>`;
+  }).join('');
+}
+
+function marcarTodos(marcado) {
+  document.querySelectorAll('.chk-previa:not(:disabled)').forEach(c => c.checked = marcado);
+}
+
+async function confirmarImportacion() {
+  const indices = [...document.querySelectorAll('.chk-previa:checked')]
+    .map(c => parseInt(c.dataset.indice, 10));
+  if (!indices.length) { aviso('No marcaste ninguna fila', 'warning'); return; }
+
+  const boton = document.getElementById('btnConfirmarImport');
+  boton.disabled = true; boton.textContent = 'Guardando…';
+  const r = await pedir('/directorio/api/importar/confirmar', {
+    method: 'POST',
+    body: JSON.stringify({
+      filas: indices.map(i => previaFilas.find(f => f.indice === i).registro),
+      archivo: previaMeta.archivo, tipo: previaMeta.tipo,
+      consultar_sri: document.getElementById('consultarSri').checked,
+      reason: `Importación desde ${previaMeta.archivo}`,
+    }),
+  });
+  boton.disabled = false; boton.textContent = '💾 Guardar seleccionados';
+  if (!r.success) { aviso(r.error || 'No se pudo importar', 'danger'); return; }
+
+  aviso(`${r.insertados} registro(s) guardado(s)` +
+        (r.total_rechazados ? `, ${r.total_rechazados} rechazado(s)` : ''));
+  if (r.total_rechazados) {
+    console.table(r.rechazados);
+    aviso('Algunas filas se rechazaron por duplicado o falta de datos. Detalle en la consola.', 'warning');
+  }
+  modalImportar.hide();
+  await cargarTodo();
+}
+
+// ——————————————————————————————————————————
+//  SECTORES
+// ——————————————————————————————————————————
+function abrirSectores() { pintarTablaSectores(); modalSectores.show(); }
+
+function pintarTablaSectores() {
+  document.getElementById('sectoresCuerpo').innerHTML = sectores.map(s => `
+    <tr>
+      <td><span class="sector-tag" style="background:${esc(s.color)}">${esc(s.icon || '')} ${esc(s.name)}</span>
+          ${s.active === false ? '<span class="text-muted small ms-1">(inactivo)</span>' : ''}</td>
+      <td class="small text-muted">${esc(s.description || '')}</td>
+      <td>${s.total || 0}</td>
+      <td>
+        <button class="btn-xs btn-xs-edit" onclick="alternarSector('${s.id}', ${s.active === false})">
+          ${s.active === false ? 'Activar' : 'Desactivar'}
+        </button>
+        ${ES_ADMIN ? `<button class="btn-xs btn-xs-del" onclick="borrarSector('${s.id}')">Eliminar</button>` : ''}
+      </td>
+    </tr>`).join('');
+}
+
+async function crearSector() {
+  const nombre = document.getElementById('sNombre').value.trim();
+  if (!nombre) { aviso('Escribe el nombre del sector', 'warning'); return; }
+  const r = await pedir('/directorio/api/sectores', {
+    method: 'POST',
+    body: JSON.stringify({
+      name: nombre,
+      description: document.getElementById('sDescripcion').value.trim(),
+      icon: document.getElementById('sIcono').value.trim(),
+      color: document.getElementById('sColor').value,
+    }),
+  });
+  if (!r.success) { aviso(r.error || 'No se pudo crear', 'danger'); return; }
+  document.getElementById('sNombre').value = '';
+  document.getElementById('sDescripcion').value = '';
+  await cargarTodo();
+  pintarTablaSectores();
+  aviso('Sector creado');
+}
+
+async function alternarSector(id, activar) {
+  const r = await pedir(`/directorio/api/sectores/${id}`,
+    {method: 'PATCH', body: JSON.stringify({active: activar})});
+  if (!r.success) { aviso(r.error || 'No se pudo actualizar', 'danger'); return; }
+  await cargarTodo();
+  pintarTablaSectores();
+}
+
+async function borrarSector(id) {
+  if (!confirm('¿Eliminar este sector?')) return;
+  const r = await pedir(`/directorio/api/sectores/${id}`, {method: 'DELETE'});
+  if (!r.success) { aviso(r.error || 'No se pudo eliminar', 'danger'); return; }
+  await cargarTodo();
+  pintarTablaSectores();
+  aviso('Sector eliminado');
+}
+
+function exportar() {
+  const url = '/directorio/api/exportar' + (sectorActivo ? `?sector_id=${sectorActivo}` : '');
+  window.location = url;
+}
+</script>
+{% endblock %}

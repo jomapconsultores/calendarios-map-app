@@ -1,7 +1,10 @@
 {% extends "base.html" %}
-{% block title %}Base de datos - calendarios-map{% endblock %}
-{% block page_title %}Base de datos{% endblock %}
-{% block page_sub %}<p class="page-sub">Administración de tablas del sistema</p>{% endblock %}
+{# Se llama «Catálogos» y no «Base de datos» para no confundirlo con el módulo
+   Directorio, que es la base de datos de clientes. Esto de aquí son las tablas
+   internas del sistema. #}
+{% block title %}Catálogos - calendarios-map{% endblock %}
+{% block page_title %}Catálogos del sistema{% endblock %}
+{% block page_sub %}<p class="page-sub">Administración directa de las tablas internas</p>{% endblock %}
 
 {% block content %}
 

@@ -2,14 +2,14 @@
   "id": "/",
   "name": "calendarios-map",
   "short_name": "Calendarios",
-  "description": "Agenda y calendario de citas MAP: eventos recurrentes, varias fechas, sincronizacion con Google Calendar y acceso biometrico.",
+  "description": "Sistema MAP: actividades sincronizadas con Microsoft To-Do, agenda de citas con Google Calendar, cronograma Gantt asistido y directorio de clientes con verificacion en el SRI.",
   "lang": "es",
   "dir": "ltr",
-  "start_url": "/",
+  "start_url": "/dashboard",
   "scope": "/",
   "display": "standalone",
   "display_override": ["standalone", "minimal-ui"],
-  "orientation": "portrait-primary",
+  "orientation": "any",
   "categories": ["productivity", "business", "utilities"],
   "prefer_related_applications": false,
   "background_color": "#4f46e5",
@@ -18,5 +18,35 @@
     { "src": "/static/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
     { "src": "/static/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
     { "src": "/static/icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    {
+      "name": "Actividades pendientes",
+      "short_name": "Actividades",
+      "description": "Pendientes sincronizados con Microsoft To-Do",
+      "url": "/todo",
+      "icons": [{ "src": "/static/icons/icon-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "Cronograma",
+      "short_name": "Cronograma",
+      "description": "Diagrama de Gantt por actividad",
+      "url": "/cronograma",
+      "icons": [{ "src": "/static/icons/icon-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "Directorio de clientes",
+      "short_name": "Directorio",
+      "description": "Buscar por nombre, cedula o RUC",
+      "url": "/directorio",
+      "icons": [{ "src": "/static/icons/icon-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "Agenda de citas",
+      "short_name": "Calendario",
+      "description": "Citas del mes",
+      "url": "/calendar",
+      "icons": [{ "src": "/static/icons/icon-192.png", "sizes": "192x192" }]
+    }
   ]
 }

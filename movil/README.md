@@ -13,6 +13,40 @@ Esta carpeta añade lo que la PWA no puede dar: un **paquete firmado** (`.apk` /
 la misma aplicación desplegada, así que **no hay dos versiones que mantener**:
 una corrección en el servidor llega al teléfono sin volver a publicar.
 
+## Las dos vías, y cuál usar
+
+| | PWA (recomendada) | Paquete de tienda |
+|---|---|---|
+| Cómo se instala | Se abre la web y se acepta el aviso «Instalar» (Android) o *Compartir → Añadir a pantalla de inicio* (iPhone) | Google Play / App Store |
+| Actualizaciones | Inmediatas | Inmediatas también (el contenedor abre la web) |
+| Notificaciones | Android sí; **iOS sólo desde iOS 16.4 y sólo si está instalada** en la pantalla de inicio | Igual que la PWA |
+| Coste | 0 | 25 USD (Play, pago único) + 99 USD/año (Apple) |
+| Cuándo hace falta | Uso interno del estudio | Publicar en las tiendas |
+
+Para el equipo, la PWA basta. El paquete es para cuando quieras estar en las tiendas.
+
+## Lo que se hizo para que funcione bien en el teléfono
+
+Del lado de la web (aplica a las dos vías, sin recompilar nada):
+
+- `static/css/movil.css` — muesca y barra de gestos del iPhone (`env(safe-area-*)`),
+  campos de 16 px para que Safari no amplíe la pantalla al escribir, botones de
+  44 px para el dedo, tablas anchas recortadas a lo esencial, Gantt con la columna
+  de nombres estrechada y ventanas emergentes a pantalla completa.
+- `static/js/instalar.js` — botón real de instalación en Android
+  (`beforeinstallprompt`) e instrucciones del gesto en iOS, donde Apple no
+  ofrece esa posibilidad. No insiste: si se descarta, no vuelve en 30 días.
+- `manifest.webmanifest` — accesos directos a Actividades, Cronograma,
+  Directorio y Calendario (se ven al mantener pulsado el icono).
+- `sw.js` — caché `calmap-v2`. **Al desplegar un cambio de CSS o JS hay que subir
+  esa versión**, o el teléfono seguirá sirviendo los archivos guardados.
+
+> **Conectar Google Calendar y Microsoft To-Do desde el teléfono no funciona, y
+> es a propósito.** Google rechaza su pantalla de acceso dentro de un WebView
+> incrustado (`disallowed_useragent`). Es una tarea de administrador que se hace
+> una sola vez desde un navegador de escritorio; el uso diario en el teléfono no
+> la necesita.
+
 ## Requisitos
 
 | | Android | iOS |

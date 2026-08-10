@@ -66,6 +66,10 @@ except Exception as _wa_err:  # pragma: no cover
 
 from .feriados import feriados as _feriados_ec, feriados_rango as _feriados_rango
 from . import browser_sync as _browser_sync
+# Módulos propios. No importan nada de este archivo (reciben los ayudantes que
+# necesitan como parámetro), así que no se forma ciclo de importación.
+from .directorio import registrar_directorio
+from .cronograma import registrar_cronograma
 
 load_dotenv()
 os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
@@ -137,10 +141,16 @@ class User(UserMixin):
         raw = d.get('modules', 'calendar,planning') or 'calendar,planning'
         self.modules = [m.strip() for m in raw.split(',') if m.strip()]
 
+# Módulos del sistema, en el orden en que se presentan al usuario: primero lo
+# que se usa a diario (actividades y agenda), después lo que se planifica, y al
+# final los datos maestros. Este orden es el que siguen el menú lateral y la
+# pantalla de roles, para que el usuario encuentre lo mismo en los dos sitios.
 ALL_MODULES = [
-    ('calendar',  '📅 Calendario'),
-    ('planning',  '📋 Planificación'),
-    ('todo',      '✅ To-Do externo (Microsoft)'),
+    ('todo',        '✅ Actividades (To-Do)'),
+    ('planning',    '📋 Proyectos y tareas'),
+    ('calendar',    '📅 Calendario de citas'),
+    ('cronograma',  '📊 Cronograma (Gantt)'),
+    ('directorio',  '🗂️ Directorio de clientes'),
 ]
 
 # Niveles de rol (clasificación de negocio). Es una etiqueta/agrupación: el
@@ -599,6 +609,47 @@ def get_all_ms_tokens(app):
     return out
 
 
+# ============================================================
+#  DESTINO POR DEFECTO EN MICROSOFT TO-DO
+#  Sin esto la sincronización iba en un solo sentido de hecho: lo que se creaba
+#  en To-Do bajaba al sistema, pero lo que se creaba en el sistema sólo subía a
+#  To-Do si alguien había elegido a mano una cuenta y una lista. Fijando un
+#  destino por defecto, toda tarea nacida en el sistema aparece también en To-Do.
+# ============================================================
+_todo_target_cache = TTLCache(ttl=60)
+
+
+def get_todo_default_target(app):
+    """{'email', 'list_id', 'list_name'} o None si aún no se ha configurado."""
+    val, hit = _todo_target_cache.get('target')
+    if hit:
+        return val
+    destino = None
+    try:
+        filas = app.supabase.get('app_config', {'key': 'todo_default_target'}, select='value')
+        if filas and filas[0].get('value'):
+            destino = json.loads(filas[0]['value'])
+    except Exception as e:
+        print(f'[todo] no se pudo leer el destino por defecto: {e}')
+    _todo_target_cache.set('target', destino)
+    return destino
+
+
+def set_todo_default_target(app, email, list_id, list_name=''):
+    """Guarda (o borra, con email vacío) la lista de To-Do a la que van las
+    tareas creadas en el sistema."""
+    payload = (json.dumps({'email': email, 'list_id': list_id, 'list_name': list_name})
+               if email and list_id else '')
+    filas = app.supabase.get('app_config', {'key': 'todo_default_target'}, select='id')
+    if filas:
+        ok = app.supabase.update('app_config', filas[0]['id'], {'value': payload})
+    else:
+        ok = bool(app.supabase.insert('app_config',
+                                      {'key': 'todo_default_target', 'value': payload}))
+    _todo_target_cache.invalidate('target')
+    return ok
+
+
 def _parse_iso_dt(s):
     """Parsea una fecha ISO-8601 a datetime UTC consciente; None si falla."""
     if not s: return None
@@ -987,7 +1038,262 @@ def save_google_creds(app, creds):
     if not ok:
         print(f'[save_google_creds] fallo al guardar credenciales de Google para {GOOGLE_ACCOUNT_EMAIL}')
     _google_cache.invalidate_prefix('google_status_')  # bust cache on reconnect
+    if ok:
+        # Reconexión manual recién hecha: se limpia el estado de avería y se
+        # suben las citas que quedaron sin evento mientras estuvo caído.
+        _guardar_estado_google(app, {'estado': 'ok', 'error': None, 'notificado_en': None})
+        try:
+            resincronizar_citas_google(app, creds)
+        except Exception as e:
+            print(f'[google] resincronización tras reconectar: {e}')
     return ok
+
+
+# ============================================================
+#  RECONEXIÓN AUTOMÁTICA CON GOOGLE CALENDAR
+#
+#  El refresco del token ya existía, pero era PASIVO: sólo ocurría si alguien
+#  entraba a una pantalla que consultara el calendario. Eso deja dos agujeros:
+#
+#    1. Un token que nadie usa durante meses lo revoca Google por inactividad, y
+#       nos enterábamos el día que hacía falta agendar.
+#    2. Un corte de red momentáneo se trataba igual que una revocación real: la
+#       aplicación decía «Google desconectado» y pedía reconectar a mano cuando
+#       en realidad no había pasado nada.
+#
+#  Este bloque separa la avería transitoria (se reintenta sola) de la permanente
+#  (hace falta que una persona vuelva a autorizar), mantiene el token vivo por su
+#  cuenta, avisa por notificación cuando de verdad hay que intervenir, y al
+#  recuperar la conexión sube solo las citas que se quedaron sin sincronizar.
+# ============================================================
+GOOGLE_HEALTH_KEY = 'google_health'
+_google_health_cache = TTLCache(ttl=20)
+
+
+def _leer_estado_google(app):
+    """{'estado': 'ok'|'reauth'|'transitorio', 'error', 'notificado_en', 'ultimo_ok'}"""
+    val, hit = _google_health_cache.get(GOOGLE_HEALTH_KEY)
+    if hit:
+        return val
+    estado = {'estado': 'ok', 'error': None, 'notificado_en': None, 'ultimo_ok': None}
+    try:
+        filas = app.supabase.get('app_config', {'key': GOOGLE_HEALTH_KEY}, select='value')
+        if filas and filas[0].get('value'):
+            estado.update(json.loads(filas[0]['value']))
+    except Exception:
+        pass
+    _google_health_cache.set(GOOGLE_HEALTH_KEY, estado)
+    return estado
+
+
+def _guardar_estado_google(app, cambios):
+    """Persiste sólo cuando algo cambia de verdad. Se escribe en app_config y no
+    en memoria porque el aviso al administrador no debe repetirse una vez por
+    cada worker de gunicorn."""
+    actual = _leer_estado_google(app)
+    nuevo = dict(actual)
+    nuevo.update(cambios)
+    if nuevo == actual:
+        return
+    payload = json.dumps(nuevo)
+    try:
+        filas = app.supabase.get('app_config', {'key': GOOGLE_HEALTH_KEY}, select='id')
+        if filas:
+            app.supabase.update('app_config', filas[0]['id'], {'value': payload})
+        else:
+            app.supabase.insert('app_config', {'key': GOOGLE_HEALTH_KEY, 'value': payload})
+    except Exception as e:
+        print(f'[google] no se pudo guardar el estado: {e}')
+    _google_health_cache.set(GOOGLE_HEALTH_KEY, nuevo)
+
+
+def _es_avería_permanente(err):
+    """True si el fallo exige que una persona vuelva a autorizar la cuenta.
+
+    Un `RefreshError` de Google, o cualquier error cuyo texto traiga
+    `invalid_grant`, significa que el permiso ya no existe: reintentarlo mil
+    veces no lo va a arreglar. Todo lo demás (DNS, timeout, 5xx de Google) es
+    pasajero y sí merece reintento."""
+    if isinstance(err, google.auth.exceptions.RefreshError):
+        return True
+    return _is_invalid_grant(err)
+
+
+def refrescar_token_google(app, intentos=3, espera_inicial=2):
+    """Renueva el token reintentando los fallos pasajeros.
+
+    Devuelve (creds|None, estado, mensaje_error). `estado` es 'ok', 'reauth'
+    (hace falta reconectar a mano) o 'transitorio' (falló, pero se reintentará)."""
+    try:
+        tokens = app.supabase.get('google_tokens', {'email': GOOGLE_ACCOUNT_EMAIL})
+    except Exception as e:
+        return None, 'transitorio', f'No se pudo leer el token guardado: {str(e)[:120]}'
+    if not tokens:
+        return None, 'reauth', 'No hay ninguna cuenta de Google conectada'
+    fila = tokens[0]
+    if not fila.get('refresh_token'):
+        return None, 'reauth', 'La cuenta está conectada sin permiso de refresco'
+
+    ultimo_error = ''
+    for intento in range(1, intentos + 1):
+        try:
+            from google.auth.transport.requests import Request
+            creds = Credentials(
+                token=fila.get('token'), refresh_token=fila.get('refresh_token'),
+                token_uri='https://oauth2.googleapis.com/token',
+                client_id=app.config['GOOGLE_CLIENT_ID'],
+                client_secret=app.config['GOOGLE_CLIENT_SECRET'],
+                scopes=GOOGLE_SCOPES)
+            creds.refresh(Request())
+            _save_token_fields(app, fila['id'], creds)
+            _google_cache.invalidate_prefix('google_status_')
+            return creds, 'ok', None
+        except Exception as e:
+            ultimo_error = str(e)[:200]
+            if _es_avería_permanente(e):
+                return None, 'reauth', ultimo_error
+            if intento < intentos:
+                time.sleep(espera_inicial * intento)   # 2 s, 4 s, 6 s…
+    return None, 'transitorio', ultimo_error
+
+
+def resincronizar_citas_google(app, creds, limite_segundos=60):
+    """Sube a Google las citas confirmadas que se quedaron sin evento.
+
+    Mientras Google está caído, aprobar una cita la guarda en el sistema pero no
+    crea el evento. Sin este paso esas citas quedaban invisibles en el calendario
+    para siempre, salvo que un administrador se acordara de pulsar el botón de
+    sincronizar. Ahora se hace solo en cuanto vuelve la conexión."""
+    if not creds:
+        return {'subidas': 0, 'errores': 0, 'pendientes': 0}
+    try:
+        citas = app.supabase.get('appointments',
+            select='id,title,encargado,tema,client_name,start_time,end_time,calendar_id,'
+                   'invitados,direccion,ciudad,lugar,mapa,notes,meeting_link,status,'
+                   'google_event_id') or []
+    except Exception as e:
+        print(f'[google] no se pudieron leer las citas: {e}')
+        return {'subidas': 0, 'errores': 0, 'pendientes': 0}
+
+    pendientes = [c for c in citas
+                  if c.get('status') == 'confirmed' and not c.get('google_event_id')]
+    if not pendientes:
+        return {'subidas': 0, 'errores': 0, 'pendientes': 0}
+
+    email_map, gcal_id_map = _make_cal_maps(_get_calendar_config(app))
+    service = build('calendar', 'v3', credentials=creds)
+    limite = time.monotonic() + limite_segundos
+    subidas, errores = 0, 0
+
+    for cita in pendientes:
+        if time.monotonic() > limite:
+            break
+        gcal_id = gcal_id_map.get(cita.get('calendar_id'), 'primary')
+        try:
+            # Puede que el evento sí se creara y sólo se perdiera el id: se busca
+            # antes de insertar para no duplicar la cita en el calendario.
+            existente = service.events().list(
+                calendarId=gcal_id, timeMin=cita['start_time'], timeMax=cita['end_time'],
+                q=cita.get('title') or '', maxResults=1).execute()
+            if existente.get('items'):
+                app.supabase.update('appointments', cita['id'], {
+                    'google_event_id': existente['items'][0]['id'], 'google_cal_id': gcal_id})
+                continue
+            evento = _build_google_event(cita, _build_attendees(cita, email_map))
+            creado = service.events().insert(calendarId=gcal_id, body=evento,
+                                             sendUpdates='all').execute()
+            app.supabase.update('appointments', cita['id'], {
+                'google_event_id': creado.get('id'), 'google_cal_id': gcal_id})
+            subidas += 1
+        except Exception as e:
+            if _es_avería_permanente(e):
+                break        # se volvió a caer: lo retoma el siguiente ciclo
+            errores += 1
+    if subidas:
+        print(f'[google] resincronizadas {subidas} cita(s) pendientes')
+    return {'subidas': subidas, 'errores': errores, 'pendientes': len(pendientes)}
+
+
+def _avisar_reconexion_google(app, mensaje):
+    """Notifica a los administradores UNA vez por avería, no en cada ciclo."""
+    estado = _leer_estado_google(app)
+    if estado.get('notificado_en'):
+        return 0
+    enviados = 0
+    try:
+        for admin in (app.supabase.get('users', {'role': 'admin'}, select='id') or []):
+            enviados += send_push_to_user(
+                app, admin['id'],
+                '⚠️ Google Calendar necesita reconexión',
+                'El permiso caducó o fue revocado. Las citas se aprueban igual, '
+                'pero no llegan al calendario hasta reconectar.',
+                '/auth/google')
+    except Exception as e:
+        print(f'[google] no se pudo avisar a los administradores: {e}')
+    _guardar_estado_google(app, {
+        'estado': 'reauth', 'error': mensaje,
+        'notificado_en': datetime.now(timezone.utc).isoformat()})
+    return enviados
+
+
+def google_autoreconectar(app):
+    """Un ciclo completo: refrescar, y si vuelve la conexión, poner al día.
+
+    Es lo que llaman el hilo de fondo y la ruta de cron."""
+    creds, estado, error = refrescar_token_google(app)
+    previo = _leer_estado_google(app).get('estado')
+
+    if estado == 'ok':
+        _guardar_estado_google(app, {
+            'estado': 'ok', 'error': None, 'notificado_en': None,
+            'ultimo_ok': datetime.now(timezone.utc).isoformat()})
+        resultado = resincronizar_citas_google(app, creds)
+        if previo != 'ok':
+            print('[google] conexión recuperada automáticamente')
+        return {'success': True, 'estado': 'ok', 'recuperado': previo != 'ok', **resultado}
+
+    if estado == 'reauth':
+        avisados = _avisar_reconexion_google(app, error)
+        return {'success': False, 'estado': 'reauth', 'error': error, 'avisados': avisados}
+
+    # Transitorio: no se toca `notificado_en` ni se molesta a nadie; el próximo
+    # ciclo lo reintenta. Marcarlo como avería aquí sería mentir sobre el estado.
+    _guardar_estado_google(app, {'estado': 'transitorio', 'error': error})
+    return {'success': False, 'estado': 'transitorio', 'error': error}
+
+
+def start_google_autoheal(app, interval_min=60):
+    """Mantiene vivo el token de Google en segundo plano.
+
+    Mismo patrón que el autosync de To-Do: con gunicorn sólo un worker toma el
+    flock y agenda; en Windows (sin fcntl) no arranca y queda el cron externo o
+    el botón manual."""
+    try:
+        import fcntl
+    except Exception:
+        print('[google-autoheal] fcntl no disponible (dev local): scheduler desactivado')
+        return
+    try:
+        ruta = os.path.join(tempfile.gettempdir(), 'google_autoheal.lock')
+        archivo = open(ruta, 'w')
+        fcntl.flock(archivo, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        app._google_autoheal_lock = archivo
+    except Exception:
+        return          # otro worker ya lo tiene
+
+    def _bucle():
+        # Primer ciclo a los dos minutos: da tiempo a que el despliegue termine
+        # de levantar antes de salir a la red.
+        time.sleep(120)
+        while True:
+            try:
+                google_autoreconectar(app)
+            except Exception as e:
+                print(f'[google-autoheal] {e}')
+            time.sleep(interval_min * 60)
+
+    threading.Thread(target=_bucle, name='google-autoheal', daemon=True).start()
+    print(f'[google-autoheal] activo (cada {interval_min} min)')
 
 
 # ============================================================
@@ -1611,7 +1917,17 @@ def create_app():
                 active_modules = get_active_role_grants(app, current_user.id)['modules'] if not is_admin() else [m[0] for m in ALL_MODULES]
             except Exception:
                 pass
+        # Estado de la reconexión automática: permite que el aviso distinga un
+        # corte pasajero (se arregla solo) de una revocación real (hace falta
+        # que una persona vuelva a autorizar).
+        google_health = {'estado': 'ok'}
+        if needs_reauth and app.supabase:
+            try:
+                google_health = _leer_estado_google(app)
+            except Exception:
+                pass
         return {'google_connected_global': connected, 'google_needs_reauth': needs_reauth,
+                'google_health': google_health,
                 'user_roles_list': user_roles_list, 'active_role_id': active_role_id,
                 'active_modules': active_modules}
 
@@ -1621,6 +1937,19 @@ def create_app():
     @app.route('/')
     def home():
         return redirect('/dashboard') if current_user.is_authenticated else render_template('index.html')
+
+    @app.before_request
+    def _sesion_deslizante():
+        """Marca la sesión como permanente para que Flask le aplique el plazo de
+        inactividad de config.py (PERMANENT_SESSION_LIFETIME = 20 min).
+
+        Sin esto la constante se ignora: Flask solo reemite la cookie —y con
+        ella renueva la marca de tiempo— cuando la sesión es permanente. Cubre
+        de una vez las tres puertas de entrada (contraseña, biometría y rostro),
+        en lugar de repetirlo en cada `login_user`.
+        """
+        if current_user.is_authenticated and not session.permanent:
+            session.permanent = True
 
     @app.before_request
     def _force_password_change():
@@ -1943,7 +2272,12 @@ def create_app():
     @app.route('/logout')
     @login_required
     def logout():
+        # logout_user() solo quita las claves de flask_login; el resto de la
+        # sesión (estado de OAuth, banderas de interfaz, must_change_password)
+        # seguía viajando en la cookie. Se vacía entera para no dejar nada del
+        # usuario anterior en el dispositivo.
         logout_user()
+        session.clear()
         return redirect('/')
 
     @app.route('/profile', methods=['GET', 'POST'])
@@ -3350,7 +3684,7 @@ def create_app():
         ms_connected = bool(get_ms_token(app))
         return render_template('planning.html', ms_connected=ms_connected,
                                is_admin_user=is_admin(), scope='planning',
-                               page_title='Planificación', page_sub='Proyectos y tareas internas del equipo')
+                               page_title='Proyectos', page_sub='Tareas internas del equipo')
 
     @app.route('/todo')
     @login_required
@@ -3361,7 +3695,8 @@ def create_app():
         ms_connected = bool(get_ms_token(app))
         return render_template('planning.html', ms_connected=ms_connected,
                                is_admin_user=is_admin(), scope='todo',
-                               page_title='To-Do externo', page_sub='Tareas sincronizadas desde Microsoft To-Do')
+                               page_title='Actividades',
+                               page_sub='Pendientes sincronizados en ambos sentidos con Microsoft To-Do')
 
     @app.route('/planning/api/projects', methods=['GET'])
     @login_required
@@ -3559,6 +3894,70 @@ def create_app():
         except Exception:
             return jsonify([])
 
+    @app.route('/planning/api/todo-target', methods=['GET', 'POST'])
+    @login_required
+    def planning_todo_target():
+        """Lista de Microsoft To-Do a la que se envían las tareas creadas en el
+        sistema. Es lo que hace que la sincronización sea de ida y vuelta sin que
+        nadie tenga que elegir cuenta y lista en cada tarea."""
+        if request.method == 'GET':
+            return jsonify({'target': get_todo_default_target(app),
+                            'puede_configurar': is_admin()})
+        if not is_admin():
+            return jsonify({'success': False, 'error': 'Sólo un administrador puede fijar la lista por defecto'}), 403
+        cuerpo = request.get_json() or {}
+        email   = _sanitize(cuerpo.get('email'), 200)
+        list_id = _sanitize(cuerpo.get('list_id'), 300)
+        if email and not app.supabase.get('ms_tokens', {'email': email}, select='id'):
+            return jsonify({'success': False, 'error': 'Esa cuenta de Microsoft no está conectada'})
+        ok = set_todo_default_target(app, email, list_id, _sanitize(cuerpo.get('list_name'), 200))
+        return jsonify({'success': ok, 'target': get_todo_default_target(app)})
+
+    @app.route('/planning/api/push-pending-to-todo', methods=['POST'])
+    @login_required
+    def planning_push_pending():
+        """Sube a Microsoft To-Do las tareas del sistema que todavía no están allá.
+
+        Fijar la lista por defecto sólo afecta a las tareas NUEVAS. Sin esto, todo
+        lo creado en el sistema antes de configurarla se quedaba abajo para
+        siempre, y la promesa de que ambas caras muestran lo mismo era falsa para
+        el histórico. Esta ruta hace ese arrastre una vez."""
+        if not is_admin():
+            return jsonify({'success': False, 'error': 'Solo admin'}), 403
+        destino = get_todo_default_target(app)
+        if not (destino and destino.get('email') and destino.get('list_id')):
+            return jsonify({'success': False,
+                            'error': 'Primero elige la lista de To-Do por defecto.'})
+
+        cuerpo = request.get_json(silent=True) or {}
+        incluir_completadas = bool(cuerpo.get('incluir_completadas'))
+        pendientes = [t for t in (app.supabase.get('tasks', select='*') or [])
+                      if not t.get('ms_email') and not t.get('source_id')
+                      and (incluir_completadas or t.get('status') != 'done')]
+
+        import time as _time
+        limite = _time.monotonic() + 90       # mismo tope que el resto de lotes
+        subidas, errores, parcial = 0, 0, False
+        for tarea in pendientes:
+            if _time.monotonic() > limite:
+                parcial = True
+                break
+            tarea['ms_email']   = destino['email']
+            tarea['ms_list_id'] = destino['list_id']
+            ok, nuevo_id = push_task_to_ms(app, tarea)
+            if ok and nuevo_id:
+                app.supabase.update('tasks', tarea['id'], {
+                    'ms_email':   destino['email'],
+                    'ms_list_id': destino['list_id'],
+                    'source_id':  nuevo_id,
+                    'source':     'ms_todo',
+                    'last_synced_at': datetime.now(timezone.utc).isoformat()})
+                subidas += 1
+            else:
+                errores += 1
+        return jsonify({'success': True, 'subidas': subidas, 'errores': errores,
+                        'pendientes': len(pendientes), 'parcial': parcial})
+
     @app.route('/planning/api/deps/<dep_id>', methods=['DELETE'])
     @login_required
     def planning_delete_dep(dep_id):
@@ -3692,6 +4091,19 @@ def create_app():
         d.setdefault('phase', 'General')
         d.setdefault('progress_pct', 0)
         d.setdefault('alert_days', 3)
+        # Sin destino explícito se usa la lista por defecto, de modo que toda
+        # tarea creada aquí aparezca también en Microsoft To-Do. Es lo que cierra
+        # el círculo de la sincronización: antes sólo bajaba, ahora también sube.
+        # Sólo para quien tiene el módulo To-Do: si no lo tuviera, la tarea
+        # pasaría a source='ms_todo' y dejaría de verla el propio autor.
+        if not d.get('ms_email') and d.get('sync_todo', True) and user_can('todo'):
+            destino = get_todo_default_target(app)
+            if destino and destino.get('email') and destino.get('list_id'):
+                permitidas = get_user_ms_emails(app, current_user.id)
+                if is_admin() or destino['email'] in permitidas:
+                    d['ms_email']   = destino['email']
+                    d['ms_list_id'] = destino['list_id']
+        d.pop('sync_todo', None)
         # Si se solicita sincronizar con MS, marcar como ms_todo
         if d.get('ms_email') and d.get('ms_list_id'):
             d.setdefault('source', 'ms_todo')
@@ -4029,11 +4441,53 @@ def create_app():
             return jsonify({'success': False, 'error': str(e)})
 
     # ============================================================
+    #  MÓDULOS EN ARCHIVO APARTE
+    #  Directorio y Cronograma viven en app/directorio.py y app/cronograma.py.
+    #  Reciben los ayudantes de este módulo por parámetro (no por import) para no
+    #  crear un ciclo de importación entre los archivos.
+    # ============================================================
+    _ctx_modulos = {
+        'is_admin':              is_admin,
+        'user_can':              user_can,
+        '_sanitize':             _sanitize,
+        '_sanitize_hex_color':   _sanitize_hex_color,
+        '_xlsx_safe':            _xlsx_safe,
+        '_filter_visible_tasks': _filter_visible_tasks,
+    }
+    registrar_directorio(app, _ctx_modulos)
+    registrar_cronograma(app, _ctx_modulos)
+
+    # ============================================================
     #  UTILITY
     # ============================================================
     @app.route('/health')
     def health():
         return jsonify({'status': 'ok'})
+
+    @app.route('/calendar/api/google-reconnect', methods=['POST'])
+    @login_required
+    def api_google_reconnect():
+        """Fuerza un ciclo de reconexión sin esperar al hilo de fondo.
+
+        Si el permiso sigue vivo (el caso habitual tras un corte de red) esto
+        arregla la conexión y sube las citas atrasadas sin que nadie tenga que
+        volver a pasar por la pantalla de Google."""
+        if not is_admin():
+            return jsonify({'success': False, 'error': 'Solo admin'}), 403
+        return jsonify(google_autoreconectar(app))
+
+    @app.route('/calendar/api/google-keepalive', methods=['POST', 'GET'])
+    def api_google_keepalive():
+        """Mismo ciclo, disparado por un cron externo (sin sesión).
+
+        Existe porque en despliegues donde el hilo de fondo no arranca —Windows,
+        o un plan que apaga el proceso cuando no hay tráfico— el token se moriría
+        igualmente por inactividad."""
+        secreto = app.config.get('CRON_SECRET') or ''
+        recibido = request.headers.get('X-Cron-Secret') or request.args.get('secret') or ''
+        if not secreto or recibido != secreto:
+            return jsonify({'success': False, 'error': 'No autorizado'}), 401
+        return jsonify(google_autoreconectar(app))
 
     @app.route('/api/google-status')
     @login_required
@@ -4051,8 +4505,11 @@ def create_app():
         return jsonify({'connected': False, 'email': t['email'],
             'message': 'Token invalido. Reconecta en /auth/google.'})
 
-    # Sincronización automática To-Do → Sistema en segundo plano (un solo worker).
+    # Trabajos de fondo (un solo worker se los queda mediante flock).
     if app.supabase:
         start_todo_autosync(app, interval_min=5)
+        # Mantiene vivo el permiso de Google y sube las citas que quedaron
+        # atrasadas en cuanto la conexión vuelve.
+        start_google_autoheal(app, interval_min=60)
 
     return app

@@ -6,7 +6,10 @@
 <meta name="csrf-token" content="{{ csrf_token() }}">
 <title>{% block title %}calendarios-map{% endblock %}</title>
 <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-<link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=9">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=10">
+{# Ajustes de teléfono (muesca del iPhone, zoom de Safari, tablas anchas).
+   Va después de style.css para poder corregirlo sin recurrir a !important. #}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/movil.css') }}?v=1">
 <!-- PWA -->
 <link rel="manifest" href="/manifest.webmanifest">
 <meta name="theme-color" content="#4f46e5">
@@ -31,6 +34,8 @@
   {% if path.startswith('/calendar') %}{% set ns.active_key = 'calendar' %}
   {% elif path.startswith('/planning') %}{% set ns.active_key = 'planning' %}
   {% elif path.startswith('/todo') %}{% set ns.active_key = 'todo' %}
+  {% elif path.startswith('/cronograma') %}{% set ns.active_key = 'cronograma' %}
+  {% elif path.startswith('/directorio') %}{% set ns.active_key = 'directorio' %}
   {% elif path.startswith('/profile') %}{% set ns.active_key = 'profile' %}
   {% elif path.startswith('/admin/users') %}{% set ns.active_key = 'users' %}
   {% elif path.startswith('/admin/roles') %}{% set ns.active_key = 'roles' %}
@@ -47,12 +52,28 @@
         <img src="{{ url_for('static', filename='images/map_logo.png') }}" alt="MAP" class="rail-brand-logo">
       </a>
 
+      {# Orden de los módulos: primero el trabajo del día (pendientes y agenda),
+         después lo que se planifica y los datos de clientes, y al final la
+         cuenta propia y la administración. Es el mismo orden que sigue
+         ALL_MODULES en app/__init__.py y la pantalla de roles. #}
       <nav class="rail-nav">
-        <div class="rail-section"><span>Principal</span></div>
+        <div class="rail-section"><span>Trabajo</span></div>
 
         <a href="/dashboard" class="rail-btn {{ 'active' if ns.active_key == 'dashboard' }}" data-panel="dashboard" title="Panel — Resumen general del sistema">
           <span class="rail-ic">📊</span><span class="rail-label">Panel</span>
         </a>
+
+        {% if is_adm or 'todo' in active_modules %}
+        <a href="/todo" class="rail-btn {{ 'active' if ns.active_key == 'todo' }}" data-panel="todo" data-group title="Actividades — Pendientes sincronizados con Microsoft To-Do">
+          <span class="rail-ic">✅</span><span class="rail-label">Actividades</span>
+        </a>
+        {% endif %}
+
+        {% if is_adm or 'planning' in active_modules %}
+        <a href="/planning" class="rail-btn {{ 'active' if ns.active_key == 'planning' }}" data-panel="planning" data-group title="Proyectos — Tareas internas del equipo">
+          <span class="rail-ic">📋</span><span class="rail-label">Proyectos</span>
+        </a>
+        {% endif %}
 
         {% if is_adm or 'calendar' in active_modules %}
         <a href="/calendar" class="rail-btn {{ 'active' if ns.active_key == 'calendar' }}" data-panel="calendar" data-group title="Calendario — Agenda de citas y feriados">
@@ -60,17 +81,23 @@
         </a>
         {% endif %}
 
-        {% if is_adm or 'planning' in active_modules %}
-        <a href="/planning" class="rail-btn {{ 'active' if ns.active_key == 'planning' }}" data-panel="planning" data-group title="Planificación — Proyectos y tareas del equipo">
-          <span class="rail-ic">📋</span><span class="rail-label">Planificación</span>
+        {% if is_adm or 'cronograma' in active_modules or 'directorio' in active_modules %}
+        <div class="rail-section"><span>Planificación y datos</span></div>
+        {% endif %}
+
+        {% if is_adm or 'cronograma' in active_modules %}
+        <a href="/cronograma" class="rail-btn {{ 'active' if ns.active_key == 'cronograma' }}" data-panel="cronograma" data-group title="Cronograma — Gantt por actividad con planificación asistida">
+          <span class="rail-ic">📊</span><span class="rail-label">Cronograma</span>
         </a>
         {% endif %}
 
-        {% if is_adm or 'todo' in active_modules %}
-        <a href="/todo" class="rail-btn {{ 'active' if ns.active_key == 'todo' }}" data-panel="todo" data-group title="To-Do externo — Tareas sincronizadas de Microsoft">
-          <span class="rail-ic">✅</span><span class="rail-label">To-Do</span>
+        {% if is_adm or 'directorio' in active_modules %}
+        <a href="/directorio" class="rail-btn {{ 'active' if ns.active_key == 'directorio' }}" data-panel="directorio" data-group title="Directorio — Base de datos de clientes por sector">
+          <span class="rail-ic">🗂️</span><span class="rail-label">Directorio</span>
         </a>
         {% endif %}
+
+        <div class="rail-section"><span>Cuenta</span></div>
 
         <a href="/profile" class="rail-btn {{ 'active' if ns.active_key == 'profile' }}" data-panel="profile" title="Mi perfil — Tu cuenta, contraseña y accesos">
           <span class="rail-ic">👤</span><span class="rail-label">Mi perfil</span>
@@ -85,8 +112,8 @@
         <a href="/admin/roles" class="rail-btn {{ 'active' if ns.active_key == 'roles' }}" data-panel="roles" data-group title="Roles — Qué habilita cada rol de negocio">
           <span class="rail-ic">🎛️</span><span class="rail-label">Roles</span>
         </a>
-        <a href="/admin/database" class="rail-btn {{ 'active' if ns.active_key == 'database' }}" data-panel="database" data-group title="Base de datos — Catálogos y datos maestros">
-          <span class="rail-ic">🗄️</span><span class="rail-label">Base de datos</span>
+        <a href="/admin/database" class="rail-btn {{ 'active' if ns.active_key == 'database' }}" data-panel="database" data-group title="Catálogos — Tablas internas del sistema">
+          <span class="rail-ic">🗄️</span><span class="rail-label">Catálogos</span>
         </a>
         {% if browser_sync_visible %}
         <a href="/admin/browser-sync" class="rail-btn {{ 'active' if ns.active_key == 'browser-sync' }}" data-panel="browser-sync" title="Sync navegadores — Avast ⇄ Brave (privado)">
@@ -129,6 +156,27 @@
           </ul>
         </section>
 
+        {% if is_adm or 'todo' in active_modules %}
+        <section class="panel-page {{ 'active' if ns.active_key == 'todo' }}" data-page="todo">
+          <div class="panel-head"><span class="panel-head-ic">✅</span><span><span class="panel-title">Actividades</span><span class="panel-sub">Pendientes sincronizados con To-Do</span></span></div>
+          <ul class="panel-links">
+            <li><a href="/todo" class="{{ 'active' if path == '/todo' }}"><span class="pl-t">📋 Todos los pendientes</span><span class="pl-d">De cada cuenta conectada</span></a></li>
+            <li><a href="/todo?tf=my-day"><span class="pl-t">🌤️ Mi día</span><span class="pl-d">Lo que toca hoy</span></a></li>
+            <li><a href="/todo?tf=overdue"><span class="pl-t">⛔ Vencidas</span><span class="pl-d">Lo que ya pasó de plazo</span></a></li>
+          </ul>
+        </section>
+        {% endif %}
+
+        {% if is_adm or 'planning' in active_modules %}
+        <section class="panel-page {{ 'active' if ns.active_key == 'planning' }}" data-page="planning">
+          <div class="panel-head"><span class="panel-head-ic">📋</span><span><span class="panel-title">Proyectos</span><span class="panel-sub">Tareas internas del equipo</span></span></div>
+          <ul class="panel-links">
+            <li><a href="/planning" class="{{ 'active' if path == '/planning' }}"><span class="pl-t">📝 Mis tareas</span><span class="pl-d">Lo que tienes asignado</span></a></li>
+            <li><a href="/planning?tf=week"><span class="pl-t">📆 Esta semana</span><span class="pl-d">Lo que vence en siete días</span></a></li>
+          </ul>
+        </section>
+        {% endif %}
+
         {% if is_adm or 'calendar' in active_modules %}
         <section class="panel-page {{ 'active' if ns.active_key == 'calendar' }}" data-page="calendar">
           <div class="panel-head"><span class="panel-head-ic">📅</span><span><span class="panel-title">Calendario</span><span class="panel-sub">Agenda de citas y feriados</span></span></div>
@@ -140,24 +188,25 @@
         </section>
         {% endif %}
 
-        {% if is_adm or 'planning' in active_modules %}
-        <section class="panel-page {{ 'active' if ns.active_key == 'planning' }}" data-page="planning">
-          <div class="panel-head"><span class="panel-head-ic">📋</span><span><span class="panel-title">Planificación</span><span class="panel-sub">Proyectos y tareas del equipo</span></span></div>
+        {% if is_adm or 'cronograma' in active_modules %}
+        <section class="panel-page {{ 'active' if ns.active_key == 'cronograma' }}" data-page="cronograma">
+          <div class="panel-head"><span class="panel-head-ic">📊</span><span><span class="panel-title">Cronograma</span><span class="panel-sub">Gantt por actividad</span></span></div>
           <ul class="panel-links">
-            <li><a href="/planning" class="{{ 'active' if path == '/planning' }}"><span class="pl-t">📝 Mis tareas</span><span class="pl-d">Lo que tienes asignado</span></a></li>
-            <li><a href="/planning?view=kanban"><span class="pl-t">🗂️ Tablero Kanban</span><span class="pl-d">Tareas agrupadas por estado</span></a></li>
-            <li><a href="/planning?view=gantt"><span class="pl-t">📊 Gantt</span><span class="pl-d">Cronograma y plazos</span></a></li>
-            <li><a href="/planning?view=map"><span class="pl-t">🗺️ Mapa de procesos</span><span class="pl-d">Flujo completo del proyecto</span></a></li>
+            <li><a href="/cronograma" class="{{ 'active' if path == '/cronograma' }}"><span class="pl-t">📊 Ver cronogramas</span><span class="pl-d">Barras, plazos y avance</span></a></li>
+            <li><a href="/cronograma?accion=nuevo"><span class="pl-t">➕ Nuevo cronograma</span><span class="pl-d">Empezar un plan de trabajo</span></a></li>
+            <li><a href="/cronograma?accion=importar"><span class="pl-t">📥 Traer de Actividades</span><span class="pl-d">Convertir pendientes en actividades</span></a></li>
           </ul>
         </section>
         {% endif %}
 
-        {% if is_adm or 'todo' in active_modules %}
-        <section class="panel-page {{ 'active' if ns.active_key == 'todo' }}" data-page="todo">
-          <div class="panel-head"><span class="panel-head-ic">✅</span><span><span class="panel-title">To-Do externo</span><span class="panel-sub">Tareas sincronizadas de Microsoft</span></span></div>
+        {% if is_adm or 'directorio' in active_modules %}
+        <section class="panel-page {{ 'active' if ns.active_key == 'directorio' }}" data-page="directorio">
+          <div class="panel-head"><span class="panel-head-ic">🗂️</span><span><span class="panel-title">Directorio</span><span class="panel-sub">Clientes por sector de servicio</span></span></div>
           <ul class="panel-links">
-            <li><a href="/todo" class="{{ 'active' if path == '/todo' }}"><span class="pl-t">📋 Todas las cuentas</span><span class="pl-d">Tareas de cada cuenta conectada</span></a></li>
-            <li><a href="/todo?view=kanban"><span class="pl-t">🗂️ Tablero Kanban</span><span class="pl-d">Tareas agrupadas por estado</span></a></li>
+            <li><a href="/directorio" class="{{ 'active' if path == '/directorio' }}"><span class="pl-t">🗂️ Ver registros</span><span class="pl-d">Buscar por nombre, cédula o RUC</span></a></li>
+            <li><a href="/directorio?accion=nuevo"><span class="pl-t">➕ Nuevo registro</span><span class="pl-d">Con verificación en el SRI</span></a></li>
+            <li><a href="/directorio?accion=importar"><span class="pl-t">📥 Importar archivo</span><span class="pl-d">Excel, PDF o Word clasificados con IA</span></a></li>
+            <li><a href="/directorio?accion=sectores"><span class="pl-t">🏷️ Sectores</span><span class="pl-d">Origen de cada base de datos</span></a></li>
           </ul>
         </section>
         {% endif %}
@@ -187,7 +236,7 @@
         </section>
 
         <section class="panel-page {{ 'active' if ns.active_key == 'database' }}" data-page="database">
-          <div class="panel-head"><span class="panel-head-ic">🗄️</span><span><span class="panel-title">Base de datos</span><span class="panel-sub">Catálogos y datos maestros</span></span></div>
+          <div class="panel-head"><span class="panel-head-ic">🗄️</span><span><span class="panel-title">Catálogos</span><span class="panel-sub">Tablas internas del sistema</span></span></div>
           <ul class="panel-links">
             <li><a href="/admin/database#sec-ciudades"><span class="pl-t">🏙️ Ciudades</span><span class="pl-d">Sedes y ubicaciones</span></a></li>
             <li><a href="/admin/database#sec-titles"><span class="pl-t">🏷️ Títulos</span><span class="pl-d">Tratamientos de cliente</span></a></li>
@@ -263,11 +312,55 @@
     </header>
 
     <main class="content">
+      {# El aviso distingue el corte pasajero de la revocación real: antes los dos
+         decían «reconecta», y se mandaba al administrador a repetir el permiso de
+         Google por un simple fallo de red que el sistema arregla solo. #}
       {% if is_adm and google_needs_reauth %}
-      <div class="alert alert-warning d-flex align-items-center justify-content-between">
-        <span>⚠️ <strong>Google Calendar desconectado.</strong> El token caducó o fue revocado. Las citas se aprueban igual, pero no se sincronizan hasta reconectar.</span>
-        <a href="/auth/google" class="btn btn-sm btn-warning ms-3">🔗 Reconectar ahora</a>
+      <div class="alert {{ 'alert-info' if google_health.estado == 'transitorio' else 'alert-warning' }}
+                  d-flex align-items-center justify-content-between flex-wrap gap-2" id="avisoGoogle">
+        {% if google_health.estado == 'transitorio' %}
+        <span>🔄 <strong>Google Calendar no responde en este momento.</strong>
+          El sistema lo reintenta solo cada hora; las citas se aprueban con normalidad
+          y se subirán al calendario en cuanto vuelva.</span>
+        {% else %}
+        <span>⚠️ <strong>Google Calendar necesita que vuelvas a autorizar.</strong>
+          El permiso caducó o fue revocado. Las citas se aprueban igual, pero no llegan
+          al calendario hasta reconectar.</span>
+        {% endif %}
+        <span class="d-flex gap-2">
+          <button class="btn btn-sm btn-outline-secondary" onclick="reintentarGoogle(this)">
+            🔄 Reintentar ahora
+          </button>
+          <a href="/auth/google" class="btn btn-sm btn-warning">🔗 Volver a autorizar</a>
+        </span>
       </div>
+      <script>
+      // Primero se prueba la reconexión automática. La mayoría de las veces el
+      // permiso sigue vivo y basta con renovar el token: mandar al usuario a la
+      // pantalla de Google sin intentarlo antes es hacerle trabajo de más.
+      async function reintentarGoogle(boton) {
+        const original = boton.textContent;
+        boton.disabled = true; boton.textContent = '⏳ Reintentando…';
+        try {
+          const r = await fetch('/calendar/api/google-reconnect', { method: 'POST' })
+                            .then(x => x.json());
+          if (r.estado === 'ok') {
+            boton.textContent = '✅ Reconectado';
+            const aviso = document.getElementById('avisoGoogle');
+            aviso.className = 'alert alert-success';
+            aviso.innerHTML = '✅ <strong>Google Calendar reconectado.</strong>' +
+              (r.subidas ? ` Se subieron ${r.subidas} cita(s) que estaban pendientes.` : '');
+            setTimeout(() => location.reload(), 2500);
+            return;
+          }
+          boton.textContent = r.estado === 'reauth'
+            ? '✋ Hace falta autorizar' : '⚠️ Sigue sin responder';
+        } catch (e) {
+          boton.textContent = '⚠️ Sin conexión';
+        }
+        setTimeout(() => { boton.disabled = false; boton.textContent = original; }, 4000);
+      }
+      </script>
       {% endif %}
       {% with messages = get_flashed_messages(with_categories=true) %}
         {% if messages %}{% for cat, msg in messages %}
@@ -324,12 +417,18 @@
   }
 </script>
 <script src="{{ url_for('static', filename='js/password-toggle.js') }}"></script>
+{# Instalación en el teléfono: botón nativo en Android, instrucciones en iOS. #}
+<script src="{{ url_for('static', filename='js/instalar.js') }}?v=1" defer></script>
 <script>
-// Cierre de sesión automático tras 30 minutos de inactividad.
+// Cierre de sesión automático tras 20 minutos de inactividad.
 // El contador se reinicia con cualquier actividad del usuario y se
 // sincroniza entre pestañas abiertas del sistema (localStorage 'storage').
+//
+// Debe coincidir con PERMANENT_SESSION_LIFETIME de config/config.py, que es el
+// corte de verdad: este temporizador solo adelanta la salida en pantalla y no
+// protege por sí solo (basta recargar para reiniciarlo).
 (function () {
-  var IDLE_MS = 30 * 60 * 1000;
+  var IDLE_MS = 20 * 60 * 1000;
   var SYNC_KEY = '__idle_last_activity';
   var EVENTS = ['mousemove', 'mousedown', 'keydown', 'scroll', 'touchstart', 'click', 'wheel'];
   var timer, lastSync = 0;
