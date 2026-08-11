@@ -9,7 +9,7 @@
 // archivos viejos que guardó y el usuario ve la versión anterior sin saberlo.
 // v2: se retiraron Kanban/Gantt/mapa de procesos y entraron movil.css e
 //     instalar.js — la caché v1 aún tenía los archivos antiguos.
-const CACHE = 'calmap-v2';
+const CACHE = 'calmap-v3';
 // Sólo lo que se pide SIN parámetro de versión. El CSS y el JS se enlazan con
 // «?v=N», y la caché distingue por URL completa: precargarlos aquí sin el
 // parámetro no serviría de nada (nunca coincidiría con lo que pide la página) y

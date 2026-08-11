@@ -28,6 +28,22 @@
     --rail-w: 88px;
     --panel-w: 236px;
     --sidebar-w: calc(var(--rail-w) + var(--panel-w));
+
+    /* --- Barra lateral en tono claro ---------------------------------------
+       Antes el menú era casi negro (#0b1020 / #0f1628) y el resto de la
+       aplicación blanco: dos mundos pegados. Ahora la barra usa la misma
+       familia de grises azulados que el fondo general, sólo un punto más
+       saturada para que se distinga del contenido sin cortar la pantalla.
+       Todos los tonos del menú salen de aquí, así que cambiar la paleta es
+       tocar estas ocho líneas y nada más. ---------------------------------- */
+    --side-rail:    #e9eef7;   /* columna de íconos          */
+    --side-panel:   #f6f9fd;   /* columna de submenús        */
+    --side-brand:   #ffffff;   /* cajetín del logotipo       */
+    --side-line:    #d9e2ef;   /* separadores                */
+    --side-hover:   #dfe7f4;   /* fondo al pasar el ratón    */
+    --side-txt:     #55637a;   /* texto normal               */
+    --side-strong:  #2f3d55;   /* títulos                    */
+    --side-mute:    #8b99ae;   /* descripciones y rótulos    */
 }
 
 *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
@@ -66,18 +82,19 @@ body {
 .sidebar-rail {
     width: var(--rail-w);
     flex-shrink: 0;
-    background: #0b1020;
+    background: var(--side-rail);
     display: flex;
     flex-direction: column;
     align-items: center;
     height: 100vh;
+    border-right: 1px solid var(--side-line);
 }
 .rail-brand {
     width: 100%;
     display: flex; align-items: center; justify-content: center;
     padding: 10px 6px;
-    background: #000;
-    border-bottom: 1px solid rgba(255,255,255,.06);
+    background: var(--side-brand);
+    border-bottom: 1px solid var(--side-line);
     flex-shrink: 0;
 }
 .rail-brand-logo { width: 100%; max-width: 48px; max-height: 40px; object-fit: contain; display: block; }
@@ -97,11 +114,11 @@ body {
     flex-shrink: 0;
 }
 .rail-section::before, .rail-section::after {
-    content: ''; flex: 1; height: 1px; background: rgba(255,255,255,.09);
+    content: ''; flex: 1; height: 1px; background: var(--side-line);
 }
 .rail-section span {
     font-size: .48rem; font-weight: 800; text-transform: uppercase;
-    letter-spacing: .9px; color: #64748b; white-space: nowrap;
+    letter-spacing: .9px; color: var(--side-mute); white-space: nowrap;
 }
 
 /* Botón del riel: ícono + etiqueta visible (no hay que adivinar) */
@@ -112,7 +129,7 @@ body {
     min-height: 58px;
     padding: 9px 4px;
     border-radius: 11px;
-    color: #94a3b8;
+    color: var(--side-txt);
     text-decoration: none;
     text-align: center;
     cursor: pointer;
@@ -125,17 +142,17 @@ body {
     font-size: .575rem; font-weight: 600; line-height: 1.2;
     letter-spacing: .1px; word-break: break-word; hyphens: auto;
 }
-.rail-btn:hover { background: rgba(255,255,255,.08); color: #e2e8f0; }
+.rail-btn:hover { background: var(--side-hover); color: var(--side-strong); }
 .rail-btn.active {
-    background: linear-gradient(135deg, #4f46e5, #7c3aed);
+    background: linear-gradient(135deg, #6366f1, #8b5cf6);
     color: #fff;
-    box-shadow: 0 4px 12px rgba(79,70,229,.4);
+    box-shadow: 0 3px 10px rgba(99,102,241,.28);
 }
 .rail-btn.active .rail-label { font-weight: 700; }
 .rail-btn.active::before {
     content: '';
     position: absolute; left: -6px; top: 50%; transform: translateY(-50%);
-    width: 3px; height: 26px; border-radius: 0 3px 3px 0; background: #c7d2fe;
+    width: 3px; height: 26px; border-radius: 0 3px 3px 0; background: #6366f1;
 }
 .rail-btn:focus-visible { outline: 2px solid #818cf8; outline-offset: 2px; }
 
@@ -143,19 +160,20 @@ body {
     width: 100%;
     padding: 10px 0 12px;
     display: flex; flex-direction: column; align-items: center; gap: 8px;
-    border-top: 1px solid rgba(255,255,255,.06);
+    border-top: 1px solid var(--side-line);
     flex-shrink: 0;
 }
 .rail-avatar {
     width: 38px; height: 38px; border-radius: 50%;
-    background: linear-gradient(135deg, #4f46e5, #7c3aed);
+    background: linear-gradient(135deg, #6366f1, #8b5cf6);
     color: #fff; display: grid; place-items: center;
     font-weight: 700; font-size: .78rem; text-decoration: none;
     flex-shrink: 0;
 }
 .rail-logout {
     width: 32px; height: 32px; border-radius: 8px;
-    background: rgba(255,255,255,.06); color: #64748b;
+    background: #ffffff; color: var(--side-txt);
+    border: 1px solid var(--side-line);
     display: grid; place-items: center; text-decoration: none;
     font-size: 1rem; transition: all .15s ease;
 }
@@ -165,26 +183,28 @@ body {
 .sidebar-panel {
     width: var(--panel-w);
     flex-shrink: 0;
-    background: #0f1628;
-    color: #cbd5e1;
+    background: var(--side-panel);
+    color: var(--side-txt);
     display: flex; flex-direction: column;
     height: 100vh;
-    border-left: 1px solid rgba(255,255,255,.05);
+    border-right: 1px solid var(--side-line);
     overflow: hidden;
 }
 .panel-wordmark {
     display: block;
     padding: 16px 16px 12px;
-    color: #94a3b8; font-size: .82rem; font-weight: 600; letter-spacing: .3px;
+    color: var(--side-txt); font-size: .82rem; font-weight: 600; letter-spacing: .3px;
     text-decoration: none;
-    border-bottom: 1px solid rgba(255,255,255,.06);
+    border-bottom: 1px solid var(--side-line);
     flex-shrink: 0;
 }
-.panel-wordmark strong { color: #c8ff00; font-weight: 800; }
+/* El verde lima venía de cuando el menú era oscuro; sobre fondo claro no se
+   lee. El acento pasa al índigo de la marca, que sí contrasta. */
+.panel-wordmark strong { color: var(--primary); font-weight: 800; }
 
 .panel-body { flex: 1; overflow-y: auto; padding: 8px; }
 .panel-body::-webkit-scrollbar { width: 3px; }
-.panel-body::-webkit-scrollbar-thumb { background: rgba(255,255,255,.1); border-radius: 3px; }
+.panel-body::-webkit-scrollbar-thumb { background: #c6d2e3; border-radius: 3px; }
 
 .panel-page { display: none; }
 .panel-page.active { display: block; animation: panelIn .18s ease; }
@@ -194,12 +214,12 @@ body {
     display: flex; align-items: center; gap: 10px;
     padding: 8px 12px 12px;
     margin-bottom: 4px;
-    border-bottom: 1px solid rgba(255,255,255,.06);
+    border-bottom: 1px solid var(--side-line);
 }
 .panel-head-ic { font-size: 1.3rem; flex-shrink: 0; }
 .panel-head > span:last-child { display: flex; flex-direction: column; min-width: 0; line-height: 1.25; }
-.panel-title { color: #f1f5f9; font-size: .95rem; font-weight: 700; }
-.panel-sub { color: #7c8ba1; font-size: .68rem; line-height: 1.35; }
+.panel-title { color: var(--side-strong); font-size: .95rem; font-weight: 700; }
+.panel-sub { color: var(--side-mute); font-size: .68rem; line-height: 1.35; }
 
 .panel-links { list-style: none; margin: 0; padding: 4px 0 0; }
 .panel-links li { margin-bottom: 2px; }
@@ -207,7 +227,7 @@ body {
 .panel-links a {
     display: flex; flex-direction: column; gap: 2px;
     padding: 8px 11px;
-    color: #94a3b8;
+    color: var(--side-txt);
     text-decoration: none; border-radius: 9px;
     transition: all .15s ease;
 }
@@ -217,15 +237,15 @@ body {
 }
 .panel-links .pl-d {
     font-size: .655rem; font-weight: 400; line-height: 1.3;
-    color: #64748b; transition: color .15s ease;
+    color: var(--side-mute); transition: color .15s ease;
 }
-.panel-links a:hover { background: rgba(255,255,255,.06); color: #e2e8f0; }
-.panel-links a:hover .pl-d { color: #94a3b8; }
+.panel-links a:hover { background: var(--side-hover); color: var(--side-strong); }
+.panel-links a:hover .pl-d { color: var(--side-txt); }
 .panel-links a.active {
-    background: linear-gradient(135deg, rgba(79,70,229,.85), rgba(124,58,237,.85));
+    background: linear-gradient(135deg, #6366f1, #8b5cf6);
     color: #fff;
 }
-.panel-links a.active .pl-d { color: rgba(255,255,255,.82); }
+.panel-links a.active .pl-d { color: rgba(255,255,255,.85); }
 .panel-links a:focus-visible { outline: 2px solid #818cf8; outline-offset: 1px; }
 /* Integraciones: la píldora de estado va a la derecha del título */
 .panel-links a.pill-link .pl-t { justify-content: space-between; width: 100%; }
@@ -267,7 +287,7 @@ body {
 }
 .topbar-user:hover { background: #e0e7ff; border-color: var(--primary); color: var(--primary); }
 .topbar-name { display: block; font-size: .78rem; font-weight: 600; white-space: nowrap; max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
-.topbar-role { display: block; font-size: .62rem; font-weight: 500; color: #111; white-space: nowrap; }
+.topbar-role { display: block; font-size: .62rem; font-weight: 500; color: var(--gray); white-space: nowrap; }
 .topbar-user:hover .topbar-role { color: var(--primary); }
 
 .menu-toggle {
@@ -880,8 +900,8 @@ textarea.form-control { resize: vertical; min-height: 70px; }
     flex-shrink: 0;
 }
 .nav-badge.show { display: inline-block; }
-.nav-badge.tono-neutro { background: rgba(255,255,255,.16); color: #cbd5e1; }
-.nav-badge.tono-aviso  { background: #f59e0b; color: #1e293b; }
+.nav-badge.tono-neutro { background: #dbe3f0; color: var(--side-txt); }
+.nav-badge.tono-aviso  { background: #f59e0b; color: #ffffff; }
 
 /* En el riel se ancla arriba a la derecha del icono. */
 .rail-btn { position: relative; }
@@ -895,14 +915,14 @@ textarea.form-control { resize: vertical; min-height: 70px; }
    repite el nombre del módulo ("Ir al panel" estando ya en el panel), se explica
    en una línea qué se hace ahí. Un menú que se apunta a sí mismo es ruido. */
 .panel-note {
-    font-size: .72rem; color: #7c8ba1; line-height: 1.5;
+    font-size: .72rem; color: var(--side-mute); line-height: 1.5;
     padding: 8px 10px; margin-top: 4px;
-    background: rgba(255,255,255,.04); border-radius: 10px;
-    border-left: 2px solid rgba(255,255,255,.12);
+    background: #ffffff; border-radius: 10px;
+    border-left: 2px solid #c7d2fe;
 }
 /* Separador con título dentro de un submenú largo (Catálogos). */
 .panel-group {
     font-size: .6rem; font-weight: 700; text-transform: uppercase;
-    letter-spacing: .08em; color: #5b6b80;
+    letter-spacing: .08em; color: var(--side-mute);
     padding: 10px 10px 4px; margin-top: 4px;
 }

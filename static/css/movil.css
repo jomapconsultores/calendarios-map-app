@@ -207,11 +207,12 @@
   right: calc(12px + var(--safe-right));
   bottom: calc(12px + var(--safe-bottom));
   z-index: 1090;
-  background: #1e293b;
-  color: #fff;
+  background: #ffffff;
+  color: #2f3d55;
+  border: 1px solid #d9e2ef;
   border-radius: 14px;
   padding: 12px 14px;
-  box-shadow: 0 8px 28px rgba(0, 0, 0, .28);
+  box-shadow: 0 8px 28px rgba(47, 61, 85, .16);
   display: none;
   align-items: center;
   gap: 12px;
@@ -230,8 +231,8 @@
   cursor: pointer;
   white-space: nowrap;
 }
-#instalarBanner .ib-si { background: #c8ff00; color: #1e293b; }
-#instalarBanner .ib-no { background: transparent; color: #94a3b8; padding: 8px; }
+#instalarBanner .ib-si { background: #6366f1; color: #ffffff; }
+#instalarBanner .ib-no { background: transparent; color: #8b99ae; padding: 8px; }
 
 /* ============================================================
    9. IMPRESIÓN — que un listado salga limpio desde el teléfono
