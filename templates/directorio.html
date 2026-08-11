@@ -6,17 +6,8 @@
 {% block head %}
 <style>
 /* ===== DIRECTORIO ===== */
-.dir-toolbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:14px}
-.stats-row{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:14px}
-.stat-card{background:#fff;border-radius:12px;padding:12px 16px;border:1.5px solid #e2e8f0;
-  display:flex;flex-direction:column;gap:2px;box-shadow:0 1px 3px rgba(0,0,0,.05)}
-.stat-card .sc-num{font-size:1.6rem;font-weight:700;line-height:1}
-.stat-card .sc-lbl{font-size:.75rem;color:#64748b;font-weight:500}
-.stat-card.info .sc-num{color:#4f46e5}
-.stat-card.success .sc-num{color:#10b981}
-.stat-card.warning .sc-num{color:#f59e0b}
-.stat-card.danger .sc-num{color:#ef4444}
-
+/* .stats-row y .stat-card viven en static/css/style.css: estaban
+   copiados en las tres plantillas y ya habían empezado a divergir. */
 .sector-pills{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px}
 .sector-pill{padding:5px 14px;border-radius:20px;font-size:.8rem;font-weight:600;cursor:pointer;
   border:1.5px solid #e2e8f0;background:#fff;color:#475569;transition:.15s;white-space:nowrap}
@@ -95,7 +86,7 @@
 
 <div class="sector-pills" id="sectorPills"></div>
 
-<div class="dir-toolbar">
+<div class="mod-toolbar">
   <input id="buscar" class="form-control form-control-sm" style="max-width:280px"
          placeholder="🔍 Buscar por nombre, cédula, RUC, correo o teléfono…" oninput="pintarTabla()">
   <select id="filtroTipo" class="form-select form-select-sm" style="max-width:170px" onchange="pintarTabla()">

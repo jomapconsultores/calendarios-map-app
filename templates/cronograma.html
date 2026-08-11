@@ -6,7 +6,6 @@
 {% block head %}
 <style>
 /* ===== CRONOGRAMA ===== */
-.cro-toolbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:12px}
 .plan-pills{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px}
 .plan-pill{padding:6px 15px;border-radius:20px;font-size:.82rem;font-weight:600;cursor:pointer;
   border:1.5px solid #e2e8f0;background:#fff;color:#475569;transition:.15s;white-space:nowrap}
@@ -15,16 +14,8 @@
 .plan-pill .pp-count{background:rgba(0,0,0,.08);border-radius:10px;padding:0 6px;margin-left:5px;font-size:.72rem}
 .plan-pill.active .pp-count{background:rgba(255,255,255,.25)}
 
-.stats-row{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:14px}
-.stat-card{background:#fff;border-radius:12px;padding:12px 16px;border:1.5px solid #e2e8f0;
-  display:flex;flex-direction:column;gap:2px;box-shadow:0 1px 3px rgba(0,0,0,.05)}
-.stat-card .sc-num{font-size:1.6rem;font-weight:700;line-height:1}
-.stat-card .sc-lbl{font-size:.75rem;color:#64748b;font-weight:500}
-.stat-card.info .sc-num{color:#4f46e5}
-.stat-card.success .sc-num{color:#10b981}
-.stat-card.warning .sc-num{color:#f59e0b}
-.stat-card.danger .sc-num{color:#ef4444}
-
+/* .stats-row y .stat-card viven en static/css/style.css: estaban
+   copiados en las tres plantillas y ya habían empezado a divergir. */
 /* GANTT */
 .gantt-wrap{background:#fff;border:1.5px solid #e2e8f0;border-radius:14px;padding:14px;overflow-x:auto}
 /* Ancho de la columna de nombres. En variable porque la capa que dibuja las
@@ -100,8 +91,6 @@
 .prop-antes{color:#b91c1c;text-decoration:line-through}
 .prop-despues{color:#047857;font-weight:600}
 .ia-nota{font-size:.75rem;color:#64748b;font-style:italic}
-.vacio{text-align:center;color:#64748b;padding:48px 16px}
-.vacio .v-ic{font-size:2.6rem}
 
 @media(max-width:768px){
   .stats-row{grid-template-columns:1fr 1fr}
@@ -118,8 +107,8 @@
 
 <div class="plan-pills" id="planPills"></div>
 
-<div id="sinPlanes" class="vacio" style="display:none">
-  <div class="v-ic">📊</div>
+<div id="sinPlanes" class="mod-empty" style="display:none">
+  <div class="me-ic">📊</div>
   <p class="mt-2">Todavía no hay ningún cronograma.<br>
   Crea uno y trae las actividades desde tus pendientes del To-Do.</p>
   <button class="btn btn-primary btn-sm rounded-pill" onclick="abrirPlan(null)">+ Crear el primero</button>
@@ -133,7 +122,7 @@
     <div class="stat-card danger"><div class="sc-num" id="stVencidas">0</div><div class="sc-lbl">Vencidas</div></div>
   </div>
 
-  <div class="cro-toolbar">
+  <div class="mod-toolbar">
     <button class="btn btn-primary btn-sm rounded-pill" onclick="abrirActividad(null)">+ Actividad</button>
     <button class="btn btn-outline-primary btn-sm rounded-pill" onclick="abrirImportarTareas()">
       📥 Traer de Actividades
@@ -615,7 +604,7 @@ function pintarGantt() {
   const caja = document.getElementById('ganttInterior');
   const conFechas = actividades.filter(a => a.start_date || a.end_date);
   if (!conFechas.length) {
-    caja.innerHTML = `<div class="vacio"><div class="v-ic">📊</div>
+    caja.innerHTML = `<div class="mod-empty"><div class="me-ic">📊</div>
       <p class="mt-2">Ninguna actividad tiene fechas todavía.<br>
       Ponlas a mano o deja que la IA proponga el cronograma completo.</p></div>`;
     return;

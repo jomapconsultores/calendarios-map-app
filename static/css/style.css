@@ -807,3 +807,102 @@ textarea.form-control { resize: vertical; min-height: 70px; }
     .modal-footer { flex-wrap: wrap; gap: 6px; }
     .modal-footer .btn { flex: 1; min-width: 80px; text-align: center; }
 }
+
+/* ============================================
+   COMPONENTES COMUNES DE MÓDULO
+   Antes cada módulo repetía sus propias tarjetas de cifras y su propia barra
+   de herramientas dentro del <style> de la plantilla: tres copias del mismo
+   CSS que ya habían empezado a divergir (bordes distintos, tamaños distintos).
+   Aquí viven una sola vez, y así todos los módulos se ven como el mismo sistema.
+   ============================================ */
+
+/* ---- Cabecera de sección dentro de la página ---- */
+.mod-head {
+    display: flex; align-items: flex-end; justify-content: space-between;
+    gap: 12px; flex-wrap: wrap; margin-bottom: 14px;
+    padding-bottom: 10px; border-bottom: 1.5px solid var(--border);
+}
+.mod-head h2 {
+    font-size: 1.02rem; font-weight: 700; color: var(--dark);
+    margin: 0; letter-spacing: -.2px;
+}
+.mod-head .mh-sub { font-size: .76rem; color: var(--gray); margin: 2px 0 0; }
+.mod-head .mh-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+
+/* ---- Tarjetas de cifras ---- */
+.stats-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 16px; }
+.stat-card {
+    background: var(--white); border-radius: 14px; padding: 13px 16px;
+    border: 1.5px solid var(--border); display: flex; flex-direction: column; gap: 3px;
+    box-shadow: 0 1px 3px rgba(0,0,0,.05); transition: var(--transition);
+    position: relative; overflow: hidden;
+}
+.stat-card::before {
+    content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 3px;
+    background: var(--gray); opacity: .55;
+}
+.stat-card:hover { transform: translateY(-1px); box-shadow: 0 6px 16px rgba(0,0,0,.07); }
+.stat-card .sc-num { font-size: 1.6rem; font-weight: 700; line-height: 1; color: var(--dark); }
+.stat-card .sc-lbl { font-size: .73rem; color: var(--gray); font-weight: 500; }
+.stat-card.info::before    { background: var(--primary); opacity: 1; }
+.stat-card.success::before { background: #10b981; opacity: 1; }
+.stat-card.warning::before { background: #f59e0b; opacity: 1; }
+.stat-card.danger::before  { background: #ef4444; opacity: 1; }
+.stat-card.info .sc-num    { color: var(--primary); }
+.stat-card.success .sc-num { color: #10b981; }
+.stat-card.warning .sc-num { color: #f59e0b; }
+.stat-card.danger .sc-num  { color: #ef4444; }
+
+/* ---- Barra de herramientas de módulo ---- */
+.mod-toolbar {
+    display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 14px;
+    background: var(--white); border: 1.5px solid var(--border); border-radius: 14px;
+    padding: 9px 12px;
+}
+.mod-toolbar .mt-sep { width: 1px; align-self: stretch; background: var(--border); margin: 0 2px; }
+.mod-toolbar .mt-push { flex: 1; }
+
+/* ---- Estado vacío ---- */
+.mod-empty { text-align: center; color: var(--gray); padding: 44px 16px; }
+.mod-empty .me-ic { font-size: 2.4rem; margin-bottom: 6px; }
+.mod-empty p { font-size: .88rem; margin: 6px 0 14px; }
+
+/* ============================================
+   CONTADORES EN EL MENÚ
+   El menú decía qué módulos existen pero no cuánto trabajo hay dentro. Estos
+   distintivos se rellenan por JavaScript después de cargar la página, para no
+   añadir consultas a la base de datos al pintar cada pantalla.
+   ============================================ */
+.nav-badge {
+    display: none; min-width: 18px; height: 18px; padding: 0 5px;
+    border-radius: 999px; background: var(--danger); color: #fff;
+    font-size: .62rem; font-weight: 800; line-height: 18px; text-align: center;
+    flex-shrink: 0;
+}
+.nav-badge.show { display: inline-block; }
+.nav-badge.tono-neutro { background: rgba(255,255,255,.16); color: #cbd5e1; }
+.nav-badge.tono-aviso  { background: #f59e0b; color: #1e293b; }
+
+/* En el riel se ancla arriba a la derecha del icono. */
+.rail-btn { position: relative; }
+.rail-btn .nav-badge { position: absolute; top: 5px; right: 12px; }
+
+/* En los submenús va al final de la línea del título. */
+.panel-links .pl-t { display: flex; align-items: center; gap: 6px; }
+.panel-links .pl-t .nav-badge { margin-left: auto; }
+
+/* Módulos sin secciones internas: en vez de un submenú con un solo enlace que
+   repite el nombre del módulo ("Ir al panel" estando ya en el panel), se explica
+   en una línea qué se hace ahí. Un menú que se apunta a sí mismo es ruido. */
+.panel-note {
+    font-size: .72rem; color: #7c8ba1; line-height: 1.5;
+    padding: 8px 10px; margin-top: 4px;
+    background: rgba(255,255,255,.04); border-radius: 10px;
+    border-left: 2px solid rgba(255,255,255,.12);
+}
+/* Separador con título dentro de un submenú largo (Catálogos). */
+.panel-group {
+    font-size: .6rem; font-weight: 700; text-transform: uppercase;
+    letter-spacing: .08em; color: #5b6b80;
+    padding: 10px 10px 4px; margin-top: 4px;
+}

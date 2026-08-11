@@ -128,8 +128,9 @@
 @media (max-width: 420px) {
   .dir-table th:nth-child(4), .dir-table td:nth-child(4) { display: none; } /* celular */
   .act-table th:nth-child(5), .act-table td:nth-child(5) { display: none; } /* fin */
-  .dir-toolbar > *, .cro-toolbar > * { flex: 1 1 100%; }
-  .dir-toolbar input, .cro-toolbar select { max-width: none !important; }
+  .mod-toolbar > * { flex: 1 1 100%; }
+  .mod-toolbar input, .mod-toolbar select { max-width: none !important; }
+  .mod-toolbar .mt-sep, .mod-toolbar .mt-push { display: none; }
 }
 
 /* ============================================================
@@ -236,7 +237,7 @@
    9. IMPRESIÓN — que un listado salga limpio desde el teléfono
    ============================================================ */
 @media print {
-  .sidebar, .topbar, .plan-toolbar, .dir-toolbar, .cro-toolbar,
+  .sidebar, .topbar, .mod-toolbar,
   #instalarBanner, #toastZone, #bulkBar, .f-credit { display: none !important; }
   .app-main { margin-left: 0; }
   .content { padding: 0; }

@@ -4492,6 +4492,72 @@ def create_app():
     registrar_directorio(app, _ctx_modulos)
     registrar_cronograma(app, _ctx_modulos)
 
+    # Contadores del menú. Se cachean por usuario: el navegador los pide en cada
+    # pantalla y sin esto serían cuatro consultas por página vista.
+    _badges_cache = TTLCache(ttl=45, maxsize=128)
+
+    @app.route('/api/nav-badges')
+    @login_required
+    def nav_badges():
+        """Cuánto trabajo hay detrás de cada módulo, para el menú lateral.
+
+        Va por JavaScript y no en el context processor a propósito: así el
+        pintado de la página no espera a estas consultas. Si algo falla se
+        devuelve cero y el menú simplemente no muestra distintivo — un contador
+        no puede tumbar una pantalla."""
+        clave = f'{current_user.id}:{get_active_role_id(app, current_user.id)}'
+        val, hit = _badges_cache.get(clave)
+        if hit:
+            return jsonify(val)
+
+        hoy = date.today().isoformat()
+        datos = {'actividades': 0, 'proyectos': 0, 'calendario': 0,
+                 'cronograma': 0, 'directorio': 0, 'usuarios': 0}
+        try:
+            if user_can('todo') or user_can('planning'):
+                tareas = _filter_visible_tasks(app, app.supabase.get(
+                    'tasks', select='id,status,due_date,source,ms_email,created_by,'
+                                    'assigned_to,assigned_email,project_id') or [],
+                    current_user.id)
+                vencidas = [t for t in tareas
+                            if t.get('status') != 'done' and t.get('due_date')
+                            and t['due_date'] < hoy]
+                datos['actividades'] = sum(1 for t in vencidas if t.get('source') == 'ms_todo')
+                datos['proyectos']   = sum(1 for t in vencidas if t.get('source') != 'ms_todo')
+        except Exception:
+            pass
+        try:
+            if is_admin():
+                # Citas por aprobar y solicitudes de registro: son cosas que
+                # esperan una decisión de un administrador.
+                datos['calendario'] = len(app.supabase.get(
+                    'appointments', {'status': 'pending'}, select='id') or [])
+                datos['usuarios'] = len(app.supabase.get(
+                    'calendar_permissions', {'status': 'pending'}, select='id') or [])
+        except Exception:
+            pass
+        try:
+            if user_can('cronograma'):
+                planes = app.supabase.get('gantt_plans', select='id,created_by,status') or []
+                if not is_admin():
+                    planes = [p for p in planes if p.get('created_by') == str(current_user.id)]
+                ids = {p['id'] for p in planes if p.get('status') != 'archived'}
+                datos['cronograma'] = sum(
+                    1 for a in (app.supabase.get('gantt_activities',
+                                                 select='plan_id,status,end_date') or [])
+                    if a.get('plan_id') in ids and a.get('status') != 'done'
+                    and a.get('end_date') and a['end_date'] < hoy)
+        except Exception:
+            pass
+        try:
+            if user_can('directorio'):
+                datos['directorio'] = len(app.supabase.get('contacts', select='id') or [])
+        except Exception:
+            pass
+
+        _badges_cache.set(clave, datos)
+        return jsonify(datos)
+
     # ============================================================
     #  UTILITY
     # ============================================================
