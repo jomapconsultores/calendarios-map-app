@@ -711,9 +711,14 @@ def set_todo_default_target(app, email, list_id, list_name=''):
     tareas creadas en el sistema."""
     payload = (json.dumps({'email': email, 'list_id': list_id, 'list_name': list_name})
                if email and list_id else '')
-    filas = app.supabase.get('app_config', {'key': 'todo_default_target'}, select='id')
+    # app_config NO tiene columna `id`: su clave primaria es `key` (texto). Pedir
+    # 'id' devolvía un 400 y la rama de actualización no se ejecutaba nunca, así
+    # que guardar la lista por defecto fallaba en silencio y las tareas creadas
+    # aquí no subían a Microsoft. Se busca y se actualiza por `key`.
+    filas = app.supabase.get('app_config', {'key': 'todo_default_target'}, select='key')
     if filas:
-        ok = app.supabase.update('app_config', filas[0]['id'], {'value': payload})
+        ok = app.supabase.update('app_config', 'todo_default_target',
+                                 {'value': payload}, id_col='key')
     else:
         ok = bool(app.supabase.insert('app_config',
                                       {'key': 'todo_default_target', 'value': payload}))
@@ -1168,9 +1173,12 @@ def _guardar_estado_google(app, cambios):
         return
     payload = json.dumps(nuevo)
     try:
-        filas = app.supabase.get('app_config', {'key': GOOGLE_HEALTH_KEY}, select='id')
+        # Por `key`, no por `id`: app_config no tiene columna id (ver
+        # set_todo_default_target).
+        filas = app.supabase.get('app_config', {'key': GOOGLE_HEALTH_KEY}, select='key')
         if filas:
-            app.supabase.update('app_config', filas[0]['id'], {'value': payload})
+            app.supabase.update('app_config', GOOGLE_HEALTH_KEY,
+                                {'value': payload}, id_col='key')
         else:
             app.supabase.insert('app_config', {'key': GOOGLE_HEALTH_KEY, 'value': payload})
     except Exception as e:
