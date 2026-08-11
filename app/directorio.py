@@ -582,8 +582,14 @@ def registrar_directorio(app, ctx):
                             'error': f'El archivo supera los {MAX_ARCHIVO_MB} MB'})
 
         try:
-            leido = docs_mod.extraer(archivo.filename, contenido)
+            # El OCR se pasa como función: las fotos y los PDF escaneados no
+            # tienen texto que extraer y hay que leerlos con visión.
+            leido = docs_mod.extraer(
+                archivo.filename, contenido,
+                ocr=ia_mod.ocr_a_texto if ia_mod.ocr_disponible() else None)
         except docs_mod.FormatoNoSoportado as e:
+            return jsonify({'success': False, 'error': str(e)})
+        except ia_mod.IANoDisponible as e:
             return jsonify({'success': False, 'error': str(e)})
         except Exception as e:
             return jsonify({'success': False, 'error': f'No se pudo leer el archivo: {str(e)[:200]}'})
@@ -626,10 +632,12 @@ def registrar_directorio(app, ctx):
                     return jsonify({'success': False,
                                     'error': f'La IA no pudo clasificar el archivo: {str(e)[:200]}'})
         else:
-            # PDF o Word sin tablas: no hay otro camino que la IA.
+            # PDF, Word sin tablas o una foto ya pasada por OCR: el material es
+            # texto corrido y sólo la IA puede repartirlo en columnas.
             if not ia_mod.disponible():
+                que = 'Una foto' if leido['tipo'] == 'imagen' else 'Un PDF o un Word sin tablas'
                 return jsonify({'success': False,
-                                'error': 'Un PDF o un Word sin tablas necesita la clasificación con IA. '
+                                'error': f'{que} necesita la clasificación con IA. '
                                          + (ia_mod.estado()['motivo'] or '')})
             try:
                 crudos, avisos = ia_mod.clasificar_registros(
@@ -692,6 +700,7 @@ def registrar_directorio(app, ctx):
         for fila in vista:
             resumen[fila['estado']] = resumen.get(fila['estado'], 0) + 1
         return jsonify({'success': True, 'metodo': metodo, 'tipo': leido['tipo'],
+                        'ocr': leido.get('ocr', False),
                         'archivo': archivo.filename, 'avisos': avisos,
                         'resumen': resumen, 'filas': vista})
 

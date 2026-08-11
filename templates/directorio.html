@@ -48,6 +48,18 @@
 .act-list{max-height:180px;overflow-y:auto;border:1px solid #e2e8f0;border-radius:10px;padding:8px 12px;background:#f8fafc}
 .act-list li{font-size:.8rem;margin-bottom:4px}
 
+/* Zona de arrastre: el archivo suele llegar por correo o WhatsApp, así que lo
+   natural es soltarlo aquí, no ir a buscarlo al disco. */
+.zona-soltar{border:2px dashed #c7d2fe;border-radius:16px;background:#f8faff;
+  padding:26px 18px;text-align:center;cursor:pointer;transition:.15s}
+.zona-soltar:hover{border-color:#818cf8;background:#f1f5ff}
+.zona-soltar.encima{border-color:#4f46e5;background:#eef2ff;transform:scale(1.01)}
+.zona-soltar .zs-ic{font-size:2.2rem;line-height:1}
+.zona-soltar .zs-titulo{font-weight:700;color:#1e293b;margin-top:6px}
+.zona-soltar .zs-sub{font-size:.8rem;color:#64748b;margin-top:4px;line-height:1.5}
+.zona-soltar .zs-elegido{margin-top:10px;font-size:.84rem;font-weight:600;color:#4f46e5}
+.zona-soltar .zs-elegido:empty{display:none}
+
 .prev-row-nuevo td{background:#f0fdf4}
 .prev-row-duplicado td{background:#fef2f2}
 .prev-row-documento_invalido td{background:#fffbeb}
@@ -294,16 +306,29 @@
       <div class="modal-body">
         <div id="pasoArchivo">
           <p class="text-muted small">
-            Se aceptan Excel (.xlsx), CSV, PDF y Word (.docx). La IA lee el archivo y coloca cada dato
+            Excel, CSV, PDF, Word y <strong>fotos</strong>. La IA lee el archivo y coloca cada dato
             en la columna que le corresponde. Antes de guardar nada verás una vista previa con los
             duplicados marcados: <strong>los repetidos no se insertan</strong>.
           </p>
-          <div class="row g-3">
-            <div class="col-md-6">
-              <label class="form-label fw-semibold small">ARCHIVO</label>
-              <input type="file" id="archivoImport" class="form-control form-control-sm"
-                     accept=".xlsx,.xlsm,.xls,.csv,.pdf,.docx">
+
+          {# Zona de arrastre: lo normal es que el archivo llegue por correo o por
+             WhatsApp y se suelte aquí directamente, no que haya que buscarlo en
+             el disco. El <input> sigue existiendo para quien prefiera el botón. #}
+          <div id="zonaSoltar" class="zona-soltar">
+            <div class="zs-ic">📄</div>
+            <div class="zs-titulo">Arrastra aquí el archivo</div>
+            <div class="zs-sub">
+              Excel · CSV · PDF · Word · <strong>foto de una ficha</strong>
+              <br>o <button type="button" class="btn btn-link btn-sm p-0 align-baseline"
+                            onclick="document.getElementById('archivoImport').click()">búscalo en tu equipo</button>
             </div>
+            <div id="zsElegido" class="zs-elegido"></div>
+          </div>
+          <input type="file" id="archivoImport" class="d-none"
+                 accept=".xlsx,.xlsm,.xls,.csv,.pdf,.docx,.doc,.jpg,.jpeg,.png,.webp,.heic,.heif,.bmp,.tif,.tiff,.gif"
+                 onchange="archivoElegido(this.files[0])">
+
+          <div class="row g-3 mt-1">
             <div class="col-md-6">
               <label class="form-label fw-semibold small">SECTOR AL QUE PERTENECEN</label>
               <select id="sectorImport" class="form-select form-select-sm"></select>
@@ -423,7 +448,8 @@ document.addEventListener('DOMContentLoaded', () => {
     casilla.checked = false; casilla.disabled = true;
     document.getElementById('estadoIa').textContent = '— no disponible: ' + (IA.motivo || '');
   } else {
-    document.getElementById('estadoIa').textContent = '(' + IA.modelo + ')';
+    document.getElementById('estadoIa').textContent =
+      '(' + IA.proveedor + ' · ' + IA.modelo + ')' + (IA.ocr ? ' · OCR para fotos ✔' : '');
   }
 
   cargarTodo().then(() => {
@@ -818,16 +844,63 @@ function volverAArchivo() {
   document.getElementById('btnVolverArchivo').style.display = 'none';
   document.getElementById('estadoAnalisis').textContent = '';
   previaFilas = []; previaMeta = {};
+  archivoPendiente = null;
+  const el = document.getElementById('zsElegido'); if (el) el.innerHTML = '';
 }
 
+// ——————————————————————————————————————————
+//  ARRASTRAR Y SOLTAR
+// ——————————————————————————————————————————
+let archivoPendiente = null;
+
+function archivoElegido(f) {
+  if (!f) return;
+  archivoPendiente = f;
+  const kb = f.size > 1048576 ? (f.size/1048576).toFixed(1) + ' MB' : Math.round(f.size/1024) + ' KB';
+  const esFoto = /\.(jpe?g|png|webp|heic|heif|bmp|tiff?|gif)$/i.test(f.name);
+  document.getElementById('zsElegido').innerHTML =
+    `${esFoto ? '🖼️' : '📄'} ${esc(f.name)} <span class="text-muted fw-normal">(${kb})</span>` +
+    (esFoto && !IA.ocr ? '<div class="text-danger small fw-normal mt-1">⚠ Para leer fotos hace falta el OCR (MISTRAL_API_KEY en el servidor)</div>' : '');
+}
+
+(function () {
+  const zona = document.getElementById('zonaSoltar');
+  if (!zona) return;
+  zona.addEventListener('click', function (e) {
+    if (e.target.tagName !== 'BUTTON') document.getElementById('archivoImport').click();
+  });
+  ['dragenter', 'dragover'].forEach(function (ev) {
+    zona.addEventListener(ev, function (e) { e.preventDefault(); zona.classList.add('encima'); });
+  });
+  ['dragleave', 'drop'].forEach(function (ev) {
+    zona.addEventListener(ev, function (e) { e.preventDefault(); zona.classList.remove('encima'); });
+  });
+  zona.addEventListener('drop', function (e) {
+    const f = e.dataTransfer.files && e.dataTransfer.files[0];
+    if (f) archivoElegido(f);
+  });
+  // Sin esto, soltar el archivo fuera del recuadro hace que el navegador lo
+  // ABRA y se pierda la pantalla de importación a medias.
+  ['dragover', 'drop'].forEach(function (ev) {
+    window.addEventListener(ev, function (e) {
+      if (!zona.contains(e.target)) e.preventDefault();
+    });
+  });
+})();
+
 async function analizarArchivo() {
+  // Puede venir del <input> o de haberlo arrastrado a la zona.
   const entrada = document.getElementById('archivoImport');
-  if (!entrada.files.length) { aviso('Elige un archivo primero', 'warning'); return; }
+  const archivo = archivoPendiente || (entrada.files.length ? entrada.files[0] : null);
+  if (!archivo) { aviso('Arrastra un archivo o elígelo primero', 'warning'); return; }
   const estado = document.getElementById('estadoAnalisis');
-  estado.textContent = 'Leyendo y clasificando… esto puede tardar en archivos grandes.';
+  const esFoto = /\.(jpe?g|png|webp|heic|heif|bmp|tiff?|gif)$/i.test(archivo.name);
+  estado.textContent = esFoto
+    ? 'Leyendo la foto con OCR y clasificando… puede tardar medio minuto.'
+    : 'Leyendo y clasificando… esto puede tardar en archivos grandes.';
 
   const formulario = new FormData();
-  formulario.append('file', entrada.files[0]);
+  formulario.append('file', archivo);
   formulario.append('usar_ia', document.getElementById('usarIa').checked ? '1' : '0');
   const sector = document.getElementById('sectorImport').value;
   if (sector) formulario.append('sector_id', sector);
@@ -850,7 +923,7 @@ function pintarPrevia(r) {
   const resumen = r.resumen || {};
   document.getElementById('resumenPrevia').innerHTML =
     `<strong>${resumen.total || 0}</strong> registro(s) leído(s) del ${esc(r.tipo)}
-     (clasificados ${r.metodo === 'ia' ? 'con IA' : 'por las cabeceras del archivo'}) ·
+     (${r.ocr ? 'leído con <strong>OCR</strong> y ' : ''}clasificado ${r.metodo === 'ia' ? 'con IA' : 'por las cabeceras del archivo'}) ·
      <span class="text-success fw-bold">${resumen.nuevo || 0} nuevos</span> ·
      <span class="text-danger fw-bold">${resumen.duplicado || 0} duplicados</span> ·
      <span class="text-warning fw-bold">${resumen.documento_invalido || 0} con documento inválido</span> ·

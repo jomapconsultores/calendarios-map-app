@@ -19,9 +19,12 @@ La IA es OPCIONAL. Sin ANTHROPIC_API_KEY el módulo entero queda desactivado y
 las importaciones caen al mapeo por cabeceras, que ya funciona sin ella. Nunca
 se rompe la aplicación por no tener clave.
 """
+import base64
 import json
 import os
 import time
+
+import requests as req_lib
 
 try:
     import anthropic
@@ -30,6 +33,22 @@ except ImportError:                                   # pragma: no cover
     ANTHROPIC_DISPONIBLE = False
 
 MODELO = os.getenv('ANTHROPIC_MODEL', 'claude-opus-5')
+
+# ── Mistral ──────────────────────────────────────────────────────────────────
+# Se habla por HTTP y no con su SDK: el proyecto ya usa `requests` para Supabase,
+# Microsoft Graph y el SRI, así que no se añade una dependencia nueva por dos
+# llamadas. Mistral aporta dos cosas que Claude no cubre aquí:
+#   * OCR de verdad (mistral-ocr): lee FOTOS y PDF escaneados, que es lo que
+#     traen los clientes cuando mandan una ficha hecha con el móvil.
+#   * Una alternativa de clasificación más barata para lotes grandes.
+MISTRAL_API   = 'https://api.mistral.ai/v1'
+MISTRAL_TEXTO = os.getenv('MISTRAL_MODEL', 'mistral-large-latest')
+MISTRAL_OCR   = os.getenv('MISTRAL_OCR_MODEL', 'mistral-ocr-latest')
+_TIMEOUT_MISTRAL = (10, 180)
+
+# Qué motor usa la clasificación: 'auto' toma Mistral si hay clave suya y si no
+# Claude. Se puede forzar con IA_PROVEEDOR=anthropic|mistral.
+PROVEEDOR = (os.getenv('IA_PROVEEDOR') or 'auto').lower()
 
 # Cuántas filas se mandan por llamada. Un lote grande gasta menos llamadas pero
 # arriesga topar el límite de salida; 40 es el punto donde un Excel de 500 filas
@@ -156,27 +175,154 @@ class IANoDisponible(Exception):
     """La clasificación con IA se pidió pero no hay clave configurada."""
 
 
-def disponible():
-    """True si se puede llamar a la IA en este despliegue."""
+def _hay_claude():
     return bool(ANTHROPIC_DISPONIBLE and os.getenv('ANTHROPIC_API_KEY'))
 
 
+def _hay_mistral():
+    return bool(os.getenv('MISTRAL_API_KEY'))
+
+
+def proveedor_activo():
+    """Qué motor se va a usar para clasificar: 'mistral', 'anthropic' o None."""
+    if PROVEEDOR == 'mistral':
+        return 'mistral' if _hay_mistral() else None
+    if PROVEEDOR == 'anthropic':
+        return 'anthropic' if _hay_claude() else None
+    # auto: Mistral primero, porque es quien además hace el OCR de las fotos y
+    # así una sola clave cubre todo el flujo de importación.
+    if _hay_mistral():
+        return 'mistral'
+    return 'anthropic' if _hay_claude() else None
+
+
+def disponible():
+    """True si se puede clasificar con IA en este despliegue."""
+    return proveedor_activo() is not None
+
+
+def ocr_disponible():
+    """El OCR (fotos y PDF escaneados) sólo lo hace Mistral."""
+    return _hay_mistral()
+
+
 def estado():
-    """Explica al usuario por qué la IA está o no disponible, en lugar de
-    fallar en silencio a mitad de una importación."""
-    if not ANTHROPIC_DISPONIBLE:
-        return {'disponible': False,
-                'motivo': 'Falta la librería anthropic en el servidor (pip install anthropic)'}
-    if not os.getenv('ANTHROPIC_API_KEY'):
-        return {'disponible': False,
-                'motivo': 'Falta ANTHROPIC_API_KEY en el archivo .env del servidor'}
-    return {'disponible': True, 'motivo': None, 'modelo': MODELO}
+    """Explica al usuario qué hay disponible y qué falta, en lugar de fallar en
+    silencio a mitad de una importación."""
+    motor = proveedor_activo()
+    if not motor:
+        faltan = []
+        if not _hay_mistral():
+            faltan.append('MISTRAL_API_KEY')
+        if not _hay_claude():
+            faltan.append('ANTHROPIC_API_KEY'
+                          if ANTHROPIC_DISPONIBLE else 'la librería anthropic')
+        return {'disponible': False, 'ocr': False,
+                'motivo': 'Falta ' + ' o '.join(faltan) + ' en el servidor'}
+    return {
+        'disponible': True,
+        'motivo': None,
+        'proveedor': motor,
+        'modelo': MISTRAL_TEXTO if motor == 'mistral' else MODELO,
+        # El OCR se anuncia aparte: sin él, las fotos y los PDF escaneados no
+        # se pueden importar aunque la clasificación sí funcione.
+        'ocr': ocr_disponible(),
+        'modelo_ocr': MISTRAL_OCR if ocr_disponible() else None,
+    }
 
 
 def _cliente():
-    if not disponible():
+    if not _hay_claude():
         raise IANoDisponible(estado()['motivo'])
     return anthropic.Anthropic()
+
+
+# ============================================================
+#  MISTRAL
+# ============================================================
+def _mistral_cabeceras():
+    clave = os.getenv('MISTRAL_API_KEY')
+    if not clave:
+        raise IANoDisponible('Falta MISTRAL_API_KEY en el servidor')
+    return {'Authorization': f'Bearer {clave}', 'Content-Type': 'application/json'}
+
+
+def _pedir_json_mistral(instrucciones, contenido, esquema, max_tokens=8000):
+    """Una llamada a Mistral que devuelve JSON.
+
+    Se usa `response_format: json_object` y el esquema va descrito en las
+    instrucciones. El esquema estricto no está disponible en todos los modelos,
+    y el resultado se normaliza igualmente aguas abajo (`_normalizar` del
+    directorio tolera claves que falten), así que forzar sólo "esto es JSON" es
+    lo robusto aquí."""
+    cuerpo = {
+        'model': MISTRAL_TEXTO,
+        'response_format': {'type': 'json_object'},
+        'max_tokens': max_tokens,
+        'messages': [
+            {'role': 'system',
+             'content': instrucciones +
+                        '\n\nResponde ÚNICAMENTE con un objeto JSON que cumpla '
+                        'exactamente este esquema:\n' +
+                        json.dumps(esquema, ensure_ascii=False)},
+            {'role': 'user', 'content': contenido},
+        ],
+    }
+    r = req_lib.post(f'{MISTRAL_API}/chat/completions', headers=_mistral_cabeceras(),
+                     json=cuerpo, timeout=_TIMEOUT_MISTRAL)
+    if r.status_code != 200:
+        raise RuntimeError(f'Mistral respondió HTTP {r.status_code}: {r.text[:200]}')
+    texto = (r.json().get('choices') or [{}])[0].get('message', {}).get('content', '')
+    if not texto:
+        raise RuntimeError('Mistral devolvió una respuesta vacía')
+    return json.loads(texto)
+
+
+# Formatos que el OCR sabe leer. El PDF entra como documento; el resto, como imagen.
+OCR_IMAGENES = {'.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png',
+                '.webp': 'image/webp', '.gif': 'image/gif', '.bmp': 'image/bmp',
+                '.tif': 'image/tiff', '.tiff': 'image/tiff', '.heic': 'image/heic'}
+
+
+def ocr_a_texto(contenido, nombre_archivo, limite_paginas=100):
+    """Lee una FOTO o un PDF escaneado y devuelve sus líneas de texto.
+
+    Es lo que permite importar lo que el cliente manda de verdad: una ficha
+    fotografiada con el móvil, o un PDF que es una imagen y del que
+    `extract_text` no saca ni un carácter.
+
+    Devuelve una lista de líneas, el mismo formato que `documentos.extraer`
+    entrega en `bloques`, para que la clasificación no note la diferencia."""
+    if not ocr_disponible():
+        raise IANoDisponible(
+            'El OCR necesita MISTRAL_API_KEY en el servidor: sin ella no se '
+            'pueden leer fotos ni PDF escaneados.')
+
+    nombre = (nombre_archivo or '').lower()
+    extension = '.' + nombre.rsplit('.', 1)[-1] if '.' in nombre else ''
+    b64 = base64.b64encode(contenido).decode('ascii')
+
+    if extension == '.pdf':
+        documento = {'type': 'document_url',
+                     'document_url': f'data:application/pdf;base64,{b64}'}
+    else:
+        tipo = OCR_IMAGENES.get(extension, 'image/jpeg')
+        documento = {'type': 'image_url', 'image_url': f'data:{tipo};base64,{b64}'}
+
+    r = req_lib.post(f'{MISTRAL_API}/ocr', headers=_mistral_cabeceras(),
+                     json={'model': MISTRAL_OCR, 'document': documento},
+                     timeout=_TIMEOUT_MISTRAL)
+    if r.status_code != 200:
+        raise RuntimeError(f'El OCR respondió HTTP {r.status_code}: {r.text[:200]}')
+
+    lineas = []
+    for pagina in (r.json().get('pages') or [])[:limite_paginas]:
+        for linea in (pagina.get('markdown') or '').splitlines():
+            limpia = linea.strip().lstrip('#').strip()
+            # Se descartan los separadores de tabla que mete el markdown.
+            if limpia and set(limpia) - set('|-: '):
+                lineas.append(limpia)
+    return lineas
 
 
 def _pedir_json(instrucciones, contenido, esquema, max_tokens=16000, effort='medium'):
@@ -250,7 +396,11 @@ def clasificar_registros(material, sectores=None, origen='archivo', progreso=Non
         contenido = (f'Material extraído de un {origen}. Conviértelo en registros '
                      f'estructurados.{contexto_sectores}\n\n---\n{bloque}\n---')
         try:
-            datos = _pedir_json(_INSTRUCCIONES + contexto_sectores, contenido, esquema)
+            if proveedor_activo() == 'mistral':
+                datos = _pedir_json_mistral(_INSTRUCCIONES + contexto_sectores,
+                                            contenido, esquema)
+            else:
+                datos = _pedir_json(_INSTRUCCIONES + contexto_sectores, contenido, esquema)
             registros.extend(datos.get('registros') or [])
         except IANoDisponible:
             raise
@@ -291,5 +441,8 @@ def planificar_cronograma(actividades, contexto='', fecha_inicio=None, fecha_lim
     contenido = ('\n'.join(partes) +
                  '\n\nActividades a planificar:\n' + listado)
 
+    if proveedor_activo() == 'mistral':
+        return _pedir_json_mistral(_INSTRUCCIONES_GANTT, contenido, _ESQUEMA_GANTT,
+                                   max_tokens=16000)
     return _pedir_json(_INSTRUCCIONES_GANTT, contenido, _ESQUEMA_GANTT,
                        max_tokens=24000, effort='high')

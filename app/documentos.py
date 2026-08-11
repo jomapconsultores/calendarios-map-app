@@ -44,7 +44,15 @@ EXTENSIONES = {
     '.csv':  'csv',
     '.pdf':  'pdf',
     '.docx': 'word', '.doc': 'word',
+    # Fotos: lo que de verdad manda un cliente cuando le pides sus datos —una
+    # ficha fotografiada con el móvil—. Se leen con OCR (ver app/ia.py).
+    '.jpg': 'imagen', '.jpeg': 'imagen', '.png': 'imagen', '.webp': 'imagen',
+    '.heic': 'imagen', '.heif': 'imagen', '.bmp': 'imagen',
+    '.tif': 'imagen', '.tiff': 'imagen', '.gif': 'imagen',
 }
+
+# Extensiones que se aceptan en el selector de archivos del navegador.
+ACEPTA_NAVEGADOR = ','.join(sorted(EXTENSIONES))
 
 # Cabeceras que se reconocen sin IA. La clave es lo que se lee en el archivo
 # (en minúsculas y sin tildes), el valor es la columna de `contacts`.
@@ -193,10 +201,9 @@ def _leer_pdf(contenido):
                 bloques.append(linea)
         if numero >= 200:      # tope de seguridad para PDF enormes
             break
-    if not bloques:
-        raise FormatoNoSoportado(
-            'El PDF no tiene texto seleccionable (parece escaneado). '
-            'Conviértelo a texto o usa un Excel.')
+    # Sin texto seleccionable el PDF es una imagen: lo resuelve el OCR, no este
+    # lector. Se avisa con una marca para que `extraer` lo derive, en vez de
+    # rechazar el archivo como se hacía antes.
     return bloques
 
 
@@ -221,22 +228,52 @@ def _leer_word(contenido):
     return cabeceras, filas, bloques
 
 
-def extraer(nombre_archivo, contenido):
-    """Lee el archivo y devuelve {'tipo', 'cabeceras', 'filas', 'bloques'}."""
+def extraer(nombre_archivo, contenido, ocr=None):
+    """Lee el archivo y devuelve {'tipo', 'cabeceras', 'filas', 'bloques', 'ocr'}.
+
+    `ocr` es una función `(contenido, nombre) -> [líneas]` que se usa para lo que
+    no tiene texto extraíble: una foto, o un PDF escaneado. Se recibe como
+    parámetro en lugar de importar app/ia.py aquí para que este módulo siga
+    siendo sólo un lector de archivos, sin saber qué motor de IA hay detrás."""
     tipo = detectar_tipo(nombre_archivo)
     if not tipo:
         raise FormatoNoSoportado(
-            'Formato no soportado. Se aceptan Excel (.xlsx), CSV, PDF y Word (.docx).')
+            'Formato no soportado. Se aceptan Excel (.xlsx), CSV, PDF, Word (.docx) '
+            'y fotos (JPG, PNG, HEIC…).')
 
     cabeceras, filas, bloques = [], [], []
+    uso_ocr = False
+
     if tipo == 'excel':
         cabeceras, filas = _leer_excel(contenido)
     elif tipo == 'csv':
         cabeceras, filas = _leer_csv(contenido)
-    elif tipo == 'pdf':
-        bloques = _leer_pdf(contenido)
     elif tipo == 'word':
         cabeceras, filas, bloques = _leer_word(contenido)
+    elif tipo == 'imagen':
+        # Una foto no tiene texto que extraer: o hay OCR, o no hay nada.
+        if not ocr:
+            raise FormatoNoSoportado(
+                'Para importar una foto hace falta el OCR, que necesita '
+                'MISTRAL_API_KEY configurada en el servidor.')
+        bloques = ocr(contenido, nombre_archivo)
+        uso_ocr = True
+        if not bloques:
+            raise FormatoNoSoportado('No se reconoció ningún texto en la imagen.')
+    elif tipo == 'pdf':
+        bloques = _leer_pdf(contenido)
+        if not bloques:
+            # PDF escaneado: es una imagen dentro de un PDF. Antes se rechazaba;
+            # ahora se manda al OCR, que es justo el caso para el que sirve.
+            if not ocr:
+                raise FormatoNoSoportado(
+                    'El PDF no tiene texto seleccionable (está escaneado). Para '
+                    'leerlo hace falta el OCR, que necesita MISTRAL_API_KEY '
+                    'configurada en el servidor.')
+            bloques = ocr(contenido, nombre_archivo)
+            uso_ocr = True
+            if not bloques:
+                raise FormatoNoSoportado('No se reconoció ningún texto en el PDF escaneado.')
 
     # Toda fila tabular se serializa también como bloque de texto: es lo que se
     # le entrega a la IA cuando las cabeceras no alcanzan para mapear.
@@ -245,7 +282,8 @@ def extraer(nombre_archivo, contenido):
         if partes:
             bloques.append(' | '.join(partes))
 
-    return {'tipo': tipo, 'cabeceras': cabeceras, 'filas': filas, 'bloques': bloques}
+    return {'tipo': tipo, 'cabeceras': cabeceras, 'filas': filas,
+            'bloques': bloques, 'ocr': uso_ocr}
 
 
 # ============================================================
