@@ -11,6 +11,9 @@
 {% if is_effective_admin %}
 <button class="btn btn-outline-secondary btn-sm rounded-pill" onclick="syncCalendar()" title="Sincronizar citas sin evento Google">🔄 Sincronizar</button>
 <button class="btn btn-outline-warning btn-sm rounded-pill" onclick="fixCalendarEvents()" title="Actualizar ubicación y enlace en TODOS los eventos ya sincronizados">📍 Fix ubicaciones</button>
+{# Puente con ATLAS: sólo afecta al calendario ATLAS, en los dos sentidos. #}
+<button class="btn btn-sm rounded-pill fw-bold" id="btnAtlas" style="background:#EA4335;color:#fff;border:0"
+        onclick="sincronizarAtlas()" title="Traer y llevar reuniones con la agenda de ATLAS">🎓 ATLAS</button>
 {% if google_connected_global %}
 <span class="status-pill on">✅ Google</span>
 {% else %}
@@ -1007,6 +1010,42 @@ function rej(id) {
       cal.refetchEvents(); loadPending();
     });
   }
+}
+
+// ——————————————————————————————————————————
+//  PUENTE CON ATLAS
+//  Trae las reuniones de ATLAS y lleva allá las citas del calendario ATLAS.
+//  Sólo afecta a ESE calendario: el disparador es la cuenta atlas.cenest@gmail.com.
+// ——————————————————————————————————————————
+async function sincronizarAtlas() {
+  const b = document.getElementById('btnAtlas');
+  const original = b.innerHTML;
+  b.disabled = true; b.innerHTML = '⏳ Sincronizando…';
+  let r;
+  try {
+    r = await fetch('/calendar/api/atlas-sync', { method: 'POST' }).then(x => x.json());
+  } catch (e) {
+    r = { success: false, error: 'Sin conexión' };
+  }
+  b.disabled = false; b.innerHTML = original;
+  if (!r.success) { alert('❌ ' + (r.error || 'No se pudo sincronizar con ATLAS')); return; }
+  const partes = [];
+  if (r.traidas)            partes.push(r.traidas + ' traída(s) de ATLAS');
+  if (r.llevadas)           partes.push(r.llevadas + ' enviada(s) a ATLAS');
+  if (r.actualizadas_aqui)  partes.push(r.actualizadas_aqui + ' actualizada(s) aquí');
+  if (r.actualizadas_alla)  partes.push(r.actualizadas_alla + ' actualizada(s) allá');
+  if (r.canceladas)         partes.push(r.canceladas + ' cancelada(s) (borradas en ATLAS)');
+  let msg = partes.length ? '✅ ' + partes.join('
+✅ ') : '✔ Todo estaba al día.';
+  if (r.conflictos) msg += '
+
+⚠️ ' + r.conflictos + ' cita(s) cambiaron en los dos sistemas. Se conservó la versión de ATLAS.';
+  if (r.errores && r.errores.length) msg += '
+
+⚠️ ' + r.errores.join('
+');
+  alert(msg);
+  if (partes.length) location.reload();
 }
 
 function syncCalendar() {

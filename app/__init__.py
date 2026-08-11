@@ -70,6 +70,7 @@ from . import browser_sync as _browser_sync
 # necesitan como parámetro), así que no se forma ciclo de importación.
 from .directorio import registrar_directorio
 from .cronograma import registrar_cronograma
+from . import atlas_sync as _atlas
 
 load_dotenv()
 os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
@@ -4726,6 +4727,40 @@ def create_app():
     def health():
         return jsonify({'status': 'ok'})
 
+    # ============================================================
+    #  PUENTE CON ATLAS
+    # ============================================================
+    @app.route('/calendar/api/atlas-sync', methods=['POST'])
+    @login_required
+    def api_atlas_sync():
+        """Sincroniza en los dos sentidos la agenda de ATLAS con la de aquí."""
+        if not user_can('calendar'):
+            return jsonify({'success': False, 'error': 'Sin acceso al Calendario'}), 403
+        return jsonify(_atlas.sincronizar(app, TIMEZONE))
+
+    @app.route('/calendar/api/atlas-estado', methods=['GET'])
+    @login_required
+    def api_atlas_estado():
+        estado = _atlas.estado()
+        if estado['disponible']:
+            try:
+                enlazadas = app.supabase.get(
+                    'appointments', {'calendar_id': _atlas.CALENDARIO_ATLAS}, select='atlas_reunion_id') or []
+                estado['enlazadas'] = sum(1 for c in enlazadas if c.get('atlas_reunion_id'))
+                estado['total_calendario'] = len(enlazadas)
+            except Exception:
+                pass
+        return jsonify(estado)
+
+    @app.route('/calendar/api/atlas-sync-cron', methods=['POST', 'GET'])
+    def api_atlas_sync_cron():
+        """Misma pasada, disparada por un cron externo (sin sesión)."""
+        secreto = app.config.get('CRON_SECRET') or ''
+        recibido = request.headers.get('X-Cron-Secret') or request.args.get('secret') or ''
+        if not secreto or recibido != secreto:
+            return jsonify({'success': False, 'error': 'No autorizado'}), 401
+        return jsonify(_atlas.sincronizar(app, TIMEZONE))
+
     @app.route('/calendar/api/google-reconnect', methods=['POST'])
     @login_required
     def api_google_reconnect():
@@ -4773,5 +4808,7 @@ def create_app():
         # Mantiene vivo el permiso de Google y sube las citas que quedaron
         # atrasadas en cuanto la conexión vuelve.
         start_google_autoheal(app, interval_min=60)
+        # Puente con la agenda de ATLAS, en los dos sentidos.
+        _atlas.arrancar_autosync(app, TIMEZONE, interval_min=10)
 
     return app
