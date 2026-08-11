@@ -313,6 +313,47 @@ def registrar_directorio(app, ctx):
             return jsonify({'success': False, 'error': 'Nada que actualizar'})
         return jsonify({'success': db().update('sectors', sid, cambios)})
 
+    @app.route('/directorio/api/sectores/<sid>/mover', methods=['POST'])
+    @login_required
+    def directorio_mover_sector(sid):
+        """Pasa TODOS los registros de un sector a otro.
+
+        Existe porque el borrado de un sector con registros dice «muévelos a
+        otro sector» y hasta ahora no había ninguna forma de hacerlo: el consejo
+        no se podía seguir. Body: {destino: <id de sector> | null}."""
+        if not _puede_editar():
+            return _sin_acceso()
+        if not db().get('sectors', {'id': sid}, select='id'):
+            return jsonify({'success': False, 'error': 'Sector de origen no encontrado'}), 404
+
+        destino = (request.get_json() or {}).get('destino') or None
+        if destino:
+            filas = db().get('sectors', {'id': destino}, select='id,name')
+            if not filas:
+                return jsonify({'success': False, 'error': 'Sector de destino no encontrado'}), 404
+            nombre_destino = filas[0]['name']
+        else:
+            nombre_destino = 'Sin sector'      # destino nulo = dejarlos sueltos
+
+        registros = db().get('contacts', {'sector_id': sid}, select='id,doc_number') or []
+        if not registros:
+            return jsonify({'success': True, 'movidos': 0,
+                            'mensaje': 'Ese sector no tenía registros'})
+
+        movidos = 0
+        ahora = datetime.now(timezone.utc).isoformat()
+        for r in registros:
+            if db().update('contacts', r['id'], {'sector_id': destino,
+                                                 'updated_at': ahora,
+                                                 'updated_by': current_user.id}):
+                movidos += 1
+                # Cambiar de sector es una modificación del registro: queda en la
+                # bitácora como cualquier otra, con su motivo.
+                _anotar(r['id'], r.get('doc_number'), 'update',
+                        f'Cambio masivo de sector a «{nombre_destino}»',
+                        {'sector_id': (sid, destino)})
+        return jsonify({'success': True, 'movidos': movidos, 'destino': nombre_destino})
+
     @app.route('/directorio/api/sectores/<sid>', methods=['DELETE'])
     @login_required
     def directorio_borrar_sector(sid):

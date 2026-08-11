@@ -107,6 +107,15 @@
     <option value="cedula">Sólo cédula</option>
     <option value="pasaporte">Sólo pasaporte</option>
   </select>
+  <select id="filtroOrigen" class="form-select form-select-sm" style="max-width:180px" onchange="pintarTabla()">
+    <option value="">Todo origen</option>
+    <option value="manual">✍️ Cargado a mano</option>
+    <option value="excel">📊 Excel / CSV</option>
+    <option value="pdf">📄 PDF</option>
+    <option value="word">📝 Word</option>
+    <option value="imagen">🖼️ Foto (OCR)</option>
+    <option value="atlas">🎓 ATLAS</option>
+  </select>
   <div style="flex:1"></div>
   <button class="btn btn-outline-dark btn-sm rounded-pill" onclick="abrirSectores()">🏷️ Administrar sectores</button>
 </div>
@@ -201,6 +210,13 @@
               <div class="col-md-6">
                 <label class="form-label fw-semibold small">SECTOR</label>
                 <select id="cSector" class="form-select form-select-sm"></select>
+              </div>
+              <div class="col-12">
+                {# De dónde salió este registro. Se guardaba desde el principio
+                   pero no se veía en ninguna parte, así que no había forma de
+                   saber si un dato lo tecleó alguien o vino de un archivo. #}
+                <div class="modal-section-label mb-1">Procedencia del registro</div>
+                <div id="cOrigen" class="small text-muted"></div>
               </div>
             </div>
           </div>
@@ -394,33 +410,67 @@
       </div>
       <div class="modal-body">
         <p class="text-muted small">
-          Cada base de datos se distingue por su sector: de dónde viene el registro y qué servicio recibe.
+          El sector dice <strong>de dónde viene cada registro y qué servicio recibe</strong>.
+          Crea los que necesites: no hay una lista fija.
         </p>
-        <div class="row g-2 align-items-end mb-3">
-          <div class="col-md-4">
-            <label class="form-label fw-semibold small">NOMBRE</label>
-            <input id="sNombre" class="form-control form-control-sm" placeholder="Ej.: Auditorías">
+
+        <div class="border rounded-3 p-3 mb-3" style="background:#f8faff">
+          <div class="fw-semibold small mb-2" id="sFormTitulo">➕ Nuevo sector</div>
+          <input type="hidden" id="sId">
+          <div class="row g-2 align-items-end">
+            <div class="col-md-4">
+              <label class="form-label fw-semibold small">NOMBRE *</label>
+              <input id="sNombre" class="form-control form-control-sm" placeholder="Ej.: Auditorías">
+            </div>
+            <div class="col-md-4">
+              <label class="form-label fw-semibold small">DESCRIPCIÓN</label>
+              <input id="sDescripcion" class="form-control form-control-sm"
+                     placeholder="Qué servicio agrupa">
+            </div>
+            <div class="col-md-2">
+              <label class="form-label fw-semibold small">ÍCONO</label>
+              <input id="sIcono" class="form-control form-control-sm" value="📁" maxlength="4">
+            </div>
+            <div class="col-md-2">
+              <label class="form-label fw-semibold small">COLOR</label>
+              <input id="sColor" type="color" class="form-control form-control-color form-control-sm" value="#4f46e5">
+            </div>
           </div>
-          <div class="col-md-4">
-            <label class="form-label fw-semibold small">DESCRIPCIÓN</label>
-            <input id="sDescripcion" class="form-control form-control-sm">
-          </div>
-          <div class="col-md-2">
-            <label class="form-label fw-semibold small">ÍCONO</label>
-            <input id="sIcono" class="form-control form-control-sm" value="📁" maxlength="4">
-          </div>
-          <div class="col-md-1">
-            <label class="form-label fw-semibold small">COLOR</label>
-            <input id="sColor" type="color" class="form-control form-control-color form-control-sm" value="#4f46e5">
-          </div>
-          <div class="col-md-1">
-            <button class="btn btn-primary btn-sm w-100" onclick="crearSector()">+</button>
+          <div class="mt-2 d-flex gap-2">
+            <button class="btn btn-primary btn-sm rounded-pill" id="sBtnGuardar" onclick="guardarSector()">
+              ➕ Crear sector
+            </button>
+            <button class="btn btn-outline-secondary btn-sm rounded-pill" id="sBtnCancelar"
+                    style="display:none" onclick="limpiarFormSector()">Cancelar</button>
           </div>
         </div>
+
         <table class="dir-table">
           <thead><tr><th>Sector</th><th>Descripción</th><th>Registros</th><th></th></tr></thead>
           <tbody id="sectoresCuerpo"></tbody>
         </table>
+
+        {# Mover registros: el borrado de un sector con contenido aconseja
+           «muévelos a otro sector», y hasta ahora no había forma de hacerlo. #}
+        <div class="border rounded-3 p-3 mt-3">
+          <div class="fw-semibold small mb-2">🔀 Mover registros de un sector a otro</div>
+          <div class="row g-2 align-items-end">
+            <div class="col-md-5">
+              <label class="form-label fw-semibold small">DESDE</label>
+              <select id="movDesde" class="form-select form-select-sm"></select>
+            </div>
+            <div class="col-md-5">
+              <label class="form-label fw-semibold small">HACIA</label>
+              <select id="movHacia" class="form-select form-select-sm"></select>
+            </div>
+            <div class="col-md-2">
+              <button class="btn btn-outline-primary btn-sm w-100" onclick="moverSector()">Mover</button>
+            </div>
+          </div>
+          <div class="small text-muted mt-2">
+            Cada registro movido queda anotado en su bitácora con el motivo.
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -536,9 +586,11 @@ function sectorDe(id) { return sectores.find(s => s.id === id); }
 function contactosFiltrados() {
   const texto = document.getElementById('buscar').value.trim().toLowerCase();
   const tipo  = document.getElementById('filtroTipo').value;
+  const origen = document.getElementById('filtroOrigen').value;
   return contactos.filter(c => {
     if (sectorActivo && c.sector_id !== sectorActivo) return false;
     if (tipo && c.doc_type !== tipo) return false;
+    if (origen && (c.source || 'manual') !== origen) return false;
     if (!texto) return true;
     return [c.doc_number, c.first_name, c.last_name, c.business_name, c.trade_name,
             c.email, c.mobile, c.landline, c.city]
@@ -607,6 +659,7 @@ function abrirContacto(id) {
   valor('cReason', '');
   document.getElementById('docFeedback').innerHTML = '';
 
+  pintarOrigen(c, id);
   redesActuales = Array.isArray(c.socials) ? JSON.parse(JSON.stringify(c.socials)) : [];
   pintarRedes();
   pintarSri(c);
@@ -618,6 +671,24 @@ function abrirContacto(id) {
   document.getElementById('btnEliminar').style.display = (id && ES_ADMIN) ? '' : 'none';
   document.querySelector('#modalContacto .nav-link').click();
   modalContacto.show();
+}
+
+const ORIGENES = {
+  manual: ['✍️', 'Cargado a mano'], excel: ['📊', 'Importado de Excel o CSV'],
+  pdf: ['📄', 'Importado de un PDF'], word: ['📝', 'Importado de un Word'],
+  imagen: ['🖼️', 'Leído de una foto con OCR'], atlas: ['🎓', 'Traído de la base de ATLAS'],
+};
+
+function pintarOrigen(c, id) {
+  const caja = document.getElementById('cOrigen');
+  if (!id) { caja.innerHTML = '<span class="fst-italic">Se marcará como cargado a mano.</span>'; return; }
+  const o = ORIGENES[c.source] || ['📁', c.source || 'origen desconocido'];
+  const fecha = c.created_at ? new Date(c.created_at).toLocaleDateString('es-EC') : '';
+  caja.innerHTML =
+    `${o[0]} <strong>${esc(o[1])}</strong>` +
+    (c.source_file ? ` · archivo <em>${esc(c.source_file)}</em>` : '') +
+    (fecha ? ` · el ${fecha}` : '') +
+    (c.sri_verified ? ' · <span class="chip-ok">verificado en el SRI</span>' : '');
 }
 
 function pintarRedes() {
@@ -986,7 +1057,7 @@ async function confirmarImportacion() {
 // ——————————————————————————————————————————
 //  SECTORES
 // ——————————————————————————————————————————
-function abrirSectores() { pintarTablaSectores(); modalSectores.show(); }
+function abrirSectores() { limpiarFormSector(); pintarTablaSectores(); modalSectores.show(); }
 
 function pintarTablaSectores() {
   document.getElementById('sectoresCuerpo').innerHTML = sectores.map(s => `
@@ -995,33 +1066,79 @@ function pintarTablaSectores() {
           ${s.active === false ? '<span class="text-muted small ms-1">(inactivo)</span>' : ''}</td>
       <td class="small text-muted">${esc(s.description || '')}</td>
       <td>${s.total || 0}</td>
-      <td>
+      <td class="text-nowrap">
+        <button class="btn-xs btn-xs-edit" onclick="editarSector('${s.id}')">Editar</button>
         <button class="btn-xs btn-xs-edit" onclick="alternarSector('${s.id}', ${s.active === false})">
           ${s.active === false ? 'Activar' : 'Desactivar'}
         </button>
         ${ES_ADMIN ? `<button class="btn-xs btn-xs-del" onclick="borrarSector('${s.id}')">Eliminar</button>` : ''}
       </td>
     </tr>`).join('');
+
+  // Selectores de "mover registros"
+  const opts = sectores.map(s => `<option value="${s.id}">${esc(s.icon || '')} ${esc(s.name)} (${s.total || 0})</option>`).join('');
+  document.getElementById('movDesde').innerHTML = opts;
+  document.getElementById('movHacia').innerHTML = opts + '<option value="">— Sin sector —</option>';
 }
 
-async function crearSector() {
-  const nombre = document.getElementById('sNombre').value.trim();
-  if (!nombre) { aviso('Escribe el nombre del sector', 'warning'); return; }
-  const r = await pedir('/directorio/api/sectores', {
-    method: 'POST',
-    body: JSON.stringify({
-      name: nombre,
-      description: document.getElementById('sDescripcion').value.trim(),
-      icon: document.getElementById('sIcono').value.trim(),
-      color: document.getElementById('sColor').value,
-    }),
-  });
-  if (!r.success) { aviso(r.error || 'No se pudo crear', 'danger'); return; }
+// El mismo formulario sirve para crear y para editar: antes solo creaba, y un
+// sector mal escrito no se podía corregir nunca.
+function limpiarFormSector() {
+  document.getElementById('sId').value = '';
   document.getElementById('sNombre').value = '';
   document.getElementById('sDescripcion').value = '';
+  document.getElementById('sIcono').value = '📁';
+  document.getElementById('sColor').value = '#4f46e5';
+  document.getElementById('sFormTitulo').textContent = '➕ Nuevo sector';
+  document.getElementById('sBtnGuardar').textContent = '➕ Crear sector';
+  document.getElementById('sBtnCancelar').style.display = 'none';
+}
+
+function editarSector(id) {
+  const s = sectores.find(x => x.id === id);
+  if (!s) return;
+  document.getElementById('sId').value = s.id;
+  document.getElementById('sNombre').value = s.name || '';
+  document.getElementById('sDescripcion').value = s.description || '';
+  document.getElementById('sIcono').value = s.icon || '📁';
+  document.getElementById('sColor').value = s.color || '#4f46e5';
+  document.getElementById('sFormTitulo').textContent = '✏️ Editando «' + s.name + '»';
+  document.getElementById('sBtnGuardar').textContent = '💾 Guardar cambios';
+  document.getElementById('sBtnCancelar').style.display = '';
+  document.getElementById('sNombre').focus();
+}
+
+async function guardarSector() {
+  const id = document.getElementById('sId').value;
+  const nombre = document.getElementById('sNombre').value.trim();
+  if (!nombre) { aviso('Escribe el nombre del sector', 'warning'); return; }
+  const cuerpo = {
+    name: nombre,
+    description: document.getElementById('sDescripcion').value.trim(),
+    icon: document.getElementById('sIcono').value.trim(),
+    color: document.getElementById('sColor').value,
+  };
+  const r = await pedir(id ? `/directorio/api/sectores/${id}` : '/directorio/api/sectores',
+    {method: id ? 'PATCH' : 'POST', body: JSON.stringify(cuerpo)});
+  if (!r.success) { aviso(r.error || 'No se pudo guardar', 'danger'); return; }
+  limpiarFormSector();
   await cargarTodo();
   pintarTablaSectores();
-  aviso('Sector creado');
+  aviso(id ? 'Sector actualizado' : 'Sector creado');
+}
+
+async function moverSector() {
+  const desde = document.getElementById('movDesde').value;
+  const hacia = document.getElementById('movHacia').value;
+  if (desde === hacia) { aviso('Elige dos sectores distintos', 'warning'); return; }
+  const nDesde = sectores.find(s => s.id === desde);
+  if (!confirm(`¿Mover los ${nDesde ? nDesde.total || 0 : ''} registros de «${nDesde ? nDesde.name : ''}»?`)) return;
+  const r = await pedir(`/directorio/api/sectores/${desde}/mover`,
+    {method: 'POST', body: JSON.stringify({destino: hacia || null})});
+  if (!r.success) { aviso(r.error || 'No se pudo mover', 'danger'); return; }
+  aviso(r.mensaje || `${r.movidos} registro(s) movido(s) a ${r.destino}`);
+  await cargarTodo();
+  pintarTablaSectores();
 }
 
 async function alternarSector(id, activar) {
