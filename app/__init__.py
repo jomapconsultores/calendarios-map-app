@@ -156,13 +156,82 @@ ALL_MODULES = [
 # Niveles de rol (clasificación de negocio). Es una etiqueta/agrupación: el
 # acceso real lo definen los grants marcados por el admin. El administrador del
 # sistema real sigue siendo users.role == 'admin'.
+# Escalas, en el mismo juego que usa ATLAS (admin, socio, secretaria, profesor,
+# psicólogo). Antes sólo había tres y a una secretaria había que meterla en el
+# cajón de «funcionario», perdiendo la distinción que en ATLAS sí existe.
 ROLE_LEVELS = [
     ('administrador', '👑 Administrador'),
     ('socio',         '🤝 Socio'),
     ('funcionario',   '🧑‍💼 Funcionario'),
+    ('secretaria',    '🗒️ Secretaría'),
+    ('profesor',      '👩‍🏫 Profesor'),
+    ('psicologo',     '🧠 Psicólogo'),
 ]
 ROLE_LEVEL_IDS = {lid for lid, _ in ROLE_LEVELS}
 DEFAULT_ROLE_LEVEL = 'funcionario'
+
+
+# ============================================================
+#  PERMISOS POR PERSONA Y SUBMÓDULO
+#
+#  El rol da el MÓDULO entero o nada. Eso deja fuera un caso muy común: que
+#  alguien pueda consultar y editar el directorio pero NO importar en bloque ni
+#  eliminar. ATLAS ya lo resolvía con `usuario_permisos` (una fila por usuario y
+#  `familia.submodulo`), y aquí faltaba.
+#
+#  La regla es:
+#    * Acción NO sensible  -> basta con tener el módulo en el rol activo.
+#    * Acción SENSIBLE     -> además hace falta el permiso concreto concedido a
+#                             esa persona (o ser administrador).
+#
+#  Así el rol sigue siendo la base y esto es la capa fina encima, que se afina
+#  persona a persona sin inventar un rol nuevo para cada excepción.
+# ============================================================
+SUBMODULOS = {
+    'todo': [
+        ('ver',        'Ver los pendientes',            False),
+        ('crear',      'Crear pendientes',              False),
+        ('editar',     'Editar pendientes',             False),
+        ('sincronizar','Sincronizar con Microsoft',     True),
+        ('eliminar',   'Eliminar pendientes',           True),
+    ],
+    'planning': [
+        ('ver',        'Ver tareas y proyectos',        False),
+        ('crear',      'Crear tareas',                  False),
+        ('editar',     'Editar tareas',                 False),
+        ('proyectos',  'Crear y editar proyectos',      True),
+        ('eliminar',   'Eliminar tareas',               True),
+    ],
+    'calendar': [
+        ('ver',        'Ver la agenda',                 False),
+        ('agendar',    'Agendar citas',                 False),
+        ('aprobar',    'Aprobar o rechazar citas',      True),
+        ('eliminar',   'Eliminar citas',                True),
+    ],
+    'cronograma': [
+        ('ver',           'Ver cronogramas',            False),
+        ('crear',         'Crear cronogramas',          False),
+        ('editar',        'Editar actividades',         False),
+        ('planificar_ia', 'Planificar con IA',          True),
+        ('eliminar',      'Eliminar cronogramas',       True),
+    ],
+    'directorio': [
+        ('ver',       'Consultar el directorio',        False),
+        ('crear',     'Crear registros',                False),
+        ('editar',    'Editar registros',               False),
+        ('importar',  'Importar archivos en bloque',    True),
+        ('exportar',  'Exportar a Excel',               True),
+        ('sectores',  'Administrar sectores',           True),
+        ('eliminar',  'Eliminar registros',             True),
+    ],
+}
+
+# Acciones que exigen permiso explícito, en forma de conjunto para consultarlo rápido.
+ACCIONES_SENSIBLES = {f'{mod}.{acc}'
+                     for mod, lista in SUBMODULOS.items()
+                     for acc, _, sensible in lista if sensible}
+
+_user_perms_cache = TTLCache(ttl=30, maxsize=256)
 
 
 # ============================================================
@@ -1674,10 +1743,42 @@ def send_push_to_user(app, user_id, title, body, url='/dashboard'):
     return sent
 
 
-def user_can(module):
-    """True si el módulo está en el rol activo del usuario (admins siempre sí)."""
-    if is_admin(): return True
-    return module in get_active_role_grants(current_app, current_user.id)['modules']
+def get_user_permissions(app, uid):
+    """Permisos sueltos concedidos a UNA persona: {'directorio.importar', ...}"""
+    val, hit = _user_perms_cache.get(str(uid))
+    if hit:
+        return val
+    try:
+        filas = app.supabase.get('user_permissions', {'user_id': uid}, select='permiso') or []
+        permisos = {f['permiso'] for f in filas if f.get('permiso')}
+    except Exception:
+        # La tabla puede no existir aún (migración 023 sin aplicar): sin permisos
+        # sueltos el sistema sigue funcionando con los del rol.
+        permisos = set()
+    _user_perms_cache.set(str(uid), permisos)
+    return permisos
+
+
+def user_can(permiso):
+    """¿Puede el usuario actual hacer esto?
+
+    Acepta dos formas:
+      * 'directorio'           -> ¿tiene el módulo en su rol activo?
+      * 'directorio.importar'  -> ¿puede además esa acción concreta?
+
+    Una acción NO sensible sólo exige el módulo. Una SENSIBLE exige además que
+    se le haya concedido a esa persona, para poder dar acceso a un módulo sin
+    regalar de paso el borrado o la importación masiva."""
+    if is_admin():
+        return True
+    modulo, _, accion = permiso.partition('.')
+    if modulo not in get_active_role_grants(current_app, current_user.id)['modules']:
+        return False
+    if not accion:
+        return True
+    if permiso not in ACCIONES_SENSIBLES:
+        return True          # acción corriente: basta con tener el módulo
+    return permiso in get_user_permissions(current_app, current_user.id)
 
 
 # ============================================================
@@ -2516,6 +2617,66 @@ def create_app():
         return render_template('admin_users.html', users=users, calendarios=all_cals,
                                pending=pending, pending_all=pending_all,
                                all_roles=all_roles, role_levels=ROLE_LEVELS)
+
+    @app.route('/admin/users/<uid>/permisos', methods=['GET'])
+    @login_required
+    def admin_user_permisos(uid):
+        """Catálogo de submódulos + lo que esta persona tiene concedido.
+
+        Devuelve también qué módulos le da su rol activo, para que la pantalla
+        pueda mostrar en gris lo que no aplica: marcar 'directorio.importar' a
+        quien no tiene el módulo Directorio no serviría de nada."""
+        if not is_admin():
+            return jsonify({'success': False, 'error': 'Solo admin'}), 403
+        filas = app.supabase.get('users', {'id': uid}, select='id,full_name,email,active_role_id')
+        if not filas:
+            return jsonify({'success': False, 'error': 'Usuario no encontrado'}), 404
+        persona = filas[0]
+        grants = role_grants(app, persona['active_role_id']) if persona.get('active_role_id') else {'modules': []}
+        catalogo = [{
+            'modulo': mod,
+            'etiqueta': dict(ALL_MODULES).get(mod, mod),
+            'tiene_modulo': mod in grants['modules'],
+            'acciones': [{'clave': f'{mod}.{acc}', 'nombre': nombre, 'sensible': sensible}
+                         for acc, nombre, sensible in lista],
+        } for mod, lista in SUBMODULOS.items()]
+        return jsonify({
+            'success': True,
+            'usuario': {'id': persona['id'], 'nombre': persona.get('full_name'),
+                        'email': persona.get('email')},
+            'catalogo': catalogo,
+            'concedidos': sorted(get_user_permissions(app, uid)),
+        })
+
+    @app.route('/admin/users/<uid>/permisos', methods=['POST'])
+    @login_required
+    def admin_user_permisos_guardar(uid):
+        """Reemplaza los permisos sueltos de una persona. Body: {permisos: [...]}"""
+        if not is_admin():
+            return jsonify({'success': False, 'error': 'Solo admin'}), 403
+        if not app.supabase.get('users', {'id': uid}, select='id'):
+            return jsonify({'success': False, 'error': 'Usuario no encontrado'}), 404
+
+        pedidos = (request.get_json() or {}).get('permisos') or []
+        # Sólo se aceptan claves del catálogo: un permiso inventado desde el
+        # navegador no debe poder colarse en la tabla.
+        validos = {f'{m}.{a}' for m, lista in SUBMODULOS.items() for a, _, _ in lista}
+        nuevos = {p for p in pedidos if p in validos}
+
+        actuales = get_user_permissions(app, uid)
+        for permiso in actuales - nuevos:
+            for fila in (app.supabase.get('user_permissions',
+                                          {'user_id': uid, 'permiso': permiso}, select='id') or []):
+                app.supabase.delete('user_permissions', fila['id'])
+        por_agregar = [{'user_id': uid, 'permiso': p, 'granted_by': current_user.id}
+                       for p in sorted(nuevos - actuales)]
+        if por_agregar:
+            app.supabase.insert('user_permissions', por_agregar)
+
+        _user_perms_cache.invalidate(str(uid))
+        return jsonify({'success': True, 'concedidos': sorted(nuevos),
+                        'agregados': len(por_agregar),
+                        'quitados': len(actuales - nuevos)})
 
     @app.route('/admin/users/<user_id>/reset-password', methods=['POST'])
     @login_required

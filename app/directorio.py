@@ -107,9 +107,17 @@ def registrar_directorio(app, ctx):
     def _sin_acceso():
         return jsonify({'success': False, 'error': 'Sin acceso al módulo Directorio'}), 403
 
-    def _puede_editar():
-        """Escribir en el directorio exige el módulo; borrar exige ser admin."""
-        return user_can('directorio')
+    def _puede(accion):
+        """¿Puede el usuario esta acción concreta del directorio?
+
+        `user_can` resuelve las dos capas: el módulo lo da el rol, y las acciones
+        delicadas (importar, exportar, sectores, eliminar) exigen además el
+        permiso concedido a esa persona."""
+        return user_can(f'directorio.{accion}')
+
+    def _sin_permiso(que):
+        return jsonify({'success': False,
+                        'error': f'No tienes permiso para {que}. Pídeselo a un administrador.'}), 403
 
     # ────────────────────────────────────────────────────────
     #  BITÁCORA
@@ -267,8 +275,8 @@ def registrar_directorio(app, ctx):
     @app.route('/directorio/api/sectores', methods=['POST'])
     @login_required
     def directorio_crear_sector():
-        if not _puede_editar():
-            return _sin_acceso()
+        if not _puede('sectores'):
+            return _sin_permiso('administrar sectores')
         cuerpo = request.get_json() or {}
         nombre = _sanitize(cuerpo.get('name'), 120)
         if not nombre:
@@ -288,8 +296,8 @@ def registrar_directorio(app, ctx):
     @app.route('/directorio/api/sectores/<sid>', methods=['PATCH'])
     @login_required
     def directorio_editar_sector(sid):
-        if not _puede_editar():
-            return _sin_acceso()
+        if not _puede('sectores'):
+            return _sin_permiso('administrar sectores')
         cuerpo = request.get_json() or {}
         cambios = {}
         if 'name' in cuerpo:
@@ -321,8 +329,8 @@ def registrar_directorio(app, ctx):
         Existe porque el borrado de un sector con registros dice «muévelos a
         otro sector» y hasta ahora no había ninguna forma de hacerlo: el consejo
         no se podía seguir. Body: {destino: <id de sector> | null}."""
-        if not _puede_editar():
-            return _sin_acceso()
+        if not _puede('sectores'):
+            return _sin_permiso('administrar sectores')
         if not db().get('sectors', {'id': sid}, select='id'):
             return jsonify({'success': False, 'error': 'Sector de origen no encontrado'}), 404
 
@@ -400,8 +408,8 @@ def registrar_directorio(app, ctx):
     @app.route('/directorio/api/contactos/<cid>/refrescar-sri', methods=['POST'])
     @login_required
     def directorio_refrescar_sri(cid):
-        if not _puede_editar():
-            return _sin_acceso()
+        if not _puede('editar'):
+            return _sin_permiso('actualizar registros desde el SRI')
         filas = db().get('contacts', {'id': cid}, select='*')
         if not filas:
             return jsonify({'success': False, 'error': 'Registro no encontrado'}), 404
@@ -471,8 +479,8 @@ def registrar_directorio(app, ctx):
     @app.route('/directorio/api/contactos', methods=['POST'])
     @login_required
     def directorio_crear_contacto():
-        if not _puede_editar():
-            return _sin_acceso()
+        if not _puede('crear'):
+            return _sin_permiso('crear registros')
         cuerpo = request.get_json() or {}
         registro, validacion = _normalizar(cuerpo)
 
@@ -522,8 +530,8 @@ def registrar_directorio(app, ctx):
     @app.route('/directorio/api/contactos/<cid>', methods=['PATCH'])
     @login_required
     def directorio_editar_contacto(cid):
-        if not _puede_editar():
-            return _sin_acceso()
+        if not _puede('editar'):
+            return _sin_permiso('editar registros')
         cuerpo = request.get_json() or {}
         motivo = _sanitize(cuerpo.get('reason'), 500)
         if not motivo or len(motivo) < 5:
@@ -575,8 +583,8 @@ def registrar_directorio(app, ctx):
     @app.route('/directorio/api/contactos/<cid>', methods=['DELETE'])
     @login_required
     def directorio_borrar_contacto(cid):
-        if not is_admin():
-            return jsonify({'success': False, 'error': 'Sólo un administrador puede eliminar registros'}), 403
+        if not _puede('eliminar'):
+            return _sin_permiso('eliminar registros')
         motivo = _sanitize((request.get_json() or {}).get('reason'), 500)
         if not motivo or len(motivo) < 5:
             return jsonify({'success': False, 'falta_motivo': True,
@@ -612,8 +620,8 @@ def registrar_directorio(app, ctx):
         No inserta nada. Devuelve cada fila con su estado (`nuevo`, `duplicado`,
         `documento_invalido`, `incompleto`) para que el usuario vea qué va a
         entrar y qué se va a rechazar antes de confirmar."""
-        if not _puede_editar():
-            return _sin_acceso()
+        if not _puede('importar'):
+            return _sin_permiso('importar archivos en bloque')
         archivo = request.files.get('file')
         if not archivo:
             return jsonify({'success': False, 'error': 'No se recibió ningún archivo'})
@@ -752,8 +760,8 @@ def registrar_directorio(app, ctx):
 
         Vuelve a comprobar los duplicados: entre el análisis y la confirmación
         pudo entrar el mismo documento por otra vía."""
-        if not _puede_editar():
-            return _sin_acceso()
+        if not _puede('importar'):
+            return _sin_permiso('importar archivos en bloque')
         cuerpo = request.get_json() or {}
         filas = cuerpo.get('filas') or []
         if not filas:
@@ -808,8 +816,8 @@ def registrar_directorio(app, ctx):
     @app.route('/directorio/api/exportar')
     @login_required
     def directorio_exportar():
-        if not user_can('directorio'):
-            return jsonify({'error': 'Sin acceso'}), 403
+        if not user_can('directorio.exportar'):
+            return jsonify({'error': 'No tienes permiso para exportar el directorio'}), 403
         if not docs_mod.EXCEL_DISPONIBLE:
             return jsonify({'error': 'openpyxl no está instalado en el servidor'}), 500
         import openpyxl

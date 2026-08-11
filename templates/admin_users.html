@@ -34,6 +34,11 @@
   <div class="col-md-4 text-md-end mt-2 mt-md-0">
     {% if u.must_change_password %}<span class="badge bg-warning text-dark me-1" title="Tiene una contraseña temporal sin cambiar">Temporal</span>{% endif %}
     <button class="btn btn-outline-primary btn-sm rounded-pill" data-bs-toggle="modal" data-bs-target="#edit{{u.id}}">✏️ Editar</button>
+    {# Permisos finos por persona: el rol da el módulo, esto afina qué puede
+       hacer dentro. Mismo modelo que `usuario_permisos` en ATLAS. #}
+    <button class="btn btn-outline-dark btn-sm rounded-pill"
+            onclick="abrirPermisos('{{u.id}}', '{{u.full_name|e}}')"
+            title="Qué puede hacer dentro de cada módulo">🔐 Permisos</button>
     {# Recuperación de clave olvidada: genera una contraseña temporal de un solo uso #}
     <form method="POST" action="/admin/users/{{u.id}}/reset-password" class="d-inline"
           onsubmit="return confirm('¿Restablecer la contraseña de {{ u.full_name }}?\n\nSe generará una contraseña temporal de un solo uso que deberás entregarle. Su contraseña actual dejará de funcionar.');">
@@ -91,6 +96,33 @@
 </div></div></div>
 {% endfor %}
 
+
+<!-- ============ PERMISOS POR PERSONA ============ -->
+<div class="modal fade" id="modalPermisos" tabindex="-1">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-content border-0 shadow">
+      <div class="modal-header" style="background:linear-gradient(135deg,#4f46e5,#7c3aed);color:#fff">
+        <h5 class="modal-title" id="permTitulo">🔐 Permisos</h5>
+        <button class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <p class="text-muted small">
+          El <strong>rol</strong> decide a qué módulos entra esta persona. Aquí se afina
+          <strong>qué puede hacer dentro</strong>. Las acciones corrientes vienen con el
+          módulo; las marcadas <span class="badge bg-warning text-dark">delicada</span>
+          hay que concederlas una a una.
+        </p>
+        <div id="permCuerpo">Cargando…</div>
+      </div>
+      <div class="modal-footer">
+        <span id="permEstado" class="small text-muted me-auto"></span>
+        <button class="btn btn-secondary btn-sm rounded-pill" data-bs-dismiss="modal">Cerrar</button>
+        <button class="btn btn-primary btn-sm rounded-pill" onclick="guardarPermisos()">💾 Guardar permisos</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 {% endblock %}
 
 {% block scripts %}
@@ -104,6 +136,57 @@ function delUser(uid){
     .then(r=>r.json())
     .then(d=>{ if(d.success){ location.reload(); } else{ alert('❌ '+(d.error||'No se pudo eliminar')); } })
     .catch(()=>alert('❌ Error de conexión'));
+}
+
+// ——————————————————————————————————————————
+//  PERMISOS POR PERSONA Y SUBMÓDULO
+// ——————————————————————————————————————————
+let permUsuario = null, permModal = null;
+
+async function abrirPermisos(uid, nombre) {
+  permUsuario = uid;
+  permModal = permModal || new bootstrap.Modal(document.getElementById('modalPermisos'));
+  document.getElementById('permTitulo').textContent = '🔐 Permisos de ' + nombre;
+  document.getElementById('permCuerpo').innerHTML = 'Cargando…';
+  document.getElementById('permEstado').textContent = '';
+  permModal.show();
+
+  const r = await fetch('/admin/users/' + uid + '/permisos').then(x => x.json());
+  if (!r.success) { document.getElementById('permCuerpo').textContent = r.error || 'Error'; return; }
+  const dados = new Set(r.concedidos);
+
+  document.getElementById('permCuerpo').innerHTML = r.catalogo.map(function (m) {
+    return '<div class="border rounded-3 p-3 mb-2' + (m.tiene_modulo ? '' : ' opacity-50') + '">' +
+      '<div class="fw-bold small mb-2">' + m.etiqueta +
+        (m.tiene_modulo ? '' : ' <span class="badge bg-secondary">su rol no da este módulo</span>') +
+      '</div>' +
+      m.acciones.map(function (a) {
+        const marcado = dados.has(a.clave) ? 'checked' : '';
+        return '<div class="form-check form-check-inline">' +
+          '<input class="form-check-input perm-chk" type="checkbox" value="' + a.clave + '" ' +
+            'id="p_' + a.clave.replace(".", "_") + '" ' + marcado +
+            (a.sensible ? '' : ' disabled title="Viene incluida con el módulo"') + '>' +
+          '<label class="form-check-label small" for="p_' + a.clave.replace(".", "_") + '">' +
+            a.nombre + (a.sensible ? ' <span class="badge bg-warning text-dark" style="font-size:.6rem">delicada</span>'
+                                   : ' <span class="text-muted" style="font-size:.68rem">(incluida)</span>') +
+          '</label></div>';
+      }).join('') +
+    '</div>';
+  }).join('');
+}
+
+async function guardarPermisos() {
+  const permisos = [...document.querySelectorAll('.perm-chk:checked:not(:disabled)')].map(c => c.value);
+  const estado = document.getElementById('permEstado');
+  estado.textContent = 'Guardando…';
+  const r = await fetch('/admin/users/' + permUsuario + '/permisos', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json', 'X-CSRFToken': CSRF_TOKEN},
+    body: JSON.stringify({permisos: permisos}),
+  }).then(x => x.json());
+  estado.textContent = r.success
+    ? '✅ Guardado: ' + r.agregados + ' concedido(s), ' + r.quitados + ' retirado(s)'
+    : '❌ ' + (r.error || 'No se pudo guardar');
 }
 </script>
 {% endblock %}
