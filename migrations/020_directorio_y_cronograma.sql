@@ -205,8 +205,18 @@ UPDATE roles
          CASE WHEN modules LIKE '%cronograma%'  THEN '' ELSE ',cronograma'  END)
  WHERE level = 'administrador';
 
-ALTER TABLE sectors          ENABLE ROW LEVEL SECURITY;
-ALTER TABLE contacts         ENABLE ROW LEVEL SECURITY;
-ALTER TABLE contact_audit    ENABLE ROW LEVEL SECURITY;
-ALTER TABLE gantt_plans      ENABLE ROW LEVEL SECURITY;
-ALTER TABLE gantt_activities ENABLE ROW LEVEL SECURITY;
+-- ─────────────────────────────────────────────────────────────────────────────
+--  6. SIN ROW LEVEL SECURITY, igual que las otras 22 tablas del sistema.
+--
+--  Aquí había un ENABLE ROW LEVEL SECURITY sobre las cinco tablas. Era un error:
+--  activar RLS SIN crear políticas no protege, DENIEGA TODO. Y como la
+--  aplicación se conecta con la clave `anon` —que respeta RLS, al contrario que
+--  `service_role`—, el Directorio y el Cronograma devolvían cero filas siempre,
+--  sin error visible: las pantallas salían vacías y no había forma de saber por
+--  qué. Se corrigió en la migración 022.
+--
+--  La autorización de este sistema la hace la aplicación en Python (rol activo,
+--  módulos, proyectos, cuentas de Microsoft) y la clave vive sólo en el
+--  servidor. Poner RLS de verdad exigiría escribir políticas para el sistema
+--  entero, no activarlo tabla por tabla y dejarlo sin ellas.
+-- ─────────────────────────────────────────────────────────────────────────────
