@@ -424,8 +424,16 @@ document.addEventListener('DOMContentLoaded', () => {
 
   cargarPlanes().then(() => {
     const accion = new URLSearchParams(location.search).get('accion');
-    if (accion === 'nuevo')    abrirPlan(null);
-    if (accion === 'importar' && planActivo) abrirImportarTareas();
+    if (accion === 'nuevo') abrirPlan(null);
+    if (accion === 'importar') {
+      // Sin cronograma no hay dónde meter las actividades (cargarPlanes ya
+      // selecciona el primero si existe alguno, así que planActivo sólo es
+      // nulo cuando no hay ninguno). Antes el enlace del menú simplemente no
+      // hacía nada y no se decía por qué; ahora se explica y se ofrece la
+      // salida en vez de dejar al usuario mirando una pantalla quieta.
+      if (planActivo) abrirImportarTareas();
+      else aviso('Todavía no hay ningún cronograma. Crea uno primero y después trae las actividades.', 'warning');
+    }
   });
 });
 

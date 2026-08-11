@@ -129,6 +129,7 @@ _user_cal_cache = TTLCache(ttl=10)    # user calendars  — 10 s (corto: multi-w
 _google_cache   = TTLCache(ttl=120)   # google status   — 2 min
 _role_cache       = TTLCache(ttl=300)  # grants de un rol (modules/calendarios/proyectos/cuentas MS) — 5 min
 _user_roles_cache = TTLCache(ttl=10)   # roles asignados a un usuario — 10 s
+_ms_cache         = TTLCache(ttl=120)  # ¿hay alguna cuenta Microsoft conectada? — 2 min
 
 
 # ============================================================
@@ -2028,8 +2029,34 @@ def create_app():
                 google_health = _leer_estado_google(app)
             except Exception:
                 pass
+        # Estado real de las otras dos integraciones. El menú las daba por
+        # desconectadas siempre: Microsoft salía «Conectar» aunque estuviera
+        # conectado, y el puente con ATLAS no aparecía en ninguna parte pese a
+        # existir y estar funcionando. Una integración que miente sobre su
+        # estado es peor que no mostrarla.
+        #
+        # Se comprueba sólo si HAY fila en ms_tokens, no se pide un token
+        # válido: get_ms_token puede disparar un refresco contra Microsoft, y
+        # eso no puede pasar al pintar cada página. Con caché de 2 minutos,
+        # igual que Google.
+        ms_connected = False
+        try:
+            if current_user.is_authenticated and app.supabase:
+                val, hit = _ms_cache.get('ms_conectado')
+                if hit:
+                    ms_connected = val
+                else:
+                    ms_connected = bool(app.supabase.get('ms_tokens', select='email'))
+                    _ms_cache.set('ms_conectado', ms_connected)
+        except Exception:
+            pass
+        try:
+            atlas_activo = _atlas.disponible()
+        except Exception:
+            atlas_activo = False
         return {'google_connected_global': connected, 'google_needs_reauth': needs_reauth,
                 'google_health': google_health,
+                'ms_connected_global': ms_connected, 'atlas_activo': atlas_activo,
                 'user_roles_list': user_roles_list, 'active_role_id': active_role_id,
                 'active_modules': active_modules}
 
@@ -3595,6 +3622,9 @@ def create_app():
     @app.route('/calendar/api/approve/<aid>', methods=['POST'])
     @login_required
     def api_approve(aid):
+        if not user_can('calendar.aprobar'):
+            return jsonify({'success': False,
+                            'error': 'No tienes permiso para aprobar citas.'}), 403
         apts = app.supabase.get('appointments', {'id': aid},
             select='id,title,encargado,tema,client_name,client_email,start_time,end_time,'
                    'status,calendar_id,invitados,lugar,direccion,ciudad,mapa,notes,'
@@ -3663,6 +3693,10 @@ def create_app():
     @app.route('/calendar/api/reject/<aid>', methods=['POST'])
     @login_required
     def api_reject(aid):
+        # Rechazar es la otra mitad de aprobar: el mismo permiso decide las dos.
+        if not user_can('calendar.aprobar'):
+            return jsonify({'success': False,
+                            'error': 'No tienes permiso para rechazar citas.'}), 403
         apts = app.supabase.get('appointments', {'id': aid}, select='id,calendar_id')
         if not apts: return jsonify({'success': False})
         if not is_admin() and not user_has_calendar_access(app, current_user.id, apts[0].get('calendar_id')):
@@ -3673,6 +3707,9 @@ def create_app():
     @app.route('/calendar/api/delete/<aid>', methods=['POST'])
     @login_required
     def api_delete(aid):
+        if not user_can('calendar.eliminar'):
+            return jsonify({'success': False,
+                            'error': 'No tienes permiso para eliminar citas.'}), 403
         apts = app.supabase.get('appointments', {'id': aid},
             select='id,calendar_id,google_event_id,google_cal_id')
         if not apts: return jsonify({'success': False})
@@ -3694,6 +3731,10 @@ def create_app():
     @app.route('/calendar/api/delete-series/<parent_id>', methods=['POST'])
     @login_required
     def api_delete_series(parent_id):
+        # Borrar una serie entera es borrar, sólo que muchas veces de golpe.
+        if not user_can('calendar.eliminar'):
+            return jsonify({'success': False,
+                            'error': 'No tienes permiso para eliminar citas.'}), 403
         all_apts = app.supabase.get('appointments',
             select='id,calendar_id,google_event_id,google_cal_id,parent_event_id')
         series = [a for a in all_apts
@@ -3905,6 +3946,9 @@ def create_app():
     def planning_create_project():
         if not user_can('planning'):
             return jsonify({'success': False, 'error': 'Sin acceso al módulo Planificación'})
+        if not user_can('planning.proyectos'):
+            return jsonify({'success': False,
+                            'error': 'No tienes permiso para crear proyectos.'}), 403
         d = request.get_json() or {}
         d['created_by'] = current_user.id
         d['name'] = _sanitize(d.get('name', ''), 200)
@@ -3928,6 +3972,9 @@ def create_app():
     def planning_update_project(pid):
         if not is_admin() and not (user_can('planning') and user_has_project_access(app, current_user.id, pid)):
             return jsonify({'success': False, 'error': 'Sin permisos sobre este proyecto'}), 403
+        if not user_can('planning.proyectos'):
+            return jsonify({'success': False,
+                            'error': 'No tienes permiso para editar proyectos.'}), 403
         body = request.get_json() or {}
         d = {k: v for k, v in body.items() if k in PROJECT_EDITABLE_FIELDS}
         if 'name' in d:
@@ -4119,8 +4166,9 @@ def create_app():
         lo creado en el sistema antes de configurarla se quedaba abajo para
         siempre, y la promesa de que ambas caras muestran lo mismo era falsa para
         el histórico. Esta ruta hace ese arrastre una vez."""
-        if not is_admin():
-            return jsonify({'success': False, 'error': 'Solo admin'}), 403
+        if not user_can('todo.sincronizar'):
+            return jsonify({'success': False,
+                            'error': 'No tienes permiso para sincronizar con Microsoft.'}), 403
         destino = get_todo_default_target(app)
         if not (destino and destino.get('email') and destino.get('list_id')):
             return jsonify({'success': False,
@@ -4401,21 +4449,36 @@ def create_app():
         body = request.get_json() or {}
         ids = body.get('ids') or []
         if not ids: return jsonify({'success': False, 'error': 'ids vacío'})
-        if not is_admin():
-            return jsonify({'success': False, 'error': 'Solo admin puede borrar en bulk'})
+        # Borrar de golpe es borrar, así que pide el mismo permiso que borrar de
+        # una en una. Antes era «solo admin», y eso dejaba el interruptor
+        # «Eliminar tareas» sin efecto por este camino.
+        if not (is_admin() or user_can('todo.eliminar') or user_can('planning.eliminar')):
+            return jsonify({'success': False,
+                            'error': 'No tienes permiso para eliminar tareas.'}), 403
         import time as _time
         DEADLINE = _time.monotonic() + 90
-        deleted = 0; deleted_ms = 0; partial = False
+        deleted = 0; deleted_ms = 0; partial = False; omitidas = 0
         for tid in ids:
             if _time.monotonic() > DEADLINE: partial = True; break
             rows = app.supabase.get('tasks', {'id': tid}, select='*')
             task = rows[0] if rows else None
+            # A diferencia del borrado de una sola tarea, aquí no había ninguna
+            # comprobación por tarea: bastaba mandar los ids. Como ahora entra
+            # gente que no es administrador, cada una se verifica —que sea suya
+            # y que tenga el permiso del módulo al que pertenece— en vez de
+            # confiar en la lista que llega del navegador.
+            if task and not is_admin():
+                ambito = 'todo' if task.get('ms_email') else 'planning'
+                if not (_user_owns_task(app, task, current_user.id)
+                        and user_can(f'{ambito}.eliminar')):
+                    omitidas += 1
+                    continue
             if app.supabase.delete('tasks', tid):
                 deleted += 1
                 if task and delete_task_in_ms(app, task):
                     deleted_ms += 1
         return jsonify({'success': True, 'deleted': deleted, 'deleted_in_ms': deleted_ms,
-                        'partial': partial})
+                        'omitidas': omitidas, 'partial': partial})
 
     @app.route('/planning/api/tasks/<tid>', methods=['DELETE'])
     @login_required
@@ -4427,6 +4490,13 @@ def create_app():
             return jsonify({'success': False, 'error': 'No encontrada'}), 404
         if not is_admin() and not _user_owns_task(app, task, current_user.id):
             return jsonify({'success': False, 'error': 'Sin permisos'}), 403
+        # El permiso de borrado depende de dónde vive la tarea: si está atada a
+        # una cuenta de Microsoft es del módulo Actividades, si no es de
+        # Proyectos. Es la misma regla que usa el alta (planning_create_task).
+        ambito = 'todo' if task.get('ms_email') else 'planning'
+        if not user_can(f'{ambito}.eliminar'):
+            return jsonify({'success': False,
+                            'error': 'No tienes permiso para eliminar tareas.'}), 403
         ok = app.supabase.delete('tasks', tid)
         deleted_ms = False
         if ok and task:
@@ -4461,7 +4531,13 @@ def create_app():
     @app.route('/planning/api/import-todo', methods=['POST'])
     @login_required
     def planning_import_todo():
-        if not is_admin(): return jsonify({'success': False, 'error': 'Solo admin'})
+        # Antes era «sólo admin» y por eso el interruptor «Sincronizar con
+        # Microsoft» de la pantalla de permisos no servía de nada: se podía
+        # conceder y seguía sin dejar pulsar el botón. Ahora manda el permiso,
+        # que para un administrador siempre es cierto.
+        if not user_can('todo.sincronizar'):
+            return jsonify({'success': False,
+                            'error': 'No tienes permiso para sincronizar con Microsoft.'}), 403
         accounts = get_all_ms_tokens(app)
         # Filtro opcional: ?email=jomap@... para sincronizar una sola cuenta
         only_email = (request.args.get('email') or '').strip().lower()

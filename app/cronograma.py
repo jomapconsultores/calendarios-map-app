@@ -74,6 +74,16 @@ def registrar_cronograma(app, ctx):
     def _sin_acceso():
         return jsonify({'success': False, 'error': 'Sin acceso al módulo Cronograma'}), 403
 
+    def _sin_permiso(que):
+        """Tiene el módulo pero no esa acción delicada en concreto.
+
+        Se distingue de _sin_acceso a propósito: «no tienes el módulo» y «no te
+        han dado el borrado» son dos cosas distintas, y decirle a alguien la
+        primera cuando le pasa la segunda le hace buscar el problema donde no
+        está."""
+        return jsonify({'success': False,
+                        'error': f'No tienes permiso para {que}. Pídeselo al administrador.'}), 403
+
     def _plan_visible(plan):
         """Un administrador ve todos los planes; el resto, los que creó."""
         return bool(plan) and (is_admin() or plan.get('created_by') == str(current_user.id))
@@ -222,6 +232,8 @@ def registrar_cronograma(app, ctx):
     @app.route('/cronograma/api/planes/<pid>', methods=['DELETE'])
     @login_required
     def cronograma_borrar_plan(pid):
+        if not user_can('cronograma.eliminar'):
+            return _sin_permiso('eliminar cronogramas')
         plan = _cargar_plan(pid)
         if not _plan_visible(plan):
             return jsonify({'success': False, 'error': 'Cronograma no encontrado'}), 404
@@ -288,6 +300,8 @@ def registrar_cronograma(app, ctx):
     def cronograma_borrar_actividad(aid):
         if not user_can('cronograma'):
             return _sin_acceso()
+        if not user_can('cronograma.eliminar'):
+            return _sin_permiso('eliminar actividades')
         filas = db().get('gantt_activities', {'id': aid}, select='plan_id')
         if not filas:
             return jsonify({'success': False, 'error': 'Actividad no encontrada'}), 404
@@ -439,6 +453,8 @@ def registrar_cronograma(app, ctx):
         en la pantalla y sólo entonces se escriba."""
         if not user_can('cronograma'):
             return _sin_acceso()
+        if not user_can('cronograma.planificar_ia'):
+            return _sin_permiso('planificar con IA')
         plan = _cargar_plan(pid)
         if not _plan_visible(plan):
             return jsonify({'success': False, 'error': 'Cronograma no encontrado'}), 404
@@ -528,6 +544,11 @@ def registrar_cronograma(app, ctx):
         Body: {propuestas: [{actividad_id, nombre, cambios: {...}}]}"""
         if not user_can('cronograma'):
             return _sin_acceso()
+        # Mismo permiso que pedir la propuesta: de nada sirve cerrar la puerta
+        # de entrada si la de salida —escribir lo que la IA propuso— queda
+        # abierta.
+        if not user_can('cronograma.planificar_ia'):
+            return _sin_permiso('aplicar una planificación de IA')
         plan = _cargar_plan(pid)
         if not _plan_visible(plan):
             return jsonify({'success': False, 'error': 'Cronograma no encontrado'}), 404

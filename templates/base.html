@@ -292,7 +292,18 @@
             {% else %}
             <li><a href="/auth/google" class="pill-link"><span class="pl-t">🔗 Google Calendar <span class="nav-pill" style="background:#fee2e2;color:#991b1b">Conectar</span></span><span class="pl-d">Para sincronizar tus citas</span></a></li>
             {% endif %}
-            <li><a href="/auth/microsoft" class="pill-link"><span class="pl-t">📋 Microsoft To-Do <span class="nav-pill" style="background:#dbeafe;color:#1e40af">Conectar</span></span><span class="pl-d">Para importar tus tareas</span></a></li>
+            {% if ms_connected_global %}
+            <li><a class="pill-link" style="cursor:default"><span class="pl-t">📋 Microsoft To-Do <span class="nav-pill" style="background:#dcfce7;color:#166534">Conectado</span></span><span class="pl-d">Los pendientes viajan en los dos sentidos</span></a></li>
+            {% else %}
+            <li><a href="/auth/microsoft" class="pill-link"><span class="pl-t">📋 Microsoft To-Do <span class="nav-pill" style="background:#fee2e2;color:#991b1b">Conectar</span></span><span class="pl-d">Para sincronizar tus pendientes</span></a></li>
+            {% endif %}
+            {# El puente con ATLAS existe y funciona, pero no figuraba en ningún
+               menú: sólo se llegaba a él por un botón dentro del calendario. #}
+            {% if atlas_activo %}
+            <li><a href="/calendar" class="pill-link"><span class="pl-t">🎓 Agenda de ATLAS <span class="nav-pill" style="background:#dcfce7;color:#166534">Activa</span></span><span class="pl-d">Las reuniones se reflejan en ambos sistemas</span></a></li>
+            {% else %}
+            <li><a class="pill-link" style="cursor:default"><span class="pl-t">🎓 Agenda de ATLAS <span class="nav-pill" style="background:#f1f5f9;color:#64748b">Sin clave</span></span><span class="pl-d">Falta ATLAS_SUPABASE_KEY en el servidor</span></a></li>
+            {% endif %}
           </ul>
         </section>
         {% endif %}
