@@ -27,9 +27,12 @@
 
 /* GANTT */
 .gantt-wrap{background:#fff;border:1.5px solid #e2e8f0;border-radius:14px;padding:14px;overflow-x:auto}
-.gantt-container{min-width:900px;font-size:.8rem;position:relative}
+/* Ancho de la columna de nombres. En variable porque la capa que dibuja las
+   dependencias tiene que empezar EXACTAMENTE donde acaba esa columna, y en
+   móvil se estrecha: si fueran dos números sueltos, se desalinearían. */
+.gantt-container{min-width:900px;font-size:.8rem;position:relative;--g-label-w:290px}
 .g-head{display:flex;border-bottom:2px solid #e2e8f0;height:38px;align-items:flex-end;padding-bottom:4px}
-.g-label-col{width:290px;flex-shrink:0;font-size:.72rem;font-weight:700;color:#64748b;
+.g-label-col{width:var(--g-label-w);flex-shrink:0;font-size:.72rem;font-weight:700;color:#64748b;
   text-transform:uppercase;letter-spacing:.04em}
 .g-scale{flex:1;position:relative;height:100%}
 .g-month{position:absolute;font-size:.7rem;color:#64748b;font-weight:700;bottom:14px;white-space:nowrap}
@@ -37,7 +40,7 @@
 .g-row{display:flex;align-items:center;height:38px;border-bottom:1px solid #f1f5f9}
 .g-row:hover{background:#fafbff}
 .g-row.g-sel{background:#eef2ff}
-.g-label{width:290px;flex-shrink:0;padding-right:12px;display:flex;align-items:center;gap:6px;
+.g-label{width:var(--g-label-w);flex-shrink:0;padding-right:12px;display:flex;align-items:center;gap:6px;
   overflow:hidden;cursor:pointer}
 .g-label .gl-text{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:500;color:#1e293b}
 .g-label:hover .gl-text{color:#4f46e5}
@@ -53,7 +56,24 @@
 .g-today{position:absolute;top:0;bottom:0;width:2px;background:#ef4444;z-index:6;pointer-events:none}
 .g-grid{position:absolute;top:0;bottom:0;width:1px;background:#f1f5f9;z-index:1}
 .g-weekend{position:absolute;top:0;bottom:0;background:#f8fafc;z-index:0}
-.g-dep{position:absolute;height:0;border-top:1.5px dashed #a5b4fc;z-index:4;pointer-events:none}
+/* Dependencias: una capa que se superpone SOLO a la zona de barras (empieza
+   donde acaba la columna de nombres) y dibuja el codo entre el fin de la
+   actividad predecesora y el inicio de la que depende de ella. */
+.g-deps{position:absolute;left:var(--g-label-w);right:0;top:0;bottom:0;pointer-events:none;z-index:4}
+.g-dep-h{position:absolute;height:0;border-top:1.5px dashed #818cf8}
+.g-dep-v{position:absolute;width:0;border-left:1.5px dashed #818cf8}
+.g-dep-punta{position:absolute;width:0;height:0;border-top:4px solid transparent;
+  border-bottom:4px solid transparent;border-left:6px solid #818cf8}
+/* Cuando el sucesor empieza ANTES de que acabe su predecesora, el plan es
+   imposible tal como está: se pinta en rojo para que salte a la vista. */
+.g-dep-h.g-dep-mal, .g-dep-v.g-dep-mal{border-color:#ef4444}
+.g-dep-punta.g-dep-mal{border-left-color:#ef4444}
+.g-riesgos{background:#fff;border:1.5px solid #e2e8f0;border-radius:14px;padding:14px 18px;margin-bottom:14px}
+.g-riesgos h6{font-size:.86rem;font-weight:700;margin-bottom:8px}
+.g-riesgos .gr-ruta{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:8px}
+.g-riesgos .gr-paso{background:#ede9fe;color:#5b21b6;border-radius:20px;padding:3px 11px;font-size:.76rem;font-weight:600}
+.g-riesgos ul{margin:0;padding-left:20px}
+.g-riesgos li{font-size:.82rem;color:#475569;margin-bottom:3px}
 
 .badge-estado{display:inline-block;padding:2px 9px;border-radius:20px;font-size:.68rem;font-weight:700;white-space:nowrap}
 .be-pending{background:#fef3c7;color:#92400e}
@@ -83,7 +103,10 @@
 .vacio{text-align:center;color:#64748b;padding:48px 16px}
 .vacio .v-ic{font-size:2.6rem}
 
-@media(max-width:768px){ .stats-row{grid-template-columns:1fr 1fr} }
+@media(max-width:768px){
+  .stats-row{grid-template-columns:1fr 1fr}
+  .gantt-container{--g-label-w:150px}   /* la capa de dependencias lo sigue solo */
+}
 </style>
 {% endblock %}
 
@@ -130,6 +153,9 @@
     </select>
     <button class="btn btn-outline-dark btn-sm rounded-pill" onclick="abrirPlan(planActivo.id)">⚙️ Editar plan</button>
   </div>
+
+  <!-- Ruta crítica y riesgos que dejó la última planificación asistida -->
+  <div class="g-riesgos" id="panelAnalisis" style="display:none"></div>
 
   <div class="gantt-wrap mb-3">
     <div id="ganttInterior"></div>
@@ -385,6 +411,7 @@
 const IA = {{ ia|tojson }};
 
 let planes = [], planActivo = null, actividades = [], tareasDisponibles = [], propuestas = [];
+let analisisIa = {};   // resumen, riesgos y ruta crítica de la última propuesta
 let modalPlan, modalActividad, modalImportarTareas, modalIa;
 
 const ESTADOS = {pending:'Pendiente', in_progress:'En progreso', review:'En revisión',
@@ -511,8 +538,30 @@ async function cargarActividades(planId) {
   planActivo = r.plan;
   actividades = r.actividades || [];
   pintarEstadisticas();
+  pintarAnalisis();
   pintarGantt();
   pintarTablaActividades();
+}
+
+function pintarAnalisis() {
+  const panel = document.getElementById('panelAnalisis');
+  const ruta = planActivo.ai_ruta_critica || [];
+  const riesgos = planActivo.ai_riesgos || [];
+  if (!planActivo.ai_resumen && !ruta.length && !riesgos.length) {
+    panel.style.display = 'none';
+    return;
+  }
+  panel.style.display = '';
+  const cuando = planActivo.ai_generado_en
+    ? new Date(planActivo.ai_generado_en).toLocaleDateString('es-EC') : '';
+  panel.innerHTML =
+    `<h6>🤖 Análisis del plan ${cuando ? `<span class="text-muted fw-normal">· ${cuando}</span>` : ''}</h6>` +
+    (planActivo.ai_resumen ? `<p class="mb-2" style="font-size:.84rem">${esc(planActivo.ai_resumen)}</p>` : '') +
+    (ruta.length ? `<div class="gr-ruta"><strong style="font-size:.78rem">Ruta crítica:</strong>` +
+       ruta.map(p => `<span class="gr-paso">${esc(p)}</span>`).join('<span class="text-muted">→</span>') +
+       `</div>` : '') +
+    (riesgos.length ? `<strong style="font-size:.78rem">A tener en cuenta:</strong>
+       <ul>${riesgos.map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : '');
 }
 
 function pintarEstadisticas() {
@@ -615,6 +664,22 @@ function pintarGantt() {
   const pctHoy = (hoy >= min && hoy <= max) ? pct(hoy) : null;
   const lineaHoy = pctHoy === null ? '' : `<div class="g-today" style="left:${pctHoy}%"></div>`;
 
+  // Geometría de cada fila, para poder dibujar después las dependencias: sin
+  // guardar dónde quedó cada barra no hay forma de unirlas.
+  const ALTO_FILA = window.matchMedia('(max-width:768px)').matches ? 42 : 38;
+  const geometria = {};
+  actividades.forEach((a, indice) => {
+    if (!(a.start_date || a.end_date)) return;
+    const ini = aFecha(a.start_date || a.end_date);
+    const fin = aFecha(a.end_date || a.start_date);
+    const izq = pct(ini);
+    geometria[a.id] = {
+      izq: izq,
+      der: Math.max(pct(fin) + unDia, izq + unDia * 0.6),
+      centroY: indice * ALTO_FILA + ALTO_FILA / 2,
+    };
+  });
+
   const filas = actividades.map(a => {
     if (!(a.start_date || a.end_date)) {
       return `<div class="g-row" onclick="abrirActividad('${a.id}')">
@@ -655,8 +720,44 @@ function pintarGantt() {
       <div class="g-scale">${fondo}${meses}${encabezado}
         ${pctHoy === null ? '' : `<div class="g-today" style="left:${pctHoy}%"></div>`}</div>
     </div>
-    <div style="position:relative">${filas}</div>
+    <div style="position:relative">${filas}${dibujarDependencias(geometria)}</div>
   </div>`;
+}
+
+// ——————————————————————————————————————————
+//  DEPENDENCIAS SOBRE EL DIAGRAMA
+//  Una dependencia guardada que no se ve no sirve de nada: el sentido de
+//  declarar que B no puede empezar hasta que acabe A es poder mirarlo. Se dibuja
+//  el codo desde el fin de A hasta el inicio de B, y en rojo cuando el plan lo
+//  incumple (B arranca antes de que A termine), que es justo lo que hay que
+//  detectar de un vistazo.
+// ——————————————————————————————————————————
+function dibujarDependencias(geometria) {
+  let trazos = '';
+  actividades.forEach(b => {
+    const destino = geometria[b.id];
+    if (!destino) return;
+    (b.depends_on || []).forEach(idA => {
+      const origen = geometria[idA];
+      if (!origen) return;                       // la predecesora no tiene fechas
+      const incumple = destino.izq < origen.der - 0.01;
+      const mal = incumple ? ' g-dep-mal' : '';
+
+      const x1 = origen.der, x2 = destino.izq;
+      const y1 = origen.centroY, y2 = destino.centroY;
+      const izq = Math.min(x1, x2), ancho = Math.abs(x2 - x1);
+      const arriba = Math.min(y1, y2), alto = Math.abs(y2 - y1);
+
+      // Tramo horizontal a la altura de la predecesora…
+      trazos += `<div class="g-dep-h${mal}" style="left:${izq}%;width:${ancho}%;top:${y1}px"></div>`;
+      // …tramo vertical bajando (o subiendo) hasta la sucesora…
+      if (alto > 0)
+        trazos += `<div class="g-dep-v${mal}" style="left:${x2}%;top:${arriba}px;height:${alto}px"></div>`;
+      // …y la punta de flecha donde arranca la sucesora.
+      trazos += `<div class="g-dep-punta${mal}" style="left:calc(${x2}% - 3px);top:${y2 - 4}px"></div>`;
+    });
+  });
+  return trazos ? `<div class="g-deps">${trazos}</div>` : '';
 }
 
 // ——————————————————————————————————————————
@@ -834,6 +935,9 @@ async function pedirPlanificacion() {
   if (!r.success) { aviso(r.error || 'La IA no pudo planificar', 'danger'); return; }
 
   propuestas = r.propuestas || [];
+  // Se guardan para mandarlos al aplicar: así el análisis queda con el plan y
+  // no se pierde al cerrar la ventana.
+  analisisIa = {resumen: r.resumen, riesgos: r.riesgos || [], ruta_critica: r.ruta_critica || []};
   document.getElementById('iaPasoConfig').style.display = 'none';
   document.getElementById('iaPasoPropuesta').style.display = '';
   document.getElementById('btnIaAplicar').style.display = '';
@@ -881,7 +985,8 @@ async function aplicarPropuesta() {
   const boton = document.getElementById('btnIaAplicar');
   boton.disabled = true; boton.textContent = 'Aplicando…';
   const r = await pedir(`/cronograma/api/planes/${planActivo.id}/aplicar-plan`,
-    {method: 'POST', body: JSON.stringify({propuestas: indices.map(i => propuestas[i])})});
+    {method: 'POST', body: JSON.stringify(Object.assign(
+       {propuestas: indices.map(i => propuestas[i])}, analisisIa))});
   boton.disabled = false; boton.textContent = '✅ Aplicar lo aprobado';
   if (!r.success) { aviso(r.error || 'No se pudo aplicar', 'danger'); return; }
   modalIa.hide();

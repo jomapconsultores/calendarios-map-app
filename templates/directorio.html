@@ -248,12 +248,16 @@
               </div>
               <table class="table table-sm">
                 <tbody>
-                  <tr><th style="width:220px">Estado</th><td id="sriEstado">—</td></tr>
+                  <tr><th style="width:250px">Estado</th><td id="sriEstado">—</td></tr>
                   <tr><th>Tipo de contribuyente</th><td id="sriTipo">—</td></tr>
                   <tr><th>Régimen / clase</th><td id="sriClase">—</td></tr>
                   <tr><th>Obligado a llevar contabilidad</th><td id="sriContabilidad">—</td></tr>
+                  <tr><th>Agente de retención</th><td id="sriRetencion">—</td></tr>
+                  <tr><th>Contribuyente especial</th><td id="sriEspecial">—</td></tr>
                   <tr><th>Inicio de actividades</th><td id="sriInicio">—</td></tr>
                   <tr><th>Cese de actividades</th><td id="sriCese">—</td></tr>
+                  <tr><th>Última actualización en el SRI</th><td id="sriActualizado">—</td></tr>
+                  <tr><th>Consultado por el sistema</th><td id="sriConsultado">—</td></tr>
                 </tbody>
               </table>
               <div class="modal-section-label">Actividades económicas registradas</div>
@@ -629,8 +633,13 @@ function pintarSri(c) {
   texto('sriTipo', c.ruc_type);
   texto('sriClase', c.ruc_class);
   texto('sriContabilidad', c.ruc_obligado_contabilidad);
+  texto('sriRetencion', c.ruc_agente_retencion);
+  texto('sriEspecial', c.ruc_contribuyente_especial);
   texto('sriInicio', c.ruc_start_date);
   texto('sriCese', c.ruc_end_date);
+  texto('sriActualizado', c.ruc_updated_at);
+  texto('sriConsultado', c.sri_checked_at
+        ? new Date(c.sri_checked_at).toLocaleString('es-EC') : null);
   document.getElementById('sriActividades').innerHTML =
     (c.ruc_activities || []).map(a => `<li>${esc(a.descripcion || a)}
       ${a.origen ? `<span class="text-muted small">(${esc(a.origen)})</span>` : ''}</li>`).join('')

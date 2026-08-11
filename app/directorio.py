@@ -57,8 +57,9 @@ CAMPOS_EDITABLES = {
 # Columnas que llena el SRI. El usuario no las escribe a mano: se refrescan
 # consultando el servicio, y por eso quedan fuera de CAMPOS_EDITABLES.
 CAMPOS_SRI = ('ruc_state', 'ruc_class', 'ruc_type', 'ruc_obligado_contabilidad',
-              'ruc_start_date', 'ruc_end_date', 'ruc_activities',
-              'ruc_establishments', 'ruc_raw', 'sri_verified')
+              'ruc_agente_retencion', 'ruc_contribuyente_especial',
+              'ruc_start_date', 'ruc_end_date', 'ruc_updated_at',
+              'ruc_activities', 'ruc_establishments', 'ruc_raw', 'sri_verified')
 
 MAX_ARCHIVO_MB = 15
 
@@ -224,6 +225,9 @@ def registrar_directorio(app, ctx):
                 continue
             if forzar or campo in CAMPOS_SRI or not registro.get(campo):
                 registro[campo] = valor
+        # Cuándo se preguntó al SRI. Sin esta marca no hay forma de saber si lo
+        # que se está viendo se consultó hoy o hace dos años.
+        registro['sri_checked_at'] = datetime.now(timezone.utc).isoformat()
         return {'consultado': True, 'ok': True, 'error': None,
                 'actividades': len(resultado['datos'].get('actividades') or [])}
 

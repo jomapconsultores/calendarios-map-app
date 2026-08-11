@@ -561,6 +561,23 @@ def registrar_cronograma(app, ctx):
                 if db().insert('gantt_activities', cambios):
                     creadas += 1
 
+        # El análisis de la IA se guarda CON EL PLAN. Antes se enseñaba una vez
+        # en la ventana y se perdía al cerrarla: saber cuál es la ruta crítica y
+        # qué riesgos hay sirve mientras se ejecuta el plan, no sólo el minuto en
+        # que se generó.
+        analisis = {}
+        if 'resumen' in cuerpo:
+            analisis['ai_resumen'] = _sanitize(cuerpo.get('resumen'), 4000) or None
+        for campo, clave in (('riesgos', 'ai_riesgos'), ('ruta_critica', 'ai_ruta_critica')):
+            if campo in cuerpo:
+                lista = cuerpo.get(campo)
+                analisis[clave] = [_sanitize(x, 500) for x in lista
+                                   if isinstance(lista, list) and x][:30]
+        if analisis:
+            analisis['ai_generado_en'] = datetime.now(timezone.utc).isoformat()
+            analisis['updated_at'] = analisis['ai_generado_en']
+            db().update('gantt_plans', pid, analisis)
+
         return jsonify({'success': True, 'aplicadas': aplicadas, 'creadas': creadas})
 
     @app.route('/cronograma/api/ia-estado', methods=['GET'])

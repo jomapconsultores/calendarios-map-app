@@ -260,8 +260,13 @@ def contacto_desde_ruc(datos):
         'ruc_class':      datos.get('clase'),
         'ruc_type':       datos.get('tipo'),
         'ruc_obligado_contabilidad': datos.get('obligado_contabilidad'),
+        # Para un estudio contable estos dos deciden cómo se factura al cliente,
+        # así que van a su propia columna y no enterrados dentro de ruc_raw.
+        'ruc_agente_retencion':       datos.get('agente_retencion'),
+        'ruc_contribuyente_especial': datos.get('contribuyente_especial'),
         'ruc_start_date': datos.get('fecha_inicio'),
         'ruc_end_date':   datos.get('fecha_cese'),
+        'ruc_updated_at': datos.get('fecha_actualizacion'),
         'ruc_activities': datos.get('actividades') or [],
         'ruc_establishments': datos.get('establecimientos') or [],
         'ruc_raw':        datos.get('crudo'),
