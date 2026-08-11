@@ -62,6 +62,13 @@ CAMPOS_SRI = ('ruc_state', 'ruc_class', 'ruc_type', 'ruc_obligado_contabilidad',
 
 MAX_ARCHIVO_MB = 15
 
+# Tiempo máximo que puede pasar clasificando con IA dentro de UNA petición.
+# Va por debajo del timeout de gunicorn (300 s en el Dockerfile) a propósito:
+# si el modelo se pasa de aquí, el usuario recibe la vista previa de lo que sí
+# se analizó y un aviso de cuánto quedó fuera, en vez de una petición cortada
+# a media respuesta sin ninguna explicación.
+LIMITE_IA_SEGUNDOS = 200
+
 
 def _slug(texto):
     import re
@@ -606,7 +613,8 @@ def registrar_directorio(app, ctx):
             else:
                 try:
                     crudos, avisos = ia_mod.clasificar_registros(
-                        leido['bloques'], sectores, origen=leido['tipo'])
+                        leido['bloques'], sectores, origen=leido['tipo'],
+                        limite_segundos=LIMITE_IA_SEGUNDOS)
                     metodo = 'ia'
                 except ia_mod.IANoDisponible as e:
                     return jsonify({'success': False, 'error': str(e)})
@@ -621,7 +629,8 @@ def registrar_directorio(app, ctx):
                                          + (ia_mod.estado()['motivo'] or '')})
             try:
                 crudos, avisos = ia_mod.clasificar_registros(
-                    leido['bloques'], sectores, origen=leido['tipo'])
+                    leido['bloques'], sectores, origen=leido['tipo'],
+                        limite_segundos=LIMITE_IA_SEGUNDOS)
                 metodo = 'ia'
             except Exception as e:
                 return jsonify({'success': False,

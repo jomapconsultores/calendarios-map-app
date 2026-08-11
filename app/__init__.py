@@ -2942,6 +2942,35 @@ def create_app():
         ms_accounts = []
         if is_admin():
             ms_accounts = [t.get('email','') for t in (app.supabase.get('ms_tokens', select='email') or []) if t.get('email')]
+
+        # Directorio y Cronograma. Se consultan sólo si el usuario tiene el
+        # módulo: al que no lo tiene no se le hace pagar la consulta, y las
+        # tablas pueden no existir todavía si aún no se aplicó la migración 020
+        # —de ahí el try, para que el panel no se caiga por eso—.
+        contactos_total = sectores_total = 0
+        if user_can('directorio'):
+            try:
+                contactos_total = len(app.supabase.get('contacts', select='id') or [])
+                sectores_total = len([s for s in (app.supabase.get('sectors', select='id,active') or [])
+                                      if s.get('active') is not False])
+            except Exception:
+                pass
+        planes_total = actividades_vencidas = 0
+        if user_can('cronograma'):
+            try:
+                planes = app.supabase.get('gantt_plans', select='id,created_by,status') or []
+                if not is_admin():
+                    planes = [p for p in planes if p.get('created_by') == str(current_user.id)]
+                planes = [p for p in planes if p.get('status') != 'archived']
+                planes_total = len(planes)
+                ids_planes = {p['id'] for p in planes}
+                for a in (app.supabase.get('gantt_activities', select='plan_id,status,end_date') or []):
+                    if (a.get('plan_id') in ids_planes and a.get('status') != 'done'
+                            and a.get('end_date') and a['end_date'] < today_iso):
+                        actividades_vencidas += 1
+            except Exception:
+                pass
+
         return {
             'total_pending':  len(pending_all),
             'overdue':        len(overdue),
@@ -2952,6 +2981,10 @@ def create_app():
             'sub_pending':    sub_pending,
             'next_apts':      next_apts,
             'ms_accounts':    ms_accounts,
+            'contactos':      contactos_total,
+            'sectores':       sectores_total,
+            'planes':         planes_total,
+            'gantt_vencidas': actividades_vencidas,
         }
 
     @app.route('/dashboard')
@@ -2997,7 +3030,9 @@ def create_app():
                                widgets=widgets,
                                can_planning=user_can('planning'),
                                can_todo=user_can('todo'),
-                               can_calendar=user_can('calendar'))
+                               can_calendar=user_can('calendar'),
+                               can_directorio=user_can('directorio'),
+                               can_cronograma=user_can('cronograma'))
 
     # ============================================================
     #  CALENDAR VIEW

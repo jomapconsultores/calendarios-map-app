@@ -21,6 +21,7 @@ se rompe la aplicación por no tener clave.
 """
 import json
 import os
+import time
 
 try:
     import anthropic
@@ -204,16 +205,26 @@ def _pedir_json(instrucciones, contenido, esquema, max_tokens=16000, effort='med
 # ============================================================
 #  1. CLASIFICACIÓN DE ARCHIVOS IMPORTADOS
 # ============================================================
-def clasificar_registros(material, sectores=None, origen='archivo', progreso=None):
+def clasificar_registros(material, sectores=None, origen='archivo', progreso=None,
+                         limite_segundos=None):
     """Convierte material en bruto en registros listos para el directorio.
 
     `material` es una lista de trozos de texto: cada trozo puede ser una fila del
     Excel ya serializada o un bloque de texto del PDF/Word. Se procesa por lotes
     para no mandar un archivo entero en una sola petición.
 
+    `limite_segundos` acota el trabajo total. Existe porque gunicorn mata al
+    worker pasado su timeout: un archivo de 500 filas son trece llamadas al
+    modelo y se pasaría de largo, con lo que el usuario no vería un aviso sino
+    una petición cortada sin explicación. Con el límite se devuelve lo analizado
+    hasta ese punto y un aviso diciendo cuánto quedó fuera — la vista previa ya
+    enseña fila por fila lo que se va a guardar, así que un análisis parcial es
+    visible y seguro.
+
     Devuelve (registros, avisos)."""
     if not material:
         return [], []
+    fin = (time.monotonic() + limite_segundos) if limite_segundos else None
 
     nombres_sectores = [s.get('name') for s in (sectores or []) if s.get('name')]
     contexto_sectores = ''
@@ -228,6 +239,13 @@ def clasificar_registros(material, sectores=None, origen='archivo', progreso=Non
     lotes = [material[i:i + FILAS_POR_LOTE] for i in range(0, len(material), FILAS_POR_LOTE)]
 
     for indice, lote in enumerate(lotes, 1):
+        if fin and time.monotonic() > fin:
+            filas_fuera = sum(len(l) for l in lotes[indice - 1:])
+            avisos.append(
+                f'Se analizaron {len(material) - filas_fuera} de {len(material)} filas: '
+                f'el archivo es grande y se alcanzó el límite de tiempo. Guarda estas y '
+                f'vuelve a importar el resto en un segundo archivo.')
+            break
         bloque = '\n'.join(f'[{n}] {texto}' for n, texto in enumerate(lote, 1))
         contenido = (f'Material extraído de un {origen}. Conviértelo en registros '
                      f'estructurados.{contexto_sectores}\n\n---\n{bloque}\n---')

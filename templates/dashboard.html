@@ -116,6 +116,18 @@
           <span class="src-count">{{widgets.sub_pending}} <small>pendientes</small></span>
         </div>
         {% endif %}
+        {% if can_cronograma %}
+        <div class="src-row">
+          <span class="src-chip" style="background:#f5f3ff;color:#5b21b6">📊 Cronograma</span>
+          <span class="src-count">{{widgets.planes}} <small>plan(es)</small>{% if widgets.gantt_vencidas %} · <span class="text-danger fw-bold">{{widgets.gantt_vencidas}} vencida(s)</span>{% endif %}</span>
+        </div>
+        {% endif %}
+        {% if can_directorio %}
+        <div class="src-row">
+          <span class="src-chip" style="background:#ecfeff;color:#155e75">🗂️ Directorio</span>
+          <span class="src-count">{{widgets.contactos}} <small>registro(s) en {{widgets.sectores}} sector(es)</small></span>
+        </div>
+        {% endif %}
         {% if widgets.ms_accounts %}
         <small class="text-muted">Cuentas MS conectadas: {{ widgets.ms_accounts|length }}</small>
         {% endif %}
@@ -124,7 +136,31 @@
   </div>
 </div>
 
+{# Las tarjetas siguen el MISMO orden que el menú lateral y que ALL_MODULES:
+   trabajo del día primero, después planificación y datos, y al final la cuenta
+   y la administración. Cada una aparece sólo si el rol activo la habilita. #}
 <div class="row g-3 mt-1">
+  {% if can_todo %}
+  <div class="col-md-6 col-xl-4">
+    <a href="/todo" class="module-card">
+      <div class="m-icon" style="background:#dcfce7">✅</div>
+      <h6>Actividades</h6>
+      <p class="m-sub mb-2">{{widgets.total_pending}} pendiente(s) · sincronizado con To-Do</p>
+      <span class="btn btn-primary btn-sm rounded-pill">Ver pendientes →</span>
+    </a>
+  </div>
+  {% endif %}
+  {% if can_planning %}
+  <div class="col-md-6 col-xl-4">
+    <a href="/planning" class="module-card">
+      <div class="m-icon" style="background:#eef2ff">📋</div>
+      <h6>Proyectos</h6>
+      <p class="m-sub mb-2">{{widgets.manual_pending}} tarea(s) interna(s) pendiente(s)</p>
+      <span class="btn btn-primary btn-sm rounded-pill">Abrir →</span>
+    </a>
+  </div>
+  {% endif %}
+  {% if can_calendar %}
   <div class="col-md-6 col-xl-4">
     <a href="/calendar" class="module-card">
       <div class="m-icon">📅</div>
@@ -133,6 +169,33 @@
       <span class="btn btn-primary btn-sm rounded-pill">Ir al calendario →</span>
     </a>
   </div>
+  {% endif %}
+  {% if can_cronograma %}
+  <div class="col-md-6 col-xl-4">
+    <a href="/cronograma" class="module-card">
+      <div class="m-icon" style="background:#f5f3ff">📊</div>
+      <h6>Cronograma</h6>
+      <p class="m-sub mb-2">
+        {% if widgets.planes %}{{widgets.planes}} cronograma(s){% if widgets.gantt_vencidas %} · {{widgets.gantt_vencidas}} actividad(es) vencida(s){% endif %}
+        {% else %}Gantt por actividad, con planificación asistida{% endif %}
+      </p>
+      <span class="btn btn-primary btn-sm rounded-pill">Planificar →</span>
+    </a>
+  </div>
+  {% endif %}
+  {% if can_directorio %}
+  <div class="col-md-6 col-xl-4">
+    <a href="/directorio" class="module-card">
+      <div class="m-icon" style="background:#ecfeff">🗂️</div>
+      <h6>Directorio</h6>
+      <p class="m-sub mb-2">
+        {% if widgets.contactos %}{{widgets.contactos}} registro(s) en {{widgets.sectores}} sector(es)
+        {% else %}Clientes por sector, con verificación en el SRI{% endif %}
+      </p>
+      <span class="btn btn-primary btn-sm rounded-pill">Abrir →</span>
+    </a>
+  </div>
+  {% endif %}
   {% if is_effective_admin %}
   <div class="col-md-6 col-xl-4">
     <a href="{{ '/auth/google' if not google_connected else '#' }}" class="module-card" {% if google_connected %}onclick="return false" style="cursor:default"{% endif %}>
@@ -153,10 +216,11 @@
     </a>
   </div>
   <div class="col-md-6 col-xl-4">
+    {# «Catálogos», no «Base de datos»: eso último es ahora el Directorio. #}
     <a href="/admin/database" class="module-card">
       <div class="m-icon" style="background:#e0e7ff">🗄️</div>
-      <h6>Base de datos</h6>
-      <p class="m-sub mb-2">Ciudades, títulos, encargados, clientes…</p>
+      <h6>Catálogos</h6>
+      <p class="m-sub mb-2">Ciudades, títulos, encargados, calendarios…</p>
       <span class="btn btn-primary btn-sm rounded-pill">Abrir →</span>
     </a>
   </div>
