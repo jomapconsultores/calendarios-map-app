@@ -301,15 +301,29 @@ class SupabaseAPI:
         if filters:
             for k, v in filters.items():
                 q += f'&{k}=eq.{_url_quote(str(v), safe="")}'
-        try:
-            r = self._session.get(q, timeout=self._timeout)
-            if r.status_code == 200:
-                return r.json()
-            print(f'[supabase.get] {table}: HTTP {r.status_code} {r.text[:120]}')
-            return []
-        except Exception as e:
-            print(f'[supabase.get] {table}: {e}')
-            return []
+        # Un reintento ante fallo pasajero. La primera consulta después de un
+        # rato sin uso puede pasarse del límite de tiempo de PostgreSQL
+        # («canceling statement due to statement timeout») o del nuestro; en
+        # caliente la misma consulta tarda dos décimas. Sin reintento eso se
+        # traducía en devolver [] y que el panel mostrara ceros como si de
+        # verdad no hubiera nada: peor que un error, porque no se nota.
+        # No se reintentan los errores de la consulta en sí (4xx): esos no
+        # mejoran repitiéndolos.
+        for intento in (1, 2):
+            try:
+                r = self._session.get(q, timeout=self._timeout)
+                if r.status_code == 200:
+                    return r.json()
+                if intento == 1 and r.status_code >= 500:
+                    continue
+                print(f'[supabase.get] {table}: HTTP {r.status_code} {r.text[:120]}')
+                return []
+            except Exception as e:
+                if intento == 1:
+                    continue
+                print(f'[supabase.get] {table}: {e}')
+                return []
+        return []
 
     def get_in(self, table, column, values, select='*'):
         """Single query WHERE column IN (values)."""
@@ -2128,7 +2142,16 @@ def create_app():
                     flash('La contraseña temporal que te entregó el administrador ya caducó. '
                           'Pídele que la restablezca nuevamente.', 'danger')
                     return render_template('login.html')
-                login_user(User(u))
+                # `remember=True` y `session.permanent` AQUÍ, no en el
+                # before_request. El before_request se ejecuta ANTES de la vista,
+                # cuando el usuario todavía es anónimo, así que en la respuesta
+                # del propio inicio de sesión la cookie salía sin fecha de
+                # caducidad: era una cookie de navegador. Si el navegador o la
+                # aplicación instalada la descartaba al cerrarse, ese primer
+                # inicio de sesión se perdía y había que volver a entrar. Puesto
+                # aquí, la cookie ya sale fechada desde la primera respuesta.
+                login_user(User(u), remember=True)
+                session.permanent = True
                 session['must_change_password'] = bool(u.get('must_change_password'))
                 roles = get_user_roles(app, u['id'])
                 role_ids = {r['id'] for r in roles}
@@ -2270,7 +2293,8 @@ def create_app():
                                  select='id,email,full_name,role,must_change_password')
         if not users:
             return jsonify({'success': False, 'error': 'Usuario no encontrado'})
-        login_user(User(users[0]))
+        login_user(User(users[0]), remember=True)
+        session.permanent = True
         session['must_change_password'] = bool(users[0].get('must_change_password'))
         if session['must_change_password']:
             return jsonify({'success': True, 'redirect': '/account/password'})
@@ -2368,7 +2392,8 @@ def create_app():
             if _valid_descriptor(v):
                 best = min(best, _face_distance(desc, v))
         if best <= FACE_THRESHOLD:
-            login_user(User(users[0]))
+            login_user(User(users[0]), remember=True)
+            session.permanent = True
             session['must_change_password'] = bool(users[0].get('must_change_password'))
             return jsonify({'success': True,
                             'redirect': '/account/password' if session['must_change_password']

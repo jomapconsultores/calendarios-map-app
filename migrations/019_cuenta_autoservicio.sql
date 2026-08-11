@@ -33,4 +33,9 @@ CREATE TABLE IF NOT EXISTS password_log (
 CREATE INDEX IF NOT EXISTS idx_password_log_user
   ON password_log (user_id, created_at DESC);
 
-ALTER TABLE password_log ENABLE ROW LEVEL SECURITY;
+-- SIN RLS, como el resto de tablas del sistema. Aquí decía ENABLE, y activarlo
+-- sin ninguna política no significa «sin restricciones» sino «deniega todo»:
+-- la aplicación entra con la llave anónima, que sí respeta RLS, así que no
+-- habría podido escribir ni un solo apunte en la bitácora y nadie se habría
+-- enterado. Es el mismo fallo que corrigieron las migraciones 022 y 025.
+ALTER TABLE password_log DISABLE ROW LEVEL SECURITY;

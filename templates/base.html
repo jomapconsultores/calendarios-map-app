@@ -477,22 +477,21 @@
 {# Instalación en el teléfono: botón nativo en Android, instrucciones en iOS. #}
 <script src="{{ url_for('static', filename='js/instalar.js') }}?v=1" defer></script>
 <script>
-// Cierre de sesión automático tras 20 minutos de inactividad.
-// El contador se reinicia con cualquier actividad del usuario y se
-// sincroniza entre pestañas abiertas del sistema (localStorage 'storage').
+// Aquí había un cierre de sesión automático a los 20 minutos de inactividad:
+// pasado ese rato la pantalla saltaba sola a /logout, aunque estuvieras
+// leyendo. Se retira. La sesión ahora dura una jornada y es deslizante (ver
+// PERMANENT_SESSION_LIFETIME en config/config.py), y quien quiera salir lo hace
+// con el botón ⎋ del menú.
 //
-// Debe coincidir con PERMANENT_SESSION_LIFETIME de config/config.py, que es el
-// corte de verdad: este temporizador solo adelanta la salida en pantalla y no
-// protege por sí solo (basta recargar para reiniciarlo).
+// Lo que SÍ se conserva es la marca de actividad, porque no servía sólo para
+// cerrar la sesión: el sondeo de Actividades y Proyectos (planning.html) la
+// consulta para no refrescar en una pestaña abierta y olvidada, y así no gastar
+// consultas contra una pantalla que nadie está mirando.
 (function () {
-  var IDLE_MS = 20 * 60 * 1000;
   var SYNC_KEY = '__idle_last_activity';
   var EVENTS = ['mousemove', 'mousedown', 'keydown', 'scroll', 'touchstart', 'click', 'wheel'];
-  var timer, lastSync = 0;
-  function logout() { window.location.href = '/logout'; }
-  function reset() { clearTimeout(timer); timer = setTimeout(logout, IDLE_MS); }
+  var lastSync = 0;
   function onActivity() {
-    reset();
     var now = Date.now();
     if (now - lastSync > 5000) {
       lastSync = now;
@@ -500,8 +499,7 @@
     }
   }
   EVENTS.forEach(function (ev) { window.addEventListener(ev, onActivity, { passive: true }); });
-  window.addEventListener('storage', function (e) { if (e.key === SYNC_KEY) reset(); });
-  reset();
+  onActivity();
 })();
 </script>
 {% block scripts %}{% endblock %}
