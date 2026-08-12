@@ -15,8 +15,22 @@ jobs:
           python-version: '3.12'
           cache: pip
 
+      # node sólo se usa como analizador de JavaScript (node --check) en el
+      # paso de las plantillas. La aplicación no lleva nada de Node.
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
       - name: Install dependencies
         run: pip install -r requirements.txt
 
       - name: Compile all sources (syntax check)
         run: python -m compileall -q . -x '(^|/)(venv|__pycache__)/'
+
+      # compileall no mira dentro de las plantillas: para Python son texto. Un
+      # error de sintaxis en el JavaScript incrustado tumba el <script> entero
+      # en el navegador y la página se queda a medias, sin que el servidor dé
+      # ninguna señal. Ya pasó una vez con el calendario (commit 97dbb91).
+      - name: Check inline JavaScript in templates
+        run: python tools/revisar_js_plantillas.py
