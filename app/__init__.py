@@ -127,7 +127,16 @@ class TTLCache:
 _cal_cache      = TTLCache(ttl=300)   # calendar_config — 5 min
 _user_cal_cache = TTLCache(ttl=10)    # user calendars  — 10 s (corto: multi-worker safe)
 _google_cache   = TTLCache(ttl=120)   # google status   — 2 min
-_role_cache       = TTLCache(ttl=300)  # grants de un rol (modules/calendarios/proyectos/cuentas MS) — 5 min
+# Grants de un rol (módulos/calendarios/proyectos/cuentas MS). 10 s, como sus dos
+# vecinos y por la misma razón: en producción corren DOS workers de gunicorn, cada
+# uno con su memoria. Al guardar un rol sólo se invalida el caché del worker que
+# atendió la petición; el otro seguía sirviendo lo viejo. Con 300 s eso significaba
+# que un cambio de permisos tardaba hasta CINCO MINUTOS en notarse, y de forma
+# intermitente según a qué worker cayera cada petición: el administrador marcaba
+# una casilla, guardaba, y para el usuario no cambiaba nada. Parecía que la
+# pantalla de Roles no hiciera nada. Un caché que hace dudar de si el sistema
+# obedece cuesta más de lo que ahorra.
+_role_cache       = TTLCache(ttl=10)
 _user_roles_cache = TTLCache(ttl=10)   # roles asignados a un usuario — 10 s
 _ms_cache         = TTLCache(ttl=120)  # ¿hay alguna cuenta Microsoft conectada? — 2 min
 
