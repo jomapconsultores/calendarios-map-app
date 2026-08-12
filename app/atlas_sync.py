@@ -350,3 +350,128 @@ def arrancar_autosync(app, zona, interval_min=10):
 
     threading.Thread(target=_bucle, name='atlas-sync', daemon=True).start()
     print(f'[atlas-sync] activo (cada {interval_min} min)')
+
+
+# ============================================================
+#  PERSONAS DE ATLAS  →  DIRECTORIO
+#
+#  La primera carga de personas al Directorio se hizo con un script suelto que
+#  no quedó en el repositorio: trajo usuarios y docentes, y a los padres de
+#  familia no los tocó. No había forma de repetirla ni de ampliarla, sólo de
+#  volver a escribirla. Esto la convierte en una función del sistema.
+#
+#  Aquí NO se da por supuesto el esquema de ATLAS. Este proyecto sólo sabía
+#  leer su tabla `reuniones`; cómo se llama la tabla de representantes, o sus
+#  columnas, es algo que no consta en ninguna parte de este lado. Así que se
+#  descubre y se informa, en lugar de adivinar y fallar en silencio: `explorar`
+#  pregunta a ATLAS qué tablas de personas existen y qué columnas traen, y la
+#  pantalla enseña lo que encontró antes de importar nada.
+# ============================================================
+
+# Nombres con los que suele aparecer cada grupo. Se prueban todos; los que no
+# existan simplemente no salen en el resultado.
+GRUPOS_PERSONAS = {
+    'representantes': ('representantes', 'padres', 'padres_familia', 'padres_de_familia',
+                       'acudientes', 'apoderados', 'tutores'),
+    'estudiantes':    ('estudiantes', 'alumnos'),
+    'docentes':       ('docentes', 'profesores', 'maestros'),
+    'usuarios':       ('usuarios', 'users', 'personas'),
+}
+
+# Columnas de ATLAS que valen para cada campo del Directorio, en orden de
+# preferencia. La primera que exista y traiga algo, gana.
+EQUIVALENCIAS = {
+    'nombres':   ('nombres', 'nombre', 'first_name', 'primer_nombre'),
+    'apellidos': ('apellidos', 'apellido', 'last_name', 'primer_apellido'),
+    'completo':  ('nombre_completo', 'full_name', 'nombres_completos', 'razon_social'),
+    'documento': ('cedula', 'documento', 'dni', 'identificacion', 'doc_number', 'ruc'),
+    'email':     ('email', 'correo', 'correo_electronico', 'mail'),
+    'movil':     ('telefono', 'celular', 'movil', 'phone', 'telefono_movil'),
+    'fijo':      ('telefono_fijo', 'convencional', 'landline'),
+    'direccion': ('direccion', 'domicilio', 'address'),
+    'ciudad':    ('ciudad', 'canton', 'city'),
+}
+
+
+def _primer_valor(fila, claves):
+    for clave in claves:
+        valor = fila.get(clave)
+        if valor is not None and str(valor).strip():
+            return str(valor).strip()
+    return ''
+
+
+def explorar():
+    """Qué tablas de personas expone ATLAS y qué columnas traen.
+
+    Devuelve, por grupo, la primera tabla que responda: su nombre, cuántas
+    filas tiene y sus columnas. Lo que no exista se informa como tal — es la
+    diferencia entre «ATLAS no tiene representantes» y «me equivoqué de
+    nombre»."""
+    if not disponible():
+        return {'success': False, 'error': 'Falta ATLAS_SUPABASE_KEY en el servidor'}
+    hallazgos, probados = {}, []
+    for grupo, candidatos in GRUPOS_PERSONAS.items():
+        for recurso in candidatos:
+            probados.append(recurso)
+            try:
+                muestra = _atlas_get(recurso, 'select=*&limit=1')
+            except Exception:
+                continue          # no existe o no se puede leer: se prueba el siguiente
+            try:
+                total = len(_atlas_get(recurso, 'select=id'))
+            except Exception:
+                total = None
+            hallazgos[grupo] = {
+                'tabla': recurso,
+                'filas': total,
+                'columnas': sorted(muestra[0].keys()) if muestra else [],
+            }
+            break
+    return {'success': True, 'grupos': hallazgos, 'probados': probados,
+            'url': ATLAS_URL}
+
+
+def leer_personas(recurso):
+    """Filas crudas de una tabla de personas de ATLAS."""
+    if not disponible():
+        raise RuntimeError('Falta ATLAS_SUPABASE_KEY en el servidor')
+    return _atlas_get(recurso, 'select=*')
+
+
+def a_contacto(fila, etiquetas):
+    """Traduce una fila de ATLAS al formato del Directorio.
+
+    Devuelve (registro, motivo_de_descarte). El descarte no se decide aquí a la
+    ligera: quien no tiene NINGUNA forma de contacto no sirve en un directorio,
+    pero la falta de cédula no descarta a nadie —se le pone una referencia
+    provisional, como ya hizo la primera carga— porque un padre de familia sin
+    cédula registrada en ATLAS sigue siendo alguien a quien hay que poder
+    llamar."""
+    nombres   = _primer_valor(fila, EQUIVALENCIAS['nombres'])
+    apellidos = _primer_valor(fila, EQUIVALENCIAS['apellidos'])
+    completo  = _primer_valor(fila, EQUIVALENCIAS['completo'])
+    if not (nombres or apellidos) and completo:
+        partes = completo.split()
+        nombres, apellidos = ' '.join(partes[:1]), ' '.join(partes[1:])
+    email = _primer_valor(fila, EQUIVALENCIAS['email'])
+    movil = _primer_valor(fila, EQUIVALENCIAS['movil'])
+    fijo  = _primer_valor(fila, EQUIVALENCIAS['fijo'])
+
+    if not (nombres or apellidos):
+        return None, 'Sin nombre en ATLAS'
+    if not (email or movil or fijo):
+        return None, 'Sin correo ni teléfono en ATLAS'
+
+    return {
+        'first_name': nombres or None,
+        'last_name': apellidos or None,
+        'doc_number': _primer_valor(fila, EQUIVALENCIAS['documento']),
+        'email': email or None,
+        'mobile': movil or None,
+        'landline': fijo or None,
+        'home_address': _primer_valor(fila, EQUIVALENCIAS['direccion']) or None,
+        'city': _primer_valor(fila, EQUIVALENCIAS['ciudad']) or None,
+        'tags': etiquetas,
+        'atlas_id': fila.get('id'),
+    }, None

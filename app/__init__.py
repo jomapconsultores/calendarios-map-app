@@ -5155,6 +5155,9 @@ def create_app():
         '_sanitize_hex_color':   _sanitize_hex_color,
         '_xlsx_safe':            _xlsx_safe,
         '_filter_visible_tasks': _filter_visible_tasks,
+        # El puente con ATLAS, para que el Directorio pueda traerse de allá a los
+        # representantes, docentes y estudiantes.
+        '_atlas':                _atlas,
     }
     registrar_directorio(app, _ctx_modulos)
     registrar_cronograma(app, _ctx_modulos)

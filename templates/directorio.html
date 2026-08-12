@@ -84,6 +84,9 @@
 {% block topbar_actions %}
 <button class="btn btn-primary btn-sm rounded-pill" onclick="abrirContacto(null)">+ Nuevo registro</button>
 <button class="btn btn-outline-secondary btn-sm rounded-pill" onclick="abrirImportacion()">📥 Importar</button>
+{# Traer personas de la base de ATLAS: representantes, docentes o estudiantes. #}
+<button class="btn btn-sm rounded-pill fw-bold" style="background:#EA4335;color:#fff;border:0"
+        onclick="abrirAtlas()" title="Traer personas desde la base de ATLAS">🎓 Traer de ATLAS</button>
 <button class="btn btn-outline-secondary btn-sm rounded-pill" onclick="exportar()">📤 Excel</button>
 {% endblock %}
 
@@ -400,6 +403,41 @@
   </div>
 </div>
 
+<!-- ============ TRAER PERSONAS DE ATLAS ============ -->
+<div class="modal fade dir-modal" id="modalAtlas" tabindex="-1">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-content border-0 shadow">
+      <div class="modal-header" style="background:linear-gradient(135deg,#EA4335,#c5221f)">
+        <h5 class="modal-title text-white">🎓 Traer personas de ATLAS</h5>
+        <button class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <p class="text-muted small">
+          Trae al Directorio las personas registradas en ATLAS. Sólo entran las que tienen
+          <strong>correo o teléfono</strong>: sin ninguna forma de contacto no sirven aquí.
+          Verás qué entra y qué se queda fuera <strong>antes</strong> de guardar nada.
+        </p>
+        <div id="atlasPaso1">Consultando a ATLAS…</div>
+        <div id="atlasPaso2" style="display:none">
+          <div class="row g-2 align-items-end mb-3">
+            <div class="col-md-7">
+              <label class="form-label">Sector donde quedarán</label>
+              <input id="atlasSector" class="form-control" value="Padres de familia">
+              <div class="form-text">Si no existe, se crea.</div>
+            </div>
+            <div class="col-md-5 text-md-end">
+              <button class="btn btn-primary rounded-pill" onclick="atlasGuardar()" id="atlasBtnGuardar">
+                💾 Importar los que entran
+              </button>
+            </div>
+          </div>
+          <div id="atlasPrevia"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- ============ SECTORES ============ -->
 <div class="modal fade dir-modal" id="modalSectores" tabindex="-1">
   <div class="modal-dialog modal-lg">
@@ -486,12 +524,14 @@ const ES_ADMIN = {{ 'true' if is_admin_user else 'false' }};
 
 let contactos = [], sectores = [], sectorActivo = '';
 let redesActuales = [], contactoActual = null, previaFilas = [], previaMeta = {};
-let modalContacto, modalImportar, modalSectores, temporizadorDoc = null;
+let modalContacto, modalImportar, modalSectores, modalAtlas, temporizadorDoc = null;
+let atlasGrupo = null, atlasFilas = [];
 
 document.addEventListener('DOMContentLoaded', () => {
   modalContacto = new bootstrap.Modal(document.getElementById('modalContacto'));
   modalImportar = new bootstrap.Modal(document.getElementById('modalImportar'));
   modalSectores = new bootstrap.Modal(document.getElementById('modalSectores'));
+  modalAtlas    = new bootstrap.Modal(document.getElementById('modalAtlas'));
 
   const casilla = document.getElementById('usarIa');
   if (!IA.disponible) {
@@ -521,6 +561,108 @@ function aviso(mensaje, tipo = 'success') {
   caja.textContent = mensaje;
   document.getElementById('toastZone').appendChild(caja);
   setTimeout(() => caja.remove(), 5000);
+}
+
+// ——————————————————————————————————————————
+//  TRAER PERSONAS DE ATLAS
+//  Dos pasos a propósito: primero se pregunta a ATLAS QUÉ tiene y se enseña,
+//  después se importa. La carga anterior se hizo a ciegas y por eso nadie notó
+//  que los padres de familia no venían en ella.
+// ——————————————————————————————————————————
+async function abrirAtlas() {
+  atlasGrupo = null; atlasFilas = [];
+  document.getElementById('atlasPaso1').innerHTML = 'Consultando a ATLAS…';
+  document.getElementById('atlasPaso2').style.display = 'none';
+  document.getElementById('atlasPrevia').innerHTML = '';
+  modalAtlas.show();
+
+  const r = await pedir('/directorio/api/atlas/explorar');
+  if (!r.success) {
+    document.getElementById('atlasPaso1').innerHTML =
+      '<div class="alert alert-warning py-2 small mb-0">⚠️ ' + esc(r.error || 'No se pudo consultar ATLAS') + '</div>';
+    return;
+  }
+  const grupos = r.grupos || {};
+  const nombres = {representantes: '👨‍👩‍👧 Padres de familia', estudiantes: '🎒 Estudiantes',
+                   docentes: '🧑‍🏫 Docentes', usuarios: '👤 Usuarios del sistema'};
+  const claves = Object.keys(grupos);
+  if (!claves.length) {
+    document.getElementById('atlasPaso1').innerHTML =
+      '<div class="alert alert-secondary py-2 small mb-0">ℹ️ ATLAS no expone ninguna tabla de personas que este sistema sepa leer.' +
+      '<br>Se probaron: <code>' + esc((r.probados || []).join(', ')) + '</code></div>';
+    return;
+  }
+  document.getElementById('atlasPaso1').innerHTML =
+    '<p class="small text-muted mb-2">Esto es lo que ATLAS tiene ahora mismo. Elige qué traer:</p>' +
+    claves.map(function (k) {
+      const g = grupos[k];
+      // El grupo viaja en data-grupo y no incrustado en el onclick: así no hay
+      // que escapar comillas dentro de un atributo dentro de una cadena.
+      return '<button class="btn btn-outline-primary w-100 text-start rounded-3 mb-2 atlas-grupo" data-grupo="' + esc(k) + '">' +
+        '<strong>' + (nombres[k] || k) + '</strong>' +
+        '<span class="badge bg-primary ms-2">' + (g.filas == null ? '?' : g.filas) + ' en ATLAS</span>' +
+        '<br><span class="text-muted" style="font-size:.72rem">tabla <code>' + esc(g.tabla) + '</code> · ' +
+        (g.columnas || []).length + ' columnas</span></button>';
+    }).join('');
+  document.querySelectorAll('#atlasPaso1 .atlas-grupo').forEach(function (b) {
+    b.addEventListener('click', function () { atlasElegir(this.dataset.grupo); });
+  });
+}
+
+async function atlasElegir(grupo) {
+  atlasGrupo = grupo;
+  document.getElementById('atlasPaso2').style.display = 'block';
+  document.getElementById('atlasPrevia').innerHTML = 'Preparando la vista previa…';
+  if (grupo !== 'representantes') {
+    const s = {estudiantes: 'Estudiantes (ATLAS)', docentes: 'Clases (ATLAS)',
+               usuarios: 'Clases (ATLAS)'}[grupo];
+    if (s) document.getElementById('atlasSector').value = s;
+  }
+  const r = await pedir('/directorio/api/atlas/analizar', {
+    method: 'POST', body: JSON.stringify({grupo: grupo})});
+  if (!r.success) {
+    document.getElementById('atlasPrevia').innerHTML =
+      '<div class="alert alert-warning py-2 small mb-0">⚠️ ' + esc(r.error || 'No se pudo preparar') + '</div>';
+    return;
+  }
+  atlasFilas = r.listos || [];
+  const desc = r.descartados || [];
+  document.getElementById('atlasPrevia').innerHTML =
+    '<div class="alert alert-info py-2 small">' +
+      'En ATLAS hay <strong>' + r.total_en_atlas + '</strong> · entran <strong>' + atlasFilas.length +
+      '</strong> · se quedan fuera <strong>' + desc.length + '</strong>' +
+      (r.sin_documento ? '<br>' + r.sin_documento + ' sin cédula en ATLAS: se les pone una referencia provisional y una nota para reemplazarla.' : '') +
+    '</div>' +
+    (atlasFilas.length ? '<div class="table-responsive" style="max-height:260px;overflow:auto">' +
+      '<table class="table table-sm"><thead><tr class="small text-muted">' +
+      '<th>Nombre</th><th>Documento</th><th>Correo</th><th>Teléfono</th></tr></thead><tbody>' +
+      atlasFilas.map(function (f) {
+        return '<tr class="small"><td>' + esc([f.first_name, f.last_name].filter(Boolean).join(' ')) + '</td>' +
+          '<td>' + esc(f.doc_number || '-') + '</td><td>' + esc(f.email || '-') + '</td>' +
+          '<td>' + esc(f.mobile || f.landline || '-') + '</td></tr>';
+      }).join('') + '</tbody></table></div>' : '') +
+    (desc.length ? '<details class="mt-2"><summary class="small text-muted">Ver los ' + desc.length +
+      ' que se quedan fuera y por qué</summary><ul class="small text-muted mt-2 mb-0">' +
+      desc.map(function (d) { return '<li>' + esc(d.quien) + ' — ' + esc(d.motivo) + '</li>'; }).join('') +
+      '</ul></details>' : '');
+  document.getElementById('atlasBtnGuardar').disabled = !atlasFilas.length;
+}
+
+async function atlasGuardar() {
+  if (!atlasFilas.length) return;
+  const boton = document.getElementById('atlasBtnGuardar');
+  const original = boton.innerHTML;
+  boton.disabled = true; boton.innerHTML = '⏳ Importando…';
+  const r = await pedir('/directorio/api/atlas/confirmar', {
+    method: 'POST',
+    body: JSON.stringify({grupo: atlasGrupo, filas: atlasFilas,
+                          sector: document.getElementById('atlasSector').value})});
+  boton.disabled = false; boton.innerHTML = original;
+  if (!r.success) { aviso(r.error || 'No se pudo importar', 'danger'); return; }
+  aviso('✅ ' + r.insertados + ' persona(s) importada(s)' +
+        (r.total_rechazados ? ' · ' + r.total_rechazados + ' rechazada(s)' : ''));
+  modalAtlas.hide();
+  cargar();
 }
 
 async function pedir(url, opciones = {}) {
