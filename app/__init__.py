@@ -237,8 +237,7 @@ ACCIONES_SENSIBLES = {f'{mod}.{acc}'
                      for mod, lista in SUBMODULOS.items()
                      for acc, _, sensible in lista if sensible}
 
-_user_perms_cache   = TTLCache(ttl=30, maxsize=256)
-_user_modules_cache = TTLCache(ttl=30, maxsize=256)  # módulos sueltos por persona
+_user_perms_cache = TTLCache(ttl=30, maxsize=256)
 
 
 # ============================================================
@@ -1602,30 +1601,100 @@ def get_active_role_grants(app, uid):
                 'ms_emails': set(), 'task_ids': set(), 'narrowed_projects': set()}
     return role_grants(app, rid)
 
+# ============================================================
+#  LO CONCEDIDO A UNA PERSONA, AL MARGEN DE SU ROL
+#
+#  El rol es la base y responde bien a «todas las secretarias ven esto». Lo que
+#  no sabía decir el sistema es «además, ELLA ve el calendario de JOMAP», y la
+#  única salida era inventarle un rol entero para una excepción — de ahí el rol
+#  «Acceso - {nombre}» que el propio sistema genera al aprobar una solicitud: un
+#  parche que confiesa que faltaba esta capa.
+#
+#  Regla única, y por eso todo pasa por `grants_efectivos`: lo de la persona se
+#  SUMA a lo del rol, nunca lo resta.
+# ============================================================
+_user_grants_cache = TTLCache(ttl=30, maxsize=256)
+
+# tabla -> (columna del recurso, clave en el diccionario de grants)
+_TABLAS_CONCESION = (
+    ('user_modules',     'modulo',      'modules'),
+    ('user_calendars',   'calendar_id', 'calendar_ids'),
+    ('user_projects',    'project_id',  'project_ids'),
+    ('user_ms_accounts', 'ms_email',    'ms_emails'),
+)
+
+
+def get_user_grants(app, uid):
+    """Módulos, calendarios, proyectos y cuentas MS concedidos a ESTA persona.
+
+    Las tablas pueden no existir todavía (migraciones 027 y 028 sin aplicar).
+    En ese caso se devuelven conjuntos vacíos y el sistema se comporta como
+    antes, gobernado sólo por el rol: una capa que se añade no puede tumbar la
+    que ya funcionaba."""
+    val, hit = _user_grants_cache.get(str(uid))
+    if hit:
+        return val
+    concedido = {}
+    for tabla, columna, clave in _TABLAS_CONCESION:
+        try:
+            filas = app.supabase.get(tabla, {'user_id': uid}, select=columna) or []
+            concedido[clave] = {f[columna] for f in filas if f.get(columna)}
+        except Exception:
+            concedido[clave] = set()
+    _user_grants_cache.set(str(uid), concedido)
+    return concedido
+
+
+def grants_efectivos(app, uid):
+    """Lo que esta persona puede alcanzar: su ROL ACTIVO más lo suyo propio.
+
+    Es el único sitio donde se combinan las dos fuentes. Todo lo que autoriza
+    —módulos, calendarios, proyectos, cuentas de Microsoft y la visibilidad de
+    las tareas— pasa por aquí, para que no puedan discrepar entre sí: un menú
+    que enseña un módulo que luego no deja entrar es peor que no enseñarlo."""
+    rol  = get_active_role_grants(app, uid)
+    mio  = get_user_grants(app, uid)
+    proyectos_propios = mio['project_ids']
+    return {
+        'level':        rol['level'],
+        'modules':      set(rol['modules']) | mio['modules'],
+        'calendar_ids': rol['calendar_ids'] | mio['calendar_ids'],
+        'project_ids':  rol['project_ids']  | proyectos_propios,
+        'ms_emails':    rol['ms_emails']    | mio['ms_emails'],
+        'task_ids':     rol['task_ids'],
+        # Un proyecto concedido a la persona se ve ENTERO. El recorte por
+        # actividades pertenece al rol; lo que el administrador da aparte, a
+        # mano y a alguien concreto, no debe llegar recortado por una regla
+        # escrita pensando en otros.
+        'narrowed_projects': rol['narrowed_projects'] - proyectos_propios,
+    }
+
+
 def get_user_calendars(app, uid):
-    """Calendarios visibles según el rol activo (admins ven todos)."""
+    """Calendarios visibles: los del rol activo más los concedidos a la persona
+    (admins ven todos)."""
     if is_admin():
         return _get_calendar_config(app)
-    grants = get_active_role_grants(app, uid)
-    all_cals = _get_calendar_config(app)
-    return [c for c in all_cals if c['calendar_id'] in grants['calendar_ids']]
+    permitidos = grants_efectivos(app, uid)['calendar_ids']
+    return [c for c in _get_calendar_config(app) if c['calendar_id'] in permitidos]
 
 def user_has_calendar_access(app, uid, calendar_id):
     if is_admin():
         return True
-    return calendar_id in get_active_role_grants(app, uid)['calendar_ids']
+    return calendar_id in grants_efectivos(app, uid)['calendar_ids']
 
 def get_user_projects(app, uid):
-    """Proyectos visibles según el rol activo (admins ven todos)."""
+    """Proyectos visibles: los del rol activo más los concedidos a la persona
+    (admins ven todos)."""
     if is_admin():
         return app.supabase.get('projects', select='*') or []
-    ids = list(get_active_role_grants(app, uid)['project_ids'])
+    ids = list(grants_efectivos(app, uid)['project_ids'])
     return app.supabase.get_in('projects', 'id', ids, select='*') if ids else []
 
 def user_has_project_access(app, uid, project_id):
     if is_admin():
         return True
-    return project_id in get_active_role_grants(app, uid)['project_ids']
+    return project_id in grants_efectivos(app, uid)['project_ids']
 
 def _grant_calendar_via_role(app, uid, calendar_id):
     """Aprobar una solicitud de /register ya no alcanza con marcar calendar_permissions
@@ -1679,38 +1748,43 @@ def csrf_protect(view):
     return wrapped
 
 def get_user_ms_emails(app, uid):
-    """Cuentas MS autorizadas según el rol activo (admins ven todas)."""
+    """Cuentas MS autorizadas: las del rol activo más las concedidas a la
+    persona (admins ven todas). Son las que deciden qué listas de To-Do ve."""
     if is_admin():
         return [t['email'] for t in (app.supabase.get('ms_tokens', select='email') or []) if t.get('email')]
-    return list(get_active_role_grants(app, uid)['ms_emails'])
+    return list(grants_efectivos(app, uid)['ms_emails'])
 
 def _delete_user_cascade(app, uid):
     """Borra las filas relacionadas (permisos, credenciales) antes del usuario,
     para no dejar huérfanas en calendar_permissions/webauthn_credentials/etc."""
     for tbl in ['calendar_permissions', 'webauthn_credentials', 'face_descriptors',
                 'ms_account_permissions', 'user_roles', 'user_permissions',
-                'user_modules']:
+                'user_modules', 'user_calendars', 'user_projects', 'user_ms_accounts']:
         for row in app.supabase.get(tbl, {'user_id': uid}, select='id'):
             app.supabase.delete(tbl, row['id'])
     ok = app.supabase.delete('users', uid)
     _user_cal_cache.invalidate(uid)
+    _user_grants_cache.invalidate(str(uid))
+    _user_perms_cache.invalidate(str(uid))
     return ok
 
 def _project_allowed(app, task, uid):
-    """Alcance de una tarea según el rol activo. Combina dos capas:
+    """Alcance de una tarea. Combina dos capas:
 
-      1) Proyecto: si la tarea tiene project_id, ese proyecto debe estar en el
-         rol activo (tareas manuales sueltas sin project_id no se ocultan — es
-         aditivo, no retroactivo).
-      2) Actividad: si el rol tiene actividades marcadas en ESE proyecto
-         (narrowed_projects), solo se ve la tarea si está en task_ids. Un
-         proyecto sin actividades marcadas se ve completo.
+      1) Proyecto: si la tarea tiene project_id, ese proyecto debe estar entre
+         los del rol activo o entre los concedidos a la persona (las tareas
+         manuales sueltas sin project_id no se ocultan — es aditivo, no
+         retroactivo).
+      2) Actividad: si el ROL tiene actividades marcadas en ESE proyecto
+         (narrowed_projects), sólo se ve la tarea si está en task_ids. Un
+         proyecto sin actividades marcadas se ve completo, y también el que se
+         concedió directamente a la persona: ese recorte es del rol.
 
     Admins bypasean vía is_admin() en el llamador."""
     pid = task.get('project_id')
     if not pid:
         return True
-    grants = get_active_role_grants(app, uid)
+    grants = grants_efectivos(app, uid)
     if pid not in grants['project_ids']:
         return False
     if pid in grants['narrowed_projects']:
@@ -1720,11 +1794,11 @@ def _project_allowed(app, task, uid):
 def _filter_visible_tasks(app, rows, uid):
     """Misma regla de visibilidad usada en GET /planning/api/tasks: admins ven todo;
     el resto solo tareas MS de cuentas autorizadas o tareas manuales propias/asignadas,
-    y si la tarea pertenece a un proyecto, ese proyecto debe estar en el rol activo."""
+    y si la tarea pertenece a un proyecto, ese proyecto debe estar autorizado."""
     if is_admin():
         return rows
     allowed_ms = set(get_user_ms_emails(app, uid))
-    grants = get_active_role_grants(app, uid)
+    grants = grants_efectivos(app, uid)
     has_todo = 'todo' in grants['modules']
     has_plan = 'planning' in grants['modules']
     suid = str(uid)
@@ -1827,35 +1901,12 @@ def get_user_permissions(app, uid):
     return permisos
 
 
-def get_user_modules(app, uid):
-    """Módulos concedidos a UNA persona, aparte de los que le da su rol."""
-    val, hit = _user_modules_cache.get(str(uid))
-    if hit:
-        return val
-    try:
-        filas = app.supabase.get('user_modules', {'user_id': uid}, select='modulo') or []
-        modulos = {f['modulo'] for f in filas if f.get('modulo')}
-    except Exception:
-        # La tabla puede no existir aún (migración 027 sin aplicar). Sin módulos
-        # sueltos el sistema sigue funcionando con los del rol, como siempre.
-        modulos = set()
-    _user_modules_cache.set(str(uid), modulos)
-    return modulos
-
-
 def modulos_efectivos(app, uid):
     """Módulos a los que entra esta persona: los de su ROL ACTIVO más los que el
-    administrador le haya concedido a ella en particular.
-
-    Se SUMAN, no compiten. Los módulos venían sólo por rol, así que para darle
-    Directorio a una sola persona había que inventarle un rol entero; y al revés,
-    quitar un módulo de un rol se lo quitaba a todos los que lo tuvieran. Con
-    esta capa el rol sigue siendo la base y la excepción se trata como
-    excepción."""
+    administrador le haya concedido a ella en particular (ver `grants_efectivos`)."""
     if is_admin():
         return {m[0] for m in ALL_MODULES}
-    del_rol = set(get_active_role_grants(app, uid)['modules'])
-    return del_rol | get_user_modules(app, uid)
+    return grants_efectivos(app, uid)['modules']
 
 
 def user_can(permiso):
@@ -2800,34 +2851,63 @@ def create_app():
         if not filas:
             return jsonify({'success': False, 'error': 'Usuario no encontrado'}), 404
         persona = filas[0]
-        grants = role_grants(app, persona['active_role_id']) if persona.get('active_role_id') else {'modules': []}
-        del_rol = set(grants['modules'])
-        sueltos = get_user_modules(app, uid)
+        vacio = {'modules': [], 'calendar_ids': set(), 'project_ids': set(), 'ms_emails': set()}
+        rol = role_grants(app, persona['active_role_id']) if persona.get('active_role_id') else vacio
+        mio = get_user_grants(app, uid)
+
         catalogo = [{
             'modulo': mod,
             'etiqueta': etiqueta,
-            'por_rol': mod in del_rol,
-            'suelto': mod in sueltos,
-            'tiene_modulo': mod in del_rol or mod in sueltos,
+            'por_rol': mod in set(rol['modules']),
+            'suelto': mod in mio['modules'],
+            'tiene_modulo': mod in set(rol['modules']) or mod in mio['modules'],
             'acciones': [{'clave': f'{mod}.{acc}', 'nombre': nombre, 'sensible': sensible}
                          for acc, nombre, sensible in SUBMODULOS.get(mod, [])],
         } for mod, etiqueta in ALL_MODULES]
+
+        def recursos(items, clave_rol, propios):
+            """Cada recurso, diciendo si viene del rol o se le dio a esta persona.
+            Se distinguen porque no se gobiernan igual: el del rol se quita en
+            Administración → Roles y afecta a todos los que tengan ese rol."""
+            return [{**it,
+                     'por_rol': it['id'] in rol[clave_rol],
+                     'suelto':  it['id'] in propios} for it in items]
+
+        calendarios = [{'id': c['calendar_id'], 'nombre': c.get('name') or c['calendar_id'],
+                        'detalle': c.get('email') or '', 'color': c.get('color')}
+                       for c in _get_calendar_config(app)]
+        proyectos = [{'id': p['id'], 'nombre': p.get('name') or '(sin nombre)', 'detalle': ''}
+                     for p in (app.supabase.get('projects', select='id,name') or [])]
+        cuentas_ms = [{'id': t['email'], 'nombre': t['email'], 'detalle': 'Microsoft To-Do'}
+                      for t in (app.supabase.get('ms_tokens', select='email') or []) if t.get('email')]
+
         return jsonify({
             'success': True,
             'usuario': {'id': persona['id'], 'nombre': persona.get('full_name'),
                         'email': persona.get('email')},
             'catalogo': catalogo,
-            'modulos_sueltos': sorted(sueltos),
+            'modulos_sueltos': sorted(mio['modules']),
             'concedidos': sorted(get_user_permissions(app, uid)),
+            'recursos': {
+                'calendarios': recursos(calendarios, 'calendar_ids', mio['calendar_ids']),
+                'proyectos':   recursos(proyectos,   'project_ids',  mio['project_ids']),
+                'cuentas_ms':  recursos(cuentas_ms,  'ms_emails',    mio['ms_emails']),
+            },
         })
 
     @app.route('/admin/users/<uid>/permisos', methods=['POST'])
     @login_required
     @csrf_protect
     def admin_user_permisos_guardar(uid):
-        """Reemplaza los módulos sueltos y los permisos de una persona.
+        """Reemplaza lo concedido a una persona: módulos, recursos y acciones.
 
-        Body: {modulos: [...], permisos: [...]}"""
+        Body: {modulos: [...], calendarios: [...], proyectos: [...],
+               cuentas_ms: [...], permisos: [...]}
+
+        Se reemplaza, no se acumula: lo que no venga marcado se retira. La
+        pantalla envía siempre el estado completo, así que quitar una casilla
+        tiene que quitar el acceso — si esto sólo añadiera, un permiso concedido
+        por error no habría forma de retirarlo desde aquí."""
         if not is_admin():
             return jsonify({'success': False, 'error': 'Solo admin'}), 403
         filas = app.supabase.get('users', {'id': uid}, select='id,email')
@@ -2836,20 +2916,39 @@ def create_app():
         correo = filas[0].get('email')
 
         cuerpo = request.get_json() or {}
+        mio = get_user_grants(app, uid)
+        concedido, retirado = [], []
 
-        # ── Módulos sueltos ────────────────────────────────────────────────
-        # Sólo módulos del catálogo: uno inventado desde el navegador no debe
-        # poder colarse en la tabla.
-        validos_mod = {m for m, _ in ALL_MODULES}
-        mods_nuevos = {m for m in (cuerpo.get('modulos') or []) if m in validos_mod}
-        mods_actuales = get_user_modules(app, uid)
-        for modulo in mods_actuales - mods_nuevos:
-            for fila in (app.supabase.get('user_modules',
-                                          {'user_id': uid, 'modulo': modulo}, select='id') or []):
-                app.supabase.delete('user_modules', fila['id'])
-        for modulo in sorted(mods_nuevos - mods_actuales):
-            app.supabase.insert_ignore('user_modules', {
-                'user_id': uid, 'modulo': modulo, 'granted_by': str(current_user.id)})
+        def sincronizar(tabla, columna, clave_grants, pedidos, validos, etiqueta):
+            """Deja la tabla con exactamente lo pedido. `validos` acota lo que se
+            acepta: un identificador inventado desde el navegador no debe poder
+            colarse como concesión."""
+            nuevos   = {v for v in (pedidos or []) if v in validos}
+            actuales = mio[clave_grants]
+            for valor in actuales - nuevos:
+                for fila in (app.supabase.get(tabla, {'user_id': uid, columna: valor},
+                                              select='id') or []):
+                    app.supabase.delete(tabla, fila['id'])
+                retirado.append(f'{etiqueta}:{valor}')
+            for valor in sorted(nuevos - actuales):
+                app.supabase.insert_ignore(tabla, {
+                    'user_id': uid, columna: valor, 'granted_by': str(current_user.id)})
+                concedido.append(f'{etiqueta}:{valor}')
+            return nuevos
+
+        mods_nuevos = sincronizar(
+            'user_modules', 'modulo', 'modules', cuerpo.get('modulos'),
+            {m for m, _ in ALL_MODULES}, 'módulo')
+        cals_nuevos = sincronizar(
+            'user_calendars', 'calendar_id', 'calendar_ids', cuerpo.get('calendarios'),
+            {c['calendar_id'] for c in _get_calendar_config(app)}, 'calendario')
+        proys_nuevos = sincronizar(
+            'user_projects', 'project_id', 'project_ids', cuerpo.get('proyectos'),
+            {p['id'] for p in (app.supabase.get('projects', select='id') or [])}, 'proyecto')
+        ms_nuevos = sincronizar(
+            'user_ms_accounts', 'ms_email', 'ms_emails', cuerpo.get('cuentas_ms'),
+            {t['email'] for t in (app.supabase.get('ms_tokens', select='email') or [])
+             if t.get('email')}, 'cuenta MS')
 
         # ── Acciones dentro de cada módulo ─────────────────────────────────
         validos = {f'{m}.{a}' for m, lista in SUBMODULOS.items() for a, _, _ in lista}
@@ -2863,22 +2962,26 @@ def create_app():
                        for p in sorted(nuevos - actuales)]
         if por_agregar:
             app.supabase.insert('user_permissions', por_agregar)
+        concedido += sorted(nuevos - actuales)
+        retirado  += sorted(actuales - nuevos)
 
         _user_perms_cache.invalidate(str(uid))
-        _user_modules_cache.invalidate(str(uid))
+        _user_grants_cache.invalidate(str(uid))
+        _user_cal_cache.invalidate(str(uid))
 
-        concedido = sorted((mods_nuevos - mods_actuales) | (nuevos - actuales))
-        retirado  = sorted((mods_actuales - mods_nuevos) | (actuales - nuevos))
         # Sólo se apunta cuando hubo cambio: un historial lleno de «no cambió
         # nada» esconde justo lo que se quiere encontrar.
         if concedido or retirado:
             _auditar_acceso(app, 'permisos', uid, correo, ' · '.join(filter(None, [
-                ('concedido: ' + ', '.join(concedido)) if concedido else '',
-                ('retirado: '  + ', '.join(retirado))  if retirado  else '',
+                ('concedido: ' + ', '.join(sorted(concedido))) if concedido else '',
+                ('retirado: '  + ', '.join(sorted(retirado)))  if retirado  else '',
             ])))
 
         return jsonify({'success': True, 'concedidos': sorted(nuevos),
                         'modulos_sueltos': sorted(mods_nuevos),
+                        'calendarios': sorted(cals_nuevos),
+                        'proyectos': sorted(proys_nuevos),
+                        'cuentas_ms': sorted(ms_nuevos),
                         'agregados': len(concedido),
                         'quitados': len(retirado)})
 
