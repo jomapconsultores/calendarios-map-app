@@ -2904,10 +2904,17 @@ def create_app():
         Body: {modulos: [...], calendarios: [...], proyectos: [...],
                cuentas_ms: [...], permisos: [...]}
 
-        Se reemplaza, no se acumula: lo que no venga marcado se retira. La
-        pantalla envía siempre el estado completo, así que quitar una casilla
+        Dentro de una categoría se REEMPLAZA: lo que no venga marcado se retira.
+        La pantalla envía siempre el estado completo, así que quitar una casilla
         tiene que quitar el acceso — si esto sólo añadiera, un permiso concedido
-        por error no habría forma de retirarlo desde aquí."""
+        por error no habría forma de retirarlo desde aquí.
+
+        Pero una categoría AUSENTE del cuerpo no se toca. La diferencia importa:
+        antes, no mencionar `calendarios` equivalía a mandarlos vacíos, y una
+        petición que sólo quería cambiar un módulo le retiraba a la persona
+        todos sus calendarios sin nombrarlos. Quedó en el historial. Retirar un
+        acceso tiene que ser algo que alguien pidió, no lo que ocurre por
+        omisión."""
         if not is_admin():
             return jsonify({'success': False, 'error': 'Solo admin'}), 403
         filas = app.supabase.get('users', {'id': uid}, select='id,email')
@@ -2919,12 +2926,17 @@ def create_app():
         mio = get_user_grants(app, uid)
         concedido, retirado = [], []
 
-        def sincronizar(tabla, columna, clave_grants, pedidos, validos, etiqueta):
+        def sincronizar(tabla, columna, clave_grants, clave_cuerpo, validos, etiqueta):
             """Deja la tabla con exactamente lo pedido. `validos` acota lo que se
             acepta: un identificador inventado desde el navegador no debe poder
-            colarse como concesión."""
-            nuevos   = {v for v in (pedidos or []) if v in validos}
+            colarse como concesión.
+
+            Si la categoría no viene en el cuerpo se deja intacta; una lista
+            vacía sí la vacía. Omitir no es lo mismo que pedir que se quite."""
             actuales = mio[clave_grants]
+            if clave_cuerpo not in cuerpo:
+                return actuales
+            nuevos = {v for v in (cuerpo.get(clave_cuerpo) or []) if v in validos}
             for valor in actuales - nuevos:
                 for fila in (app.supabase.get(tabla, {'user_id': uid, columna: valor},
                                               select='id') or []):
@@ -2937,33 +2949,35 @@ def create_app():
             return nuevos
 
         mods_nuevos = sincronizar(
-            'user_modules', 'modulo', 'modules', cuerpo.get('modulos'),
+            'user_modules', 'modulo', 'modules', 'modulos',
             {m for m, _ in ALL_MODULES}, 'módulo')
         cals_nuevos = sincronizar(
-            'user_calendars', 'calendar_id', 'calendar_ids', cuerpo.get('calendarios'),
+            'user_calendars', 'calendar_id', 'calendar_ids', 'calendarios',
             {c['calendar_id'] for c in _get_calendar_config(app)}, 'calendario')
         proys_nuevos = sincronizar(
-            'user_projects', 'project_id', 'project_ids', cuerpo.get('proyectos'),
+            'user_projects', 'project_id', 'project_ids', 'proyectos',
             {p['id'] for p in (app.supabase.get('projects', select='id') or [])}, 'proyecto')
         ms_nuevos = sincronizar(
-            'user_ms_accounts', 'ms_email', 'ms_emails', cuerpo.get('cuentas_ms'),
+            'user_ms_accounts', 'ms_email', 'ms_emails', 'cuentas_ms',
             {t['email'] for t in (app.supabase.get('ms_tokens', select='email') or [])
              if t.get('email')}, 'cuenta MS')
 
         # ── Acciones dentro de cada módulo ─────────────────────────────────
-        validos = {f'{m}.{a}' for m, lista in SUBMODULOS.items() for a, _, _ in lista}
-        nuevos = {p for p in (cuerpo.get('permisos') or []) if p in validos}
         actuales = get_user_permissions(app, uid)
-        for permiso in actuales - nuevos:
-            for fila in (app.supabase.get('user_permissions',
-                                          {'user_id': uid, 'permiso': permiso}, select='id') or []):
-                app.supabase.delete('user_permissions', fila['id'])
-        por_agregar = [{'user_id': uid, 'permiso': p, 'granted_by': current_user.id}
-                       for p in sorted(nuevos - actuales)]
-        if por_agregar:
-            app.supabase.insert('user_permissions', por_agregar)
-        concedido += sorted(nuevos - actuales)
-        retirado  += sorted(actuales - nuevos)
+        nuevos = actuales
+        if 'permisos' in cuerpo:      # ausente = no se tocan (ver la nota de arriba)
+            validos = {f'{m}.{a}' for m, lista in SUBMODULOS.items() for a, _, _ in lista}
+            nuevos = {p for p in (cuerpo.get('permisos') or []) if p in validos}
+            for permiso in actuales - nuevos:
+                for fila in (app.supabase.get('user_permissions',
+                                              {'user_id': uid, 'permiso': permiso}, select='id') or []):
+                    app.supabase.delete('user_permissions', fila['id'])
+            por_agregar = [{'user_id': uid, 'permiso': p, 'granted_by': current_user.id}
+                           for p in sorted(nuevos - actuales)]
+            if por_agregar:
+                app.supabase.insert('user_permissions', por_agregar)
+            concedido += sorted(nuevos - actuales)
+            retirado  += sorted(actuales - nuevos)
 
         _user_perms_cache.invalidate(str(uid))
         _user_grants_cache.invalidate(str(uid))

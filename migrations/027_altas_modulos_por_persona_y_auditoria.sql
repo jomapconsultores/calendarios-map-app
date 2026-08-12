@@ -41,7 +41,7 @@
 
 -- ─────────────────────────────────────────────────────────────────────────────
 --  1. Cuentas activables
---     `is_active` ya existe en esta base; el IF NOT EXISTS es para instalaciones
+--     «is_active» ya existe en esta base; el IF NOT EXISTS es para instalaciones
 --     nuevas. DEFAULT true: las cuentas que ya están siguen entrando. Una
 --     migración de permisos jamás debe dejar a nadie fuera por omisión.
 -- ─────────────────────────────────────────────────────────────────────────────
