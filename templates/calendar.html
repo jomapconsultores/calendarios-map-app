@@ -1035,15 +1035,9 @@ async function sincronizarAtlas() {
   if (r.actualizadas_aqui)  partes.push(r.actualizadas_aqui + ' actualizada(s) aquí');
   if (r.actualizadas_alla)  partes.push(r.actualizadas_alla + ' actualizada(s) allá');
   if (r.canceladas)         partes.push(r.canceladas + ' cancelada(s) (borradas en ATLAS)');
-  let msg = partes.length ? '✅ ' + partes.join('
-✅ ') : '✔ Todo estaba al día.';
-  if (r.conflictos) msg += '
-
-⚠️ ' + r.conflictos + ' cita(s) cambiaron en los dos sistemas. Se conservó la versión de ATLAS.';
-  if (r.errores && r.errores.length) msg += '
-
-⚠️ ' + r.errores.join('
-');
+  let msg = partes.length ? '✅ ' + partes.join('\n✅ ') : '✔ Todo estaba al día.';
+  if (r.conflictos) msg += '\n\n⚠️ ' + r.conflictos + ' cita(s) cambiaron en los dos sistemas. Se conservó la versión de ATLAS.';
+  if (r.errores && r.errores.length) msg += '\n\n⚠️ ' + r.errores.join('\n');
   alert(msg);
   if (partes.length) location.reload();
 }
