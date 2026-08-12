@@ -140,6 +140,10 @@ class User(UserMixin):
         self.id = d.get('id'); self.email = d.get('email')
         self.full_name = d.get('full_name'); self.role = d.get('role', 'staff')
         self.is_admin = d.get('role') == 'admin'
+        # Cuenta desactivada por el administrador. Se asume activa cuando falta
+        # el dato: nadie debe quedarse fuera porque una consulta no trajera la
+        # columna.
+        self.active = d.get('is_active', True) is not False
         raw = d.get('modules', 'calendar,planning') or 'calendar,planning'
         self.modules = [m.strip() for m in raw.split(',') if m.strip()]
 
@@ -233,7 +237,8 @@ ACCIONES_SENSIBLES = {f'{mod}.{acc}'
                      for mod, lista in SUBMODULOS.items()
                      for acc, _, sensible in lista if sensible}
 
-_user_perms_cache = TTLCache(ttl=30, maxsize=256)
+_user_perms_cache   = TTLCache(ttl=30, maxsize=256)
+_user_modules_cache = TTLCache(ttl=30, maxsize=256)  # módulos sueltos por persona
 
 
 # ============================================================
@@ -267,6 +272,18 @@ def _temp_password_expired(row):
         return False
 
 
+def _cuenta_activa(fila_usuario):
+    """¿Está habilitada esta cuenta?
+
+    `users.is_active` existía en la base desde hace tiempo pero NO se consultaba
+    en ninguna línea del sistema: era una bandera que no cerraba ninguna puerta.
+    A partir de aquí sí. Sólo `false` bloquea; que la consulta no traiga la
+    columna no deja a nadie fuera —una comprobación de acceso que se equivoca
+    tiene que equivocarse dejando pasar a quien ya entraba, no cerrándole a
+    todos."""
+    return (fila_usuario or {}).get('is_active', True) is not False
+
+
 def _log_password(app, user_id, action, executed_by=None):
     """Bitácora de cambios de clave. Nunca guarda la clave, solo el hecho."""
     try:
@@ -277,6 +294,32 @@ def _log_password(app, user_id, action, executed_by=None):
         })
     except Exception:
         # Auxiliar: si la tabla aún no está migrada no debe frenar el cambio.
+        pass
+
+
+def _auditar_acceso(app, accion, target_id=None, target_email=None, detalle=''):
+    """Deja constancia de un cambio de accesos: quién, a quién, qué y cuándo.
+
+    Un sistema donde el administrador reparte permisos y después nadie puede
+    reconstruir quién dio qué no es un sistema de permisos, es una costumbre.
+    Se guarda también el CORREO de las dos partes, no sólo su identificador: si
+    mañana se borra la cuenta, el registro tiene que seguir diciendo a quién se
+    le concedió aquello.
+
+    Nunca interrumpe la operación que la llama: apuntar el hecho es importante,
+    pero menos que el hecho mismo."""
+    try:
+        app.supabase.insert('permission_audit', {
+            'actor_id':       str(current_user.id) if current_user.is_authenticated else None,
+            'actor_email':    (current_user.email if current_user.is_authenticated else None),
+            'target_user_id': str(target_id) if target_id else None,
+            'target_email':   target_email,
+            'accion':         accion,
+            'detalle':        (detalle or '')[:1000],
+            'ip': (request.headers.get('X-Forwarded-For', '').split(',')[0].strip()
+                   or request.remote_addr or ''),
+        })
+    except Exception:
         pass
 
 
@@ -1645,7 +1688,8 @@ def _delete_user_cascade(app, uid):
     """Borra las filas relacionadas (permisos, credenciales) antes del usuario,
     para no dejar huérfanas en calendar_permissions/webauthn_credentials/etc."""
     for tbl in ['calendar_permissions', 'webauthn_credentials', 'face_descriptors',
-                'ms_account_permissions', 'user_roles']:
+                'ms_account_permissions', 'user_roles', 'user_permissions',
+                'user_modules']:
         for row in app.supabase.get(tbl, {'user_id': uid}, select='id'):
             app.supabase.delete(tbl, row['id'])
     ok = app.supabase.delete('users', uid)
@@ -1783,11 +1827,42 @@ def get_user_permissions(app, uid):
     return permisos
 
 
+def get_user_modules(app, uid):
+    """Módulos concedidos a UNA persona, aparte de los que le da su rol."""
+    val, hit = _user_modules_cache.get(str(uid))
+    if hit:
+        return val
+    try:
+        filas = app.supabase.get('user_modules', {'user_id': uid}, select='modulo') or []
+        modulos = {f['modulo'] for f in filas if f.get('modulo')}
+    except Exception:
+        # La tabla puede no existir aún (migración 027 sin aplicar). Sin módulos
+        # sueltos el sistema sigue funcionando con los del rol, como siempre.
+        modulos = set()
+    _user_modules_cache.set(str(uid), modulos)
+    return modulos
+
+
+def modulos_efectivos(app, uid):
+    """Módulos a los que entra esta persona: los de su ROL ACTIVO más los que el
+    administrador le haya concedido a ella en particular.
+
+    Se SUMAN, no compiten. Los módulos venían sólo por rol, así que para darle
+    Directorio a una sola persona había que inventarle un rol entero; y al revés,
+    quitar un módulo de un rol se lo quitaba a todos los que lo tuvieran. Con
+    esta capa el rol sigue siendo la base y la excepción se trata como
+    excepción."""
+    if is_admin():
+        return {m[0] for m in ALL_MODULES}
+    del_rol = set(get_active_role_grants(app, uid)['modules'])
+    return del_rol | get_user_modules(app, uid)
+
+
 def user_can(permiso):
     """¿Puede el usuario actual hacer esto?
 
     Acepta dos formas:
-      * 'directorio'           -> ¿tiene el módulo en su rol activo?
+      * 'directorio'           -> ¿tiene el módulo (por rol o concedido a él)?
       * 'directorio.importar'  -> ¿puede además esa acción concreta?
 
     Una acción NO sensible sólo exige el módulo. Una SENSIBLE exige además que
@@ -1796,7 +1871,7 @@ def user_can(permiso):
     if is_admin():
         return True
     modulo, _, accion = permiso.partition('.')
-    if modulo not in get_active_role_grants(current_app, current_user.id)['modules']:
+    if modulo not in modulos_efectivos(current_app, current_user.id):
         return False
     if not accion:
         return True
@@ -1988,9 +2063,26 @@ def create_app():
     @login_manager.user_loader
     def load_user(uid):
         if app.supabase:
-            u = app.supabase.get('users', {'id': uid}, select='id,email,full_name,role,modules')
+            u = app.supabase.get('users', {'id': uid},
+                                 select='id,email,full_name,role,modules,is_active')
+            if not u:
+                # Si la consulta falla por una columna (PostgREST responde 400 y
+                # el cliente devuelve []), esto se ejecuta en CADA petición: sin
+                # este respaldo, un nombre de columna equivocado no rompe una
+                # pantalla, echa del sistema a todo el mundo a la vez.
+                u = app.supabase.get('users', {'id': uid},
+                                     select='id,email,full_name,role,modules')
             if u:
-                return User(u[0])
+                usuario = User(u[0])
+                # Cuenta desactivada: se corta AQUÍ, no en el formulario de
+                # entrada. Este es el único punto por el que pasan las tres
+                # formas de identificarse —clave, huella/Face ID y rostro— y
+                # además se ejecuta en cada petición, así que desactivar a
+                # alguien lo deja fuera al instante, sin esperar a que su sesión
+                # caduque.
+                if not usuario.active:
+                    return None
+                return usuario
         return None
 
     # ------ Security headers on every response ------
@@ -2039,7 +2131,10 @@ def create_app():
             try:
                 user_roles_list = get_user_roles(app, current_user.id)
                 active_role_id = get_active_role_id(app, current_user.id)
-                active_modules = get_active_role_grants(app, current_user.id)['modules'] if not is_admin() else [m[0] for m in ALL_MODULES]
+                # Los del rol MÁS los concedidos a esta persona: el menú tiene
+                # que enseñar exactamente lo mismo que deja pasar `user_can`, o
+                # el módulo existe pero no hay por dónde entrar.
+                active_modules = sorted(modulos_efectivos(app, current_user.id))
             except Exception:
                 pass
         # Estado de la reconexión automática: permite que el aviso distinga un
@@ -2141,6 +2236,14 @@ def create_app():
                 if _temp_password_expired(u):
                     flash('La contraseña temporal que te entregó el administrador ya caducó. '
                           'Pídele que la restablezca nuevamente.', 'danger')
+                    return render_template('login.html')
+                # Cuenta desactivada. Se dice con claridad en vez de responder
+                # «email o contraseña incorrectos»: la clave es correcta, y
+                # mandar a alguien a pelearse con su contraseña cuando el
+                # problema es otro sólo termina en una llamada al administrador.
+                if not _cuenta_activa(u):
+                    flash('Tu cuenta está desactivada. Habla con el administrador '
+                          'para que la habilite de nuevo.', 'warning')
                     return render_template('login.html')
                 # `remember=True` y `session.permanent` AQUÍ, no en el
                 # before_request. El before_request se ejecuta ANTES de la vista,
@@ -2290,9 +2393,12 @@ def create_app():
             'last_used_at': datetime.now(timezone.utc).isoformat(),
         })
         users = app.supabase.get('users', {'id': rec['user_id']},
-                                 select='id,email,full_name,role,must_change_password')
+                                 select='id,email,full_name,role,must_change_password,is_active')
         if not users:
             return jsonify({'success': False, 'error': 'Usuario no encontrado'})
+        if not _cuenta_activa(users[0]):
+            return jsonify({'success': False,
+                            'error': 'Tu cuenta está desactivada. Habla con el administrador.'})
         login_user(User(users[0]), remember=True)
         session.permanent = True
         session['must_change_password'] = bool(users[0].get('must_change_password'))
@@ -2377,10 +2483,13 @@ def create_app():
         if not email or not _valid_descriptor(desc):
             return jsonify({'success': False, 'error': 'Datos invalidos'})
         users = app.supabase.get('users', {'email': email},
-                                 select='id,email,full_name,role,must_change_password')
+                                 select='id,email,full_name,role,must_change_password,is_active')
         # Mensaje genérico para no revelar si el email existe
         if not users:
             return jsonify({'success': False, 'error': 'Rostro no reconocido'})
+        if not _cuenta_activa(users[0]):
+            return jsonify({'success': False,
+                            'error': 'Tu cuenta está desactivada. Habla con el administrador.'})
         uid = str(users[0]['id'])
         stored = app.supabase.get('face_descriptors', {'user_id': uid}, select='descriptor')
         best = 9.9
@@ -2402,34 +2511,22 @@ def create_app():
 
     @app.route('/register', methods=['GET', 'POST'])
     def register():
+        """El registro público está CERRADO: en este sistema entra quien el
+        administrador da de alta.
+
+        Antes cualquiera que llegara a esta dirección se creaba una cuenta con
+        su propia clave y podía iniciar sesión; lo que esperaba aprobación era
+        sólo el acceso a los calendarios, no el ingreso. Para una agenda interna
+        con datos de clientes eso es la puerta abierta. El alta vive ahora en
+        Administración → Usuarios, junto al resto del gobierno de accesos.
+
+        La ruta se conserva (en vez de borrarla) para que quien tenga el enlace
+        guardado reciba una explicación en lugar de un 404 sin sentido."""
         if current_user.is_authenticated:
             return redirect('/dashboard')
-        if request.method == 'POST':
-            email = _sanitize(request.form.get('email', ''), 254).lower()
-            password = request.form.get('password', '')
-            name = _sanitize(request.form.get('full_name', ''), 100)
-            cals = request.form.getlist('calendars')
-            if not email or not password or not name:
-                flash('Completa todos los campos.', 'danger')
-                return render_template('register.html', calendarios=_get_calendar_config(app))
-            if len(password) < 6:
-                flash('La contrasena debe tener al menos 6 caracteres.', 'warning')
-                return render_template('register.html', calendarios=_get_calendar_config(app))
-            if app.supabase.get('users', {'email': email}):
-                flash('Este email ya esta registrado.', 'warning')
-                return render_template('register.html', calendarios=_get_calendar_config(app))
-            result = app.supabase.insert('users', {
-                'email': email, 'password_hash': generate_password_hash(password),
-                'full_name': name, 'role': 'staff'})
-            if result:
-                uid = result[0]['id']
-                for cal_id in cals:
-                    app.supabase.insert('calendar_permissions',
-                        {'user_id': uid, 'calendar_id': cal_id, 'status': 'pending'})
-                flash('Solicitud enviada. Espera aprobacion del administrador.', 'success')
-                return redirect('/login')
-            flash('Error al registrar. Intentalo de nuevo.', 'danger')
-        return render_template('register.html', calendarios=_get_calendar_config(app))
+        flash('El acceso a este sistema lo concede el administrador. '
+              'Solicítale que te dé de alta.', 'info')
+        return redirect('/login')
 
     @app.route('/logout')
     @login_required
@@ -2642,7 +2739,8 @@ def create_app():
         if not is_admin():
             return redirect('/dashboard')
         users     = app.supabase.get('users',
-                        select='id,email,full_name,role,created_at,phone,position,must_change_password')
+                        select='id,email,full_name,role,created_at,phone,position,'
+                               'must_change_password,is_active') or []
         all_cals  = _get_calendar_config(app)
         all_perms = app.supabase.get('calendar_permissions',
                         select='id,user_id,calendar_id,status')
@@ -2675,18 +2773,27 @@ def create_app():
             roles_by_user[ur['user_id']].add(ur['role_id'])
         for u in users:
             u['role_ids'] = roles_by_user.get(u['id'], set())
+            u['activa']   = _cuenta_activa(u)
+        # Historial de accesos concedidos y retirados. Se pide ordenado y
+        # recortado en el propio servidor: esta tabla sólo crece.
+        auditoria = app.supabase.get_q('permission_audit',
+                        {'order': 'created_at.desc', 'limit': 60},
+                        select='actor_email,target_email,accion,detalle,created_at') or []
         return render_template('admin_users.html', users=users, calendarios=all_cals,
                                pending=pending, pending_all=pending_all,
-                               all_roles=all_roles, role_levels=ROLE_LEVELS)
+                               all_roles=all_roles, role_levels=ROLE_LEVELS,
+                               all_modules=ALL_MODULES, auditoria=auditoria)
 
     @app.route('/admin/users/<uid>/permisos', methods=['GET'])
     @login_required
     def admin_user_permisos(uid):
-        """Catálogo de submódulos + lo que esta persona tiene concedido.
+        """Lo que esta persona puede hacer: módulos y, dentro de cada uno, qué
+        acciones.
 
-        Devuelve también qué módulos le da su rol activo, para que la pantalla
-        pueda mostrar en gris lo que no aplica: marcar 'directorio.importar' a
-        quien no tiene el módulo Directorio no serviría de nada."""
+        Devuelve por separado el módulo que le da su ROL y el que le ha dado el
+        administrador a ELLA, porque no se gobiernan igual: el del rol se cambia
+        en Administración → Roles y afecta a todos los que lo tengan; el suelto
+        es de esta persona y sólo suyo."""
         if not is_admin():
             return jsonify({'success': False, 'error': 'Solo admin'}), 403
         filas = app.supabase.get('users', {'id': uid}, select='id,full_name,email,active_role_id')
@@ -2694,36 +2801,59 @@ def create_app():
             return jsonify({'success': False, 'error': 'Usuario no encontrado'}), 404
         persona = filas[0]
         grants = role_grants(app, persona['active_role_id']) if persona.get('active_role_id') else {'modules': []}
+        del_rol = set(grants['modules'])
+        sueltos = get_user_modules(app, uid)
         catalogo = [{
             'modulo': mod,
-            'etiqueta': dict(ALL_MODULES).get(mod, mod),
-            'tiene_modulo': mod in grants['modules'],
+            'etiqueta': etiqueta,
+            'por_rol': mod in del_rol,
+            'suelto': mod in sueltos,
+            'tiene_modulo': mod in del_rol or mod in sueltos,
             'acciones': [{'clave': f'{mod}.{acc}', 'nombre': nombre, 'sensible': sensible}
-                         for acc, nombre, sensible in lista],
-        } for mod, lista in SUBMODULOS.items()]
+                         for acc, nombre, sensible in SUBMODULOS.get(mod, [])],
+        } for mod, etiqueta in ALL_MODULES]
         return jsonify({
             'success': True,
             'usuario': {'id': persona['id'], 'nombre': persona.get('full_name'),
                         'email': persona.get('email')},
             'catalogo': catalogo,
+            'modulos_sueltos': sorted(sueltos),
             'concedidos': sorted(get_user_permissions(app, uid)),
         })
 
     @app.route('/admin/users/<uid>/permisos', methods=['POST'])
     @login_required
+    @csrf_protect
     def admin_user_permisos_guardar(uid):
-        """Reemplaza los permisos sueltos de una persona. Body: {permisos: [...]}"""
+        """Reemplaza los módulos sueltos y los permisos de una persona.
+
+        Body: {modulos: [...], permisos: [...]}"""
         if not is_admin():
             return jsonify({'success': False, 'error': 'Solo admin'}), 403
-        if not app.supabase.get('users', {'id': uid}, select='id'):
+        filas = app.supabase.get('users', {'id': uid}, select='id,email')
+        if not filas:
             return jsonify({'success': False, 'error': 'Usuario no encontrado'}), 404
+        correo = filas[0].get('email')
 
-        pedidos = (request.get_json() or {}).get('permisos') or []
-        # Sólo se aceptan claves del catálogo: un permiso inventado desde el
-        # navegador no debe poder colarse en la tabla.
+        cuerpo = request.get_json() or {}
+
+        # ── Módulos sueltos ────────────────────────────────────────────────
+        # Sólo módulos del catálogo: uno inventado desde el navegador no debe
+        # poder colarse en la tabla.
+        validos_mod = {m for m, _ in ALL_MODULES}
+        mods_nuevos = {m for m in (cuerpo.get('modulos') or []) if m in validos_mod}
+        mods_actuales = get_user_modules(app, uid)
+        for modulo in mods_actuales - mods_nuevos:
+            for fila in (app.supabase.get('user_modules',
+                                          {'user_id': uid, 'modulo': modulo}, select='id') or []):
+                app.supabase.delete('user_modules', fila['id'])
+        for modulo in sorted(mods_nuevos - mods_actuales):
+            app.supabase.insert_ignore('user_modules', {
+                'user_id': uid, 'modulo': modulo, 'granted_by': str(current_user.id)})
+
+        # ── Acciones dentro de cada módulo ─────────────────────────────────
         validos = {f'{m}.{a}' for m, lista in SUBMODULOS.items() for a, _, _ in lista}
-        nuevos = {p for p in pedidos if p in validos}
-
+        nuevos = {p for p in (cuerpo.get('permisos') or []) if p in validos}
         actuales = get_user_permissions(app, uid)
         for permiso in actuales - nuevos:
             for fila in (app.supabase.get('user_permissions',
@@ -2735,9 +2865,133 @@ def create_app():
             app.supabase.insert('user_permissions', por_agregar)
 
         _user_perms_cache.invalidate(str(uid))
+        _user_modules_cache.invalidate(str(uid))
+
+        concedido = sorted((mods_nuevos - mods_actuales) | (nuevos - actuales))
+        retirado  = sorted((mods_actuales - mods_nuevos) | (actuales - nuevos))
+        # Sólo se apunta cuando hubo cambio: un historial lleno de «no cambió
+        # nada» esconde justo lo que se quiere encontrar.
+        if concedido or retirado:
+            _auditar_acceso(app, 'permisos', uid, correo, ' · '.join(filter(None, [
+                ('concedido: ' + ', '.join(concedido)) if concedido else '',
+                ('retirado: '  + ', '.join(retirado))  if retirado  else '',
+            ])))
+
         return jsonify({'success': True, 'concedidos': sorted(nuevos),
-                        'agregados': len(por_agregar),
-                        'quitados': len(actuales - nuevos)})
+                        'modulos_sueltos': sorted(mods_nuevos),
+                        'agregados': len(concedido),
+                        'quitados': len(retirado)})
+
+    def _crear_usuario(datos):
+        """Inserta el usuario tolerando que la migración 027 no esté aplicada.
+
+        `created_by_admin` sólo existe a partir de esa migración. Si todavía no
+        se corrió, PostgREST rechaza el INSERT ENTERO y el alta se cae sin que
+        se entienda por qué; así que se reintenta sin esa columna. La cuenta
+        queda creada igual: lo que se pierde es saber quién la dio de alta, no
+        la persona."""
+        fila = app.supabase.insert('users', datos)
+        if fila:
+            return fila
+        recorte = {k: v for k, v in datos.items() if k != 'created_by_admin'}
+        if recorte == datos:
+            return None
+        return app.supabase.insert('users', recorte)
+
+    @app.route('/admin/users/create', methods=['POST'])
+    @login_required
+    @csrf_protect
+    def admin_user_create():
+        """Alta de una persona. El administrador es el único que abre la puerta.
+
+        No se le pide una contraseña al administrador: se genera una temporal de
+        un solo uso, se muestra UNA vez para que se la entregue en mano y la
+        persona está obligada a cambiarla al entrar. Así el administrador nunca
+        llega a conocer la clave definitiva de nadie."""
+        if not is_admin():
+            return redirect('/dashboard')
+        email  = _sanitize(request.form.get('email', ''), 254).lower()
+        nombre = _sanitize(request.form.get('full_name', ''), 100)
+        if not email or not nombre:
+            flash('Hacen falta el nombre y el correo.', 'danger')
+            return redirect('/admin/users')
+        if app.supabase.get('users', {'email': email}, select='id'):
+            flash(f'Ya existe una cuenta con el correo {email}.', 'warning')
+            return redirect('/admin/users')
+
+        temp = _gen_temp_password()
+        role_ids = request.form.getlist('roles')
+        creado = _crear_usuario({
+            'email': email,
+            'full_name': nombre,
+            'password_hash': generate_password_hash(temp),
+            'role': 'staff',
+            'position': _sanitize(request.form.get('position', ''), 100) or None,
+            'phone':    _sanitize(request.form.get('phone', ''), 40) or None,
+            'must_change_password': True,
+            'temp_password_expires': (datetime.now(timezone.utc) + timedelta(hours=72)).isoformat(),
+            'password_reset_by': str(current_user.id),
+            'is_active': True,
+            'created_by_admin': str(current_user.id),
+        })
+        if not creado:
+            flash('No se pudo crear la cuenta. Revisa el correo e inténtalo de nuevo.', 'danger')
+            return redirect('/admin/users')
+
+        uid = creado[0]['id']
+        for rid in role_ids:
+            app.supabase.insert_ignore('user_roles', {'user_id': uid, 'role_id': rid})
+        if role_ids:
+            # Rol activo de partida: sin esto la persona entra sin ningún rol
+            # seleccionado y no ve nada, pese a tenerlos asignados.
+            app.supabase.update('users', uid, {'active_role_id': role_ids[0]})
+        _user_roles_cache.invalidate(uid)
+        _log_password(app, uid, 'alta_admin', current_user.id)
+        _auditar_acceso(app, 'alta', uid, email,
+                        f'alta de {nombre}' + (f' con {len(role_ids)} rol(es)' if role_ids else ' sin roles'))
+
+        flash(f'Cuenta creada para {nombre} ({email}). Contraseña temporal: {temp} — '
+              f'entrégasela en persona. Caduca en 72 horas y deberá cambiarla al entrar. '
+              f'No se volverá a mostrar.', 'success')
+        return redirect('/admin/users')
+
+    @app.route('/admin/users/<uid>/estado', methods=['POST'])
+    @login_required
+    @csrf_protect
+    def admin_user_estado(uid):
+        """Activa o desactiva una cuenta sin borrarla.
+
+        Hasta ahora la única forma de cortarle el acceso a alguien era
+        ELIMINARLO, y con él se iban sus roles, sus permisos y su rastro. Quien
+        se va de la oficina deja de entrar, pero lo que hizo tiene que quedar."""
+        if not is_admin():
+            return jsonify({'success': False, 'error': 'Solo admin'}), 403
+        activar = bool((request.get_json() or {}).get('activar'))
+        filas = app.supabase.get('users', {'id': uid}, select='id,email,full_name,role,is_active')
+        if not filas:
+            return jsonify({'success': False, 'error': 'Usuario no encontrado'}), 404
+        persona = filas[0]
+
+        if not activar:
+            if str(uid) == str(current_user.id):
+                return jsonify({'success': False,
+                                'error': 'No puedes desactivar tu propia cuenta.'})
+            # Dejar el sistema sin ningún administrador que pueda entrar lo
+            # convierte en irrecuperable desde la propia aplicación.
+            if persona.get('role') == 'admin':
+                otros = [u for u in (app.supabase.get('users', {'role': 'admin'},
+                                                      select='id,is_active') or [])
+                         if str(u['id']) != str(uid) and _cuenta_activa(u)]
+                if not otros:
+                    return jsonify({'success': False,
+                                    'error': 'Es el único administrador activo: '
+                                             'el sistema quedaría sin nadie que pueda entrar.'})
+
+        if not app.supabase.update('users', uid, {'is_active': activar}):
+            return jsonify({'success': False, 'error': 'No se pudo cambiar el estado.'})
+        _auditar_acceso(app, 'estado', uid, persona.get('email'),
+                        'cuenta activada' if activar else 'cuenta desactivada')
+        return jsonify({'success': True, 'activa': activar})
 
     @app.route('/admin/users/<user_id>/reset-password', methods=['POST'])
     @login_required
@@ -2760,6 +3014,8 @@ def create_app():
             'password_reset_by': current_user.id,
         })
         _log_password(app, user_id, 'reset_admin', current_user.id)
+        _auditar_acceso(app, 'clave', user_id, rows[0].get('email'),
+                        'contraseña restablecida por el administrador')
         nombre = rows[0].get('full_name') or rows[0].get('email')
         flash(f'Contraseña temporal de {nombre}: {temp} — entrégasela en persona. '
               f'Caduca en 72 horas y deberá cambiarla al entrar. No se volverá a mostrar.',
@@ -3059,12 +3315,19 @@ def create_app():
         if data: app.supabase.update('users', uid, data)
         # Roles asignados
         role_ids = request.form.getlist('roles')
+        previos = {p['role_id'] for p in
+                   (app.supabase.get('user_roles', {'user_id': uid}, select='id,role_id') or [])}
         for p in app.supabase.get('user_roles', {'user_id': uid}, select='id'):
             app.supabase.delete('user_roles', p['id'])
         for rid in role_ids:
             app.supabase.insert('user_roles', {'user_id': uid, 'role_id': rid})
         _user_roles_cache.invalidate(uid)
         _user_cal_cache.invalidate(uid)
+        if previos != set(role_ids):
+            nombres = {r['id']: r['name'] for r in
+                       (app.supabase.get('roles', select='id,name') or [])}
+            _auditar_acceso(app, 'roles', uid, data.get('email'), 'roles: ' + (
+                ', '.join(nombres.get(r, r) for r in role_ids) or 'ninguno'))
         flash('Usuario actualizado', 'success')
         return redirect('/admin/users')
 
@@ -3075,7 +3338,14 @@ def create_app():
         if not is_admin(): return jsonify({'success': False, 'error': 'Sin autorización'})
         if uid == str(current_user.id):
             return jsonify({'success': False, 'error': 'No puedes eliminarte a ti mismo'})
+        filas = app.supabase.get('users', {'id': uid}, select='email,full_name')
         ok = _delete_user_cascade(app, uid)
+        if ok:
+            # Se apunta ANTES de que el correo deje de poder consultarse. La
+            # tabla de auditoría no tiene clave foránea a users justamente para
+            # que la baja sobreviva a la persona.
+            _auditar_acceso(app, 'baja', uid, (filas[0].get('email') if filas else None),
+                            'cuenta eliminada' + (f" ({filas[0].get('full_name')})" if filas else ''))
         return jsonify({'success': ok, 'error': None if ok else 'No se pudo eliminar el usuario'})
 
     @app.route('/admin/approve-one/<pid>', methods=['POST'])

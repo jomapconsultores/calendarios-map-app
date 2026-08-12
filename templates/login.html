@@ -56,7 +56,12 @@
           onclick="faceLogin()">📷 Entrar con rostro (cámara)</button>
         {% endif %}
 
-        <div class="text-center mt-3"><a href="/register" class="small">¿No tienes cuenta? Regístrate</a></div>
+        {# El registro público está cerrado: aquí entra quien el administrador
+           da de alta. Se explica en vez de dejar un enlace que ya no lleva a
+           ninguna parte. #}
+        <div class="text-center mt-3 small text-muted">
+          ¿No tienes cuenta? El acceso lo concede el <strong>administrador</strong>.
+        </div>
         <div class="text-center mt-2">
           <a href="#" class="small text-muted"
              onclick="var o=document.getElementById('olvide');o.style.display=o.style.display==='none'?'block':'none';return false;">¿Olvidaste tu contraseña?</a>

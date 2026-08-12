@@ -305,9 +305,11 @@
     <a href="/" class="lp-brand">
       <div class="lp-logo-box"><img src="{{ url_for('static', filename='images/map_logo.png') }}" alt="MAP Consultoría &amp; Asesoría Planificación"></div>
     </a>
+    {# Sin «Crear cuenta»: el registro público está cerrado y el acceso lo
+       concede el administrador. Un botón que promete una cuenta que nadie va a
+       poder crear es peor que no tenerlo. #}
     <div class="lp-nav-links">
-      <a href="/login" class="lp-btn-ghost">Iniciar sesión</a>
-      <a href="/register" class="lp-btn-fill">Crear cuenta →</a>
+      <a href="/login" class="lp-btn-fill">Iniciar sesión →</a>
     </div>
   </div>
 </nav>
@@ -323,8 +325,7 @@
       <h1 class="lp-h1">Organiza todos tus <span class="hl">calendarios</span> desde un solo lugar</h1>
       <p class="lp-hero-sub">Agenda reuniones, programa capacitaciones recurrentes y sincroniza automáticamente con Google Calendar. Control de accesos por usuario, rápido y seguro.</p>
       <div class="lp-hero-cta">
-        <a href="/register" class="lp-cta-primary">Comenzar gratis →</a>
-        <a href="/login" class="lp-cta-ghost">Ya tengo cuenta</a>
+        <a href="/login" class="lp-cta-primary">Entrar al sistema →</a>
       </div>
       <div class="lp-trust">
         <span class="lp-trust-item">Múltiples calendarios</span>
@@ -546,10 +547,9 @@
 <section class="lp-cta-section">
   <div class="lp-section-inner">
     <h2 class="lp-cta-title">¿Listo para organizar tu agenda?</h2>
-    <p class="lp-cta-sub">Crea tu cuenta ahora de forma gratuita. Sin tarjeta de crédito requerida.</p>
+    <p class="lp-cta-sub">El acceso a este sistema lo concede el administrador. Si trabajas aquí, pídele que te dé de alta.</p>
     <div class="lp-cta-btns">
-      <a href="/register" class="lp-cta-btn-primary">Crear cuenta gratis →</a>
-      <a href="/login" class="lp-cta-btn-ghost">Ya tengo cuenta</a>
+      <a href="/login" class="lp-cta-btn-primary">Entrar al sistema →</a>
     </div>
   </div>
 </section>
@@ -562,7 +562,6 @@
     </div>
     <div class="lp-footer-links">
       <a href="/login">Ingresar</a>
-      <a href="/register">Registrarse</a>
     </div>
     <p class="lp-footer-copy">© 2026 Marco Antonio Posligua San Martín · Todos los derechos reservados</p>
   </div>

@@ -19,13 +19,26 @@
 </div></div></div>{%endfor%}
 {%endif%}
 
-<h5 class="section-heading mt-4" id="registrados">👥 Usuarios registrados <span class="badge bg-primary">{{users|length}}</span></h5>
+{# El registro público está cerrado: la única puerta de entrada al sistema es
+   este botón. Por eso vive arriba del todo y no escondido en un menú. #}
+<div class="d-flex flex-wrap align-items-center justify-content-between mt-4 mb-2">
+  <h5 class="section-heading mb-0" id="registrados">👥 Usuarios registrados <span class="badge bg-primary">{{users|length}}</span></h5>
+  <button class="btn btn-primary btn-sm rounded-pill" data-bs-toggle="modal" data-bs-target="#modalAlta">
+    ➕ Dar de alta a una persona
+  </button>
+</div>
+<p class="text-muted small">
+  Nadie puede crearse una cuenta por su cuenta: el acceso lo concede el administrador desde aquí.
+  Al dar de alta se genera una <strong>contraseña temporal de un solo uso</strong> que se muestra
+  una vez, caduca en 72 horas y la persona debe cambiar al entrar.
+</p>
 {% for u in users %}
 <div class="user-row card mb-2"><div class="card-body"><div class="row align-items-center">
   <div class="col-md-3">
     <strong>{{u.full_name}}</strong><br>
     <small class="text-muted">{{u.email}}</small><br>
     <span class="badge bg-{{'danger' if u.role=='admin' else 'info'}}">{{u.role}}</span>
+    {% if not u.activa %}<span class="badge bg-secondary" title="No puede iniciar sesión">⛔ Desactivada</span>{% endif %}
   </div>
   <div class="col-md-5">
     {%for r in all_roles%}{%if r.id in u.role_ids%}<span class="badge bg-primary bg-opacity-25 text-primary me-1 mb-1" title="{{ level_labels.get(r.level, r.level) }}">🎛️ {{r.name}} <span class="opacity-75">· {{ level_labels.get(r.level, r.level) }}</span></span>{%endif%}{%endfor%}
@@ -38,7 +51,14 @@
        hacer dentro. Mismo modelo que `usuario_permisos` en ATLAS. #}
     <button class="btn btn-outline-dark btn-sm rounded-pill"
             onclick="abrirPermisos('{{u.id}}', '{{u.full_name|e}}')"
-            title="Qué puede hacer dentro de cada módulo">🔐 Permisos</button>
+            title="A qué módulos entra y qué puede hacer dentro">🔐 Permisos</button>
+    {# Cortar el acceso sin borrar: la persona deja de entrar, pero sus roles,
+       sus permisos y su rastro siguen ahí. #}
+    <button class="btn btn-outline-{{'success' if not u.activa else 'secondary'}} btn-sm rounded-pill"
+            onclick="cambiarEstado('{{u.id}}', {{ 'true' if not u.activa else 'false' }}, '{{u.full_name|e}}')"
+            title="{{ 'Volver a habilitar el acceso' if not u.activa else 'Cortar el acceso sin borrar la cuenta' }}">
+      {{ '✅ Activar' if not u.activa else '⛔ Desactivar' }}
+    </button>
     {# Recuperación de clave olvidada: genera una contraseña temporal de un solo uso #}
     <form method="POST" action="/admin/users/{{u.id}}/reset-password" class="d-inline"
           onsubmit="return confirm('¿Restablecer la contraseña de {{ u.full_name }}?\n\nSe generará una contraseña temporal de un solo uso que deberás entregarle. Su contraseña actual dejará de funcionar.');">
@@ -97,6 +117,67 @@
 {% endfor %}
 
 
+<!-- ============ ALTA DE UNA PERSONA ============ -->
+<div class="modal fade" id="modalAlta" tabindex="-1">
+  <div class="modal-dialog modal-lg modal-dialog-scrollable">
+    <div class="modal-content border-0 shadow">
+      <div class="modal-header"><h5 class="modal-title text-white">➕ Dar de alta a una persona</h5>
+        <button class="btn-close btn-close-white" data-bs-dismiss="modal"></button></div>
+      <form method="POST" action="/admin/users/create">
+        <div class="modal-body">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <div class="row mb-3">
+            <div class="col-md-6"><label class="form-label">Nombre completo *</label>
+              <input name="full_name" class="form-control" required></div>
+            <div class="col-md-6"><label class="form-label">Correo *</label>
+              <input name="email" type="email" class="form-control" required></div>
+          </div>
+          <div class="row mb-3">
+            <div class="col-md-6"><label class="form-label">Cargo</label>
+              <input name="position" class="form-control" placeholder="Ej. Secretaria, Socio…"></div>
+            <div class="col-md-6"><label class="form-label">Teléfono</label>
+              <input name="phone" class="form-control"></div>
+          </div>
+
+          <div class="card mb-3 border-primary border-opacity-25"><div class="card-body p-3">
+            <h6 class="fw-bold mb-2 text-primary">🎛️ Roles</h6>
+            <small class="text-muted d-block mb-2">El rol trae sus módulos, calendarios, proyectos y actividades. Se puede afinar después, persona a persona, con el botón <strong>Permisos</strong>.</small>
+            {% if not all_roles %}
+            <div class="alert alert-secondary py-2 small mb-0">
+              ℹ️ Aún no hay roles creados. Crea el primero en <a href="/admin/roles">Administración → Roles</a>.
+            </div>
+            {% endif %}
+            {%for lid, llabel in role_levels%}
+            {% set lvl_roles = all_roles | selectattr('level', 'equalto', lid) | list %}
+            {% if lvl_roles %}
+            <div class="fw-semibold small text-uppercase text-muted mt-2">{{llabel}}</div>
+            <div class="row">
+              {%for r in lvl_roles%}
+              <div class="col-md-6"><div class="form-check">
+                <input class="form-check-input" type="checkbox" name="roles" value="{{r.id}}" id="alta_{{r.id}}">
+                <label class="form-check-label" for="alta_{{r.id}}">{{r.name}}</label>
+              </div></div>
+              {%endfor%}
+            </div>
+            {% endif %}
+            {%endfor%}
+          </div></div>
+
+          <div class="alert alert-info small mb-0">
+            🔑 No se define aquí ninguna contraseña. Se genera una <strong>temporal de un solo uso</strong>
+            que aparecerá al guardar: entrégasela en persona. Caduca en 72 horas y la persona
+            deberá cambiarla al entrar, así que su clave definitiva no la conoce nadie más que ella.
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary btn-sm rounded-pill" data-bs-dismiss="modal">Cancelar</button>
+          <button class="btn btn-primary btn-sm rounded-pill">➕ Crear cuenta</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
 <!-- ============ PERMISOS POR PERSONA ============ -->
 <div class="modal fade" id="modalPermisos" tabindex="-1">
   <div class="modal-dialog modal-lg modal-dialog-scrollable">
@@ -107,10 +188,10 @@
       </div>
       <div class="modal-body">
         <p class="text-muted small">
-          El <strong>rol</strong> decide a qué módulos entra esta persona. Aquí se afina
-          <strong>qué puede hacer dentro</strong>. Las acciones corrientes vienen con el
-          módulo; las marcadas <span class="badge bg-warning text-dark">delicada</span>
-          hay que concederlas una a una.
+          El <strong>rol</strong> es la base: trae sus módulos. Aquí se puede dar
+          <strong>un módulo suelto</strong> a esta persona —sin inventarle un rol nuevo— y afinar
+          <strong>qué puede hacer dentro</strong>. Las acciones corrientes vienen con el módulo; las
+          marcadas <span class="badge bg-warning text-dark">delicada</span> se conceden una a una.
         </p>
         <div id="permCuerpo">Cargando…</div>
       </div>
@@ -122,6 +203,42 @@
     </div>
   </div>
 </div>
+
+<!-- ============ HISTORIAL DE ACCESOS ============ -->
+{# Quién concedió o retiró qué, a quién y cuándo. Sin esto, «se le dio permiso»
+   es sólo la palabra de alguien. #}
+<h5 class="section-heading mt-4" id="auditoria">🧾 Historial de accesos</h5>
+<div class="card"><div class="card-body">
+  {% if auditoria %}
+  <div class="table-responsive">
+    <table class="table table-sm align-middle mb-0">
+      <thead><tr class="small text-muted">
+        <th>Cuándo</th><th>Quién</th><th>A quién</th><th>Qué</th><th>Detalle</th>
+      </tr></thead>
+      <tbody>
+      {% for a in auditoria %}
+      <tr class="small">
+        <td class="text-nowrap text-muted">{{ (a.created_at or '')[:16]|replace('T', ' ') }}</td>
+        <td>{{ a.actor_email or '—' }}</td>
+        <td>{{ a.target_email or '—' }}</td>
+        <td><span class="badge bg-light text-dark border">{{ a.accion }}</span></td>
+        <td class="text-muted">{{ a.detalle or '' }}</td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div class="small text-muted mt-2">Últimos {{auditoria|length}} movimientos.</div>
+  {% else %}
+  <p class="text-muted small mb-0">
+    Todavía no hay movimientos registrados. Aquí irán apareciendo las altas, las bajas,
+    los cambios de rol y cada permiso concedido o retirado.
+    {# Si la 027 no está aplicada la tabla no existe y esto sale vacío: se dice,
+       en vez de aparentar que nunca se tocó ningún permiso. #}
+    <br><span class="opacity-75">Si acabas de instalar esta versión, comprueba que se aplicó la migración 027.</span>
+  </p>
+  {% endif %}
+</div></div>
 
 {% endblock %}
 
@@ -156,37 +273,80 @@ async function abrirPermisos(uid, nombre) {
   const dados = new Set(r.concedidos);
 
   document.getElementById('permCuerpo').innerHTML = r.catalogo.map(function (m) {
-    return '<div class="border rounded-3 p-3 mb-2' + (m.tiene_modulo ? '' : ' opacity-50') + '">' +
-      '<div class="fw-bold small mb-2">' + m.etiqueta +
-        (m.tiene_modulo ? '' : ' <span class="badge bg-secondary">su rol no da este módulo</span>') +
-      '</div>' +
-      m.acciones.map(function (a) {
-        const marcado = dados.has(a.clave) ? 'checked' : '';
-        return '<div class="form-check form-check-inline">' +
-          '<input class="form-check-input perm-chk" type="checkbox" value="' + a.clave + '" ' +
-            'id="p_' + a.clave.replace(".", "_") + '" ' + marcado +
-            (a.sensible ? '' : ' disabled title="Viene incluida con el módulo"') + '>' +
-          '<label class="form-check-label small" for="p_' + a.clave.replace(".", "_") + '">' +
-            a.nombre + (a.sensible ? ' <span class="badge bg-warning text-dark" style="font-size:.6rem">delicada</span>'
-                                   : ' <span class="text-muted" style="font-size:.68rem">(incluida)</span>') +
-          '</label></div>';
-      }).join('') +
+    // El módulo que da el ROL no se puede desmarcar aquí: se quita en
+    // Administración → Roles y afecta a todos los que tengan ese rol. Lo que se
+    // gobierna en esta pantalla es el módulo SUELTO, que es sólo de esta persona.
+    const idMod = 'm_' + m.modulo;
+    const cabecera = m.por_rol
+      ? '<input class="form-check-input" type="checkbox" checked disabled ' +
+          'title="Se lo da su rol. Para quitárselo, edita el rol.">' +
+        '<label class="form-check-label fw-bold small ms-1">' + m.etiqueta +
+          ' <span class="badge bg-primary bg-opacity-25 text-primary" style="font-size:.6rem">por su rol</span></label>'
+      : '<input class="form-check-input mod-chk" type="checkbox" value="' + m.modulo + '" ' +
+          'id="' + idMod + '" ' + (m.suelto ? 'checked' : '') + ' onchange="pintarModulo(this)">' +
+        '<label class="form-check-label fw-bold small ms-1" for="' + idMod + '">' + m.etiqueta +
+          (m.suelto ? ' <span class="badge bg-success bg-opacity-25 text-success" style="font-size:.6rem">concedido a esta persona</span>' : '') +
+        '</label>';
+
+    const acciones = m.acciones.map(function (a) {
+      const marcado = dados.has(a.clave) ? 'checked' : '';
+      const id = 'p_' + a.clave.replace('.', '_');
+      return '<div class="form-check form-check-inline">' +
+        '<input class="form-check-input perm-chk" type="checkbox" value="' + a.clave + '" ' +
+          'id="' + id + '" ' + marcado +
+          (a.sensible ? '' : ' disabled title="Viene incluida con el módulo"') + '>' +
+        '<label class="form-check-label small" for="' + id + '">' +
+          a.nombre + (a.sensible ? ' <span class="badge bg-warning text-dark" style="font-size:.6rem">delicada</span>'
+                                 : ' <span class="text-muted" style="font-size:.68rem">(incluida)</span>') +
+        '</label></div>';
+    }).join('');
+
+    return '<div class="border rounded-3 p-3 mb-2" data-modulo="' + m.modulo + '" ' +
+             'style="opacity:' + (m.tiene_modulo ? '1' : '.55') + '">' +
+      '<div class="form-check mb-2">' + cabecera + '</div>' +
+      '<div class="ps-3">' + (acciones || '<span class="text-muted small">Sin acciones que afinar.</span>') + '</div>' +
     '</div>';
   }).join('');
 }
 
+// Al marcar o desmarcar un módulo suelto, la tarjeta se aclara u oscurece en el
+// acto: si no, hay que guardar y recargar para ver si aquello quedó habilitado.
+function pintarModulo(chk) {
+  const caja = chk.closest('[data-modulo]');
+  if (caja) caja.style.opacity = chk.checked ? '1' : '.55';
+}
+
 async function guardarPermisos() {
   const permisos = [...document.querySelectorAll('.perm-chk:checked:not(:disabled)')].map(c => c.value);
+  const modulos  = [...document.querySelectorAll('.mod-chk:checked')].map(c => c.value);
   const estado = document.getElementById('permEstado');
   estado.textContent = 'Guardando…';
   const r = await fetch('/admin/users/' + permUsuario + '/permisos', {
     method: 'POST',
     headers: {'Content-Type': 'application/json', 'X-CSRFToken': CSRF_TOKEN},
-    body: JSON.stringify({permisos: permisos}),
+    body: JSON.stringify({permisos: permisos, modulos: modulos}),
   }).then(x => x.json());
   estado.textContent = r.success
     ? '✅ Guardado: ' + r.agregados + ' concedido(s), ' + r.quitados + ' retirado(s)'
     : '❌ ' + (r.error || 'No se pudo guardar');
+}
+
+// ——————————————————————————————————————————
+//  ACTIVAR / DESACTIVAR UNA CUENTA
+// ——————————————————————————————————————————
+async function cambiarEstado(uid, activar, nombre) {
+  const aviso = activar
+    ? '¿Volver a habilitar el acceso de ' + nombre + '?'
+    : '¿Desactivar la cuenta de ' + nombre + '?\n\nDejará de poder entrar de inmediato, ' +
+      'pero se conservan sus roles, sus permisos y su historial.';
+  if (!confirm(aviso)) return;
+  const r = await fetch('/admin/users/' + uid + '/estado', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json', 'X-CSRFToken': CSRF_TOKEN},
+    body: JSON.stringify({activar: activar}),
+  }).then(x => x.json()).catch(() => ({success: false, error: 'Error de conexión'}));
+  if (r.success) location.reload();
+  else alert('❌ ' + (r.error || 'No se pudo cambiar el estado'));
 }
 </script>
 {% endblock %}
