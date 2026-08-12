@@ -276,9 +276,29 @@ body {
     top: 0;
     z-index: 1030;
 }
-.topbar .page-title { font-size: .98rem; font-weight: 700; color: var(--dark); margin: 0; letter-spacing: -.2px; line-height: 1.25; }
-.topbar .page-sub { font-size: .7rem; color: var(--gray); margin: 0; line-height: 1.3; }
-.topbar .topbar-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+/* El título cede espacio antes que nadie: es lo único que se puede recortar sin
+   perder una función. `min-width:0` es lo que permite que el recorte ocurra —sin
+   él, un elemento flex se niega a encoger por debajo de su contenido y es el
+   resto de la barra el que se desborda. */
+.topbar .topbar-title { flex: 1 1 200px; min-width: 0; }
+.topbar .page-title {
+    font-size: .98rem; font-weight: 700; color: var(--dark); margin: 0;
+    letter-spacing: -.2px; line-height: 1.25;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.topbar .page-sub {
+    font-size: .7rem; color: var(--gray); margin: 0; line-height: 1.3;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+/* Los botones de la página son los que envuelven cuando falta sitio... */
+.topbar .topbar-actions {
+    margin-left: auto; display: flex; align-items: center;
+    gap: 8px; flex-wrap: wrap; justify-content: flex-end;
+}
+/* ...y la identidad no: se queda anclada a la derecha pase lo que pase. */
+.topbar .topbar-identity {
+    flex: 0 0 auto; display: flex; align-items: center; gap: 8px;
+}
 
 .topbar-user {
     display: flex; flex-direction: column; align-items: flex-end;

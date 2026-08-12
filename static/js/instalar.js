@@ -44,6 +44,17 @@
     return /Safari/.test(ua) && !/CriOS|FxiOS|EdgiOS|OPiOS/.test(ua);
   }
 
+  function esDispositivoDeMano() {
+    // El aviso habla de «pantalla de inicio» y de notificaciones: es un mensaje
+    // para un teléfono o una tableta. En escritorio, Chrome también dispara
+    // `beforeinstallprompt`, así que la barra salía en un monitor de 1440 px
+    // —tapando el pie de TODAS las pantallas, encima de las tablas— para
+    // ofrecer algo que allí no le sirve a nadie. Se pide donde se usa.
+    var táctil = navigator.maxTouchPoints > 1 ||
+                 window.matchMedia('(pointer: coarse)').matches;
+    return táctil && window.matchMedia('(max-width: 1024px)').matches;
+  }
+
   function fueDescartadoHacePoco() {
     try {
       var cuando = parseInt(localStorage.getItem(CLAVE_DESCARTADO) || '0', 10);
@@ -79,7 +90,9 @@
   window.addEventListener('beforeinstallprompt', function (e) {
     e.preventDefault();               // se pospone para enseñarlo cuando convenga
     eventoInstalacion = e;
-    if (yaInstalada() || fueDescartadoHacePoco()) return;
+    // Se guarda el evento igualmente: así el aviso puede ofrecerse más adelante
+    // si la misma persona abre el sistema desde su teléfono.
+    if (yaInstalada() || fueDescartadoHacePoco() || !esDispositivoDeMano()) return;
 
     var banner = construirBanner(
       'Instalar Calendarios MAP',
