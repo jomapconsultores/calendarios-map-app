@@ -2084,6 +2084,14 @@ def create_app():
 
     login_manager.init_app(app)
     login_manager.login_view = 'login'
+    # Flask-Login trae su aviso en inglés: a quien le caducaba la sesión le
+    # aparecía «Please log in to access this page.» en mitad de una aplicación
+    # entera en español, y encima con el tono de un error del sistema. Es lo
+    # primero que ve alguien al volver, así que dice lo que pasó y en su idioma.
+    login_manager.login_message = 'Tu sesión se cerró. Vuelve a entrar para continuar.'
+    login_manager.login_message_category = 'info'
+    login_manager.needs_refresh_message = 'Confirma tu identidad para continuar.'
+    login_manager.needs_refresh_message_category = 'warning'
     limiter.init_app(app)
     app.jinja_env.globals['csrf_token'] = generate_csrf
 

@@ -2,7 +2,9 @@
    CALENDARIOS-MAP — Diseño Profesional v2
    ============================================ */
 
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+/* La fuente se enlaza desde el <head> de base.html y de index.html, no con un
+   @import aquí: un @import encadena dos descargas —esta hoja primero, la fuente
+   después— y retrasa el primer dibujado de cada pantalla. */
 
 :root {
     --primary: #4f46e5;
