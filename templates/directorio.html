@@ -87,7 +87,10 @@
 {# Traer personas de la base de ATLAS: representantes, docentes o estudiantes. #}
 <button class="btn btn-sm rounded-pill fw-bold" style="background:#EA4335;color:#fff;border:0"
         onclick="abrirAtlas()" title="Traer personas desde la base de ATLAS">🎓 Traer de ATLAS</button>
-<button class="btn btn-outline-secondary btn-sm rounded-pill" onclick="exportar()">📤 Excel</button>
+{# «Excel» a secas no dice si trae o si lleva, y justo al lado hay un botón que
+   importa. Mismo criterio que en Proyectos. #}
+<button class="btn btn-outline-secondary btn-sm rounded-pill" onclick="exportar()"
+        title="Descargar el directorio en un archivo Excel">📤 Exportar Excel</button>
 {% endblock %}
 
 {% block content %}

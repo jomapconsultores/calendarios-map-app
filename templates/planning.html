@@ -152,12 +152,16 @@ input[type=range].prog-range{accent-color:#4f46e5;width:100%}
   🔗 Conectar To-Do
 </a>
 {% endif %}
-<label class="btn btn-outline-secondary btn-sm rounded-pill mb-0" title="Importar desde Excel" style="cursor:pointer">
-  📥 Excel
+{# Los dos decían «Excel», uno al lado del otro, y sólo se distinguían por la
+   flechita del icono y por el texto emergente. Uno trae datos y el otro se los
+   lleva: la diferencia tiene que estar en el rótulo, no en un detalle de tres
+   píxeles ni en algo que hay que descubrir parándose encima. #}
+<label class="btn btn-outline-secondary btn-sm rounded-pill mb-0" title="Importar tareas desde un archivo Excel" style="cursor:pointer">
+  📥 Importar Excel
   <input type="file" id="excelInput" accept=".xlsx,.xls" style="display:none" onchange="importExcel(this)">
 </label>
-<button class="btn btn-outline-secondary btn-sm rounded-pill" onclick="exportExcel()" title="Exportar a Excel">
-  📤 Excel
+<button class="btn btn-outline-secondary btn-sm rounded-pill" onclick="exportExcel()" title="Descargar las tareas en un archivo Excel">
+  📤 Exportar Excel
 </button>
 {% endblock %}
 
