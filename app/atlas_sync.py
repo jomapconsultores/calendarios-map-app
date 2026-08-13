@@ -372,13 +372,17 @@ def arrancar_autosync(app, zona, interval_min=10):
 
 # Nombres con los que suele aparecer cada grupo. Se prueban todos; los que no
 # existan simplemente no salen en el resultado.
+# Nombres CONFIRMADOS contra la base de ATLAS el 13/08/2026, sondeándola. No son
+# suposiciones: `padres_familia` existe y trae nombres, apellidos, cedula, email
+# y telefono; `docentes` y `usuarios` también. Los demás candidatos se conservan
+# por si otra instalación los usa, pero el primero de cada lista es el real.
 GRUPOS_PERSONAS = {
-    'representantes': ('representantes', 'padres', 'padres_familia', 'padres_de_familia',
+    'representantes': ('padres_familia', 'representantes', 'padres', 'padres_de_familia',
                        'acudientes', 'apoderados', 'tutores'),
-    'socios':         ('socios', 'asociados', 'miembros'),
     'docentes':       ('docentes', 'profesores', 'maestros'),
-    'estudiantes':    ('estudiantes', 'alumnos'),
     'usuarios':       ('usuarios', 'users', 'personas'),
+    'socios':         ('socios', 'asociados', 'miembros'),
+    'estudiantes':    ('estudiantes', 'alumnos'),
 }
 
 # Los colectivos que se mantienen al día SOLOS: padres de familia, socios y
@@ -652,11 +656,20 @@ SECTOR_POR_GRUPO = {
 }
 
 
-def _huella_personas(valores):
+def _huella_personas(valores, campos=None):
     """Huella estable de los campos que cruzan. Se compara en minúsculas y sin
     espacios de sobra: que alguien escriba «  Ana » en vez de «Ana» no es un
-    cambio que merezca cruzar el puente y volver."""
-    crudo = '|'.join(str(valores.get(c) or '').strip().lower() for c in CAMPOS_PUENTE)
+    cambio que merezca cruzar el puente y volver.
+
+    `campos` acota la huella a lo que ESA tabla de ATLAS tiene de verdad, y no
+    es un detalle. La tabla `usuarios` no guarda cédula; nuestros contactos sí
+    —aunque sea una referencia provisional—. Metiendo la cédula en la huella,
+    los dos lados nunca coincidían: el puente creía que el contacto había
+    cambiado AQUÍ en cada pasada y se pasaría la vida reescribiendo ATLAS con
+    algo que ATLAS no puede guardar. Sólo se compara lo que ambos lados
+    conocen."""
+    usar = campos or CAMPOS_PUENTE
+    crudo = '|'.join(str(valores.get(c) or '').strip().lower() for c in usar)
     return hashlib.sha256(crudo.encode('utf-8')).hexdigest()[:32]
 
 
@@ -679,14 +692,55 @@ def mapa_de_columnas(columnas):
     return mapa
 
 
+def nombre_en_una_columna(mapa):
+    """¿ATLAS guarda el nombre completo en UNA sola columna?
+
+    Su tabla `usuarios` tiene `nombre` y no tiene apellidos; `padres_familia`
+    tiene `nombres` Y `apellidos`. Aquí siempre van separados, así que hay que
+    saber con cuál de los dos modelos se está hablando.
+
+    Sin esto, al enviar a ATLAS un usuario se escribiría en `nombre` sólo la
+    primera mitad —«Marco Antonio»— y el apellido se perdería en su base. Un
+    puente que amputa nombres al cruzar es peor que no tener puente."""
+    return bool(mapa.get('nombres')) and not mapa.get('apellidos')
+
+
 def _valores_de_atlas(fila, mapa):
     return {campo: str(fila.get(mapa[campo]) or '').strip() if mapa.get(campo) else ''
             for campo in CAMPOS_PUENTE}
 
 
-def _valores_de_contacto(contacto):
-    return {campo: str(contacto.get(NUESTRO_NOMBRE[campo]) or '').strip()
-            for campo in CAMPOS_PUENTE}
+def _valores_de_contacto(contacto, nombre_unico=False):
+    valores = {campo: str(contacto.get(NUESTRO_NOMBRE[campo]) or '').strip()
+               for campo in CAMPOS_PUENTE}
+    if nombre_unico:
+        # Se compara y se envía el nombre ENTERO, porque es lo que ATLAS guarda.
+        # Si no, cada pasada vería una diferencia que no existe —«Marco Antonio»
+        # contra «Marco Antonio Posligua»— y se pasarían la vida reescribiéndose
+        # el uno al otro.
+        valores['nombres'] = ' '.join(filter(None, [valores['nombres'],
+                                                    valores['apellidos']]))
+        valores['apellidos'] = ''
+    return valores
+
+
+def _partir_nombre(completo):
+    """Nombre entero -> (nombres, apellidos).
+
+    Se toman los DOS PRIMEROS trozos como nombres y el resto como apellidos, que
+    es la forma corriente en Ecuador: dos nombres y dos apellidos. Con dos
+    palabras, una y una.
+
+    No hay regla que acierte siempre —«Marco Antonio Posligua San Martín» son
+    dos nombres y dos apellidos, pero uno de ellos lleva dos palabras—, y por eso
+    esto sólo se usa cuando ATLAS cambia el nombre de verdad. Mientras nadie lo
+    toque, el nombre partido que ya está guardado aquí no se reescribe."""
+    partes = str(completo or '').split()
+    if len(partes) <= 1:
+        return (completo or '').strip(), ''
+    if len(partes) == 2:
+        return partes[0], partes[1]
+    return ' '.join(partes[:2]), ' '.join(partes[2:])
 
 
 def _normalizar_texto(t):
@@ -790,6 +844,9 @@ def _sincronizar_personas(app, grupos, deadline_segundos):
             continue
         tabla = hallazgo['tabla']
         mapa = mapa_de_columnas(hallazgo.get('columnas'))
+        unico = nombre_en_una_columna(mapa)
+        # Sólo se compara lo que ESTA tabla de ATLAS puede guardar.
+        cruzan = tuple(c for c in CAMPOS_PUENTE if mapa.get(c))
 
         contactos = app.supabase.get('contacts', {'atlas_tabla': tabla}, select='*') or []
         por_id = {str(c['atlas_persona_id']): c for c in contactos
@@ -830,7 +887,7 @@ def _sincronizar_personas(app, grupos, deadline_segundos):
             valores = _valores_de_atlas(fila, mapa)
             if not (valores['nombres'] or valores['apellidos']):
                 continue
-            huella_alla = _huella_personas(valores)
+            huella_alla = _huella_personas(valores, cruzan)
             contacto = por_id.get(pid)
 
             # ¿Está ya aquí, sin enlace? Se adopta en vez de duplicar.
@@ -881,12 +938,18 @@ def _sincronizar_personas(app, grupos, deadline_segundos):
 
             huella_guardada = contacto.get('atlas_hash')
             cambio_alla = huella_alla != huella_guardada
-            cambio_aqui = _huella_personas(_valores_de_contacto(contacto)) != huella_guardada
+            cambio_aqui = _huella_personas(
+                _valores_de_contacto(contacto, unico), cruzan) != huella_guardada
             if cambio_alla:
                 if cambio_aqui:
                     res['conflictos'] += 1        # cambiaron los dos: manda ATLAS
                 cambios = {NUESTRO_NOMBRE[c]: (valores[c] or None)
                            for c in CAMPOS_PUENTE if mapa.get(c)}
+                if unico:
+                    # Llega el nombre entero en una sola columna: aquí se guarda
+                    # partido, que es como está el resto del Directorio.
+                    n, a = _partir_nombre(valores['nombres'])
+                    cambios['first_name'], cambios['last_name'] = n or None, a or None
                 cambios.update({'atlas_hash': huella_alla, 'atlas_synced_at': ahora})
                 if app.supabase.update('contacts', contacto['id'], cambios):
                     res['actualizadas_aqui'] += 1
@@ -901,8 +964,8 @@ def _sincronizar_personas(app, grupos, deadline_segundos):
             pid = str(contacto.get('atlas_persona_id') or '')
             if pid and pid in resueltos:
                 continue                      # ya mandó ATLAS en la fase 1
-            valores = _valores_de_contacto(contacto)
-            huella_aqui = _huella_personas(valores)
+            valores = _valores_de_contacto(contacto, unico)
+            huella_aqui = _huella_personas(valores, cruzan)
             if pid and huella_aqui == contacto.get('atlas_hash'):
                 continue                      # de este lado no cambió nada
             cuerpo = {mapa[c]: (valores[c] or None) for c in CAMPOS_PUENTE if mapa.get(c)}
