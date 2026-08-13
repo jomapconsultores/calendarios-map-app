@@ -172,8 +172,8 @@ body {
 
 /* Rótulo de grupo: dice de qué trata el bloque de abajo */
 .rail-section {
-    display: flex; align-items: center; gap: 6px;
-    padding: 12px 2px 5px;
+    display: flex; align-items: center; gap: 4px;
+    padding: 12px 0 5px;
     flex-shrink: 0;
 }
 /* Las rayitas laterales ceden el sitio antes que el texto. Con `flex:1` se lo
@@ -181,8 +181,14 @@ body {
    «PLANIFICACIÓN Y DATOS» dejó de caber en los 88 px del riel y se cortaba a
    media palabra. Un separador decorativo no puede comerse el rótulo que
    separa. */
+/* Las rayitas se encogen HASTA DESAPARECER si hace falta (`min-width: 0`).
+   Antes conservaban 4 px cada una y, con los dos huecos de 6 px, se llevaban 20
+   de los 72 disponibles: «TRABAJO» —siete letras, unos 50 px— se quedaba sin
+   sitio por dos adornos. Es la tercera vez que esta esquina de 88 px rompe algo,
+   y las dos anteriores las traté ajustando el ajuste. El adorno cede TODO antes
+   que el texto; si no cabe, que no se vea la rayita. */
 .rail-section::before, .rail-section::after {
-    content: ''; flex: 0 1 10px; min-width: 4px; height: 1px; background: var(--side-line);
+    content: ''; flex: 0 1 10px; min-width: 0; height: 1px; background: var(--side-line);
 }
 /* Los rótulos van en dos líneas si hace falta, y una palabra que no quepa se
    parte antes que desbordar. Red de seguridad: los textos ya se acortaron para
@@ -193,7 +199,7 @@ body {
 .rail-section span {
     flex: 1 1 auto; min-width: 0;
     font-size: var(--fs-3xs); font-weight: 800; text-transform: uppercase;
-    letter-spacing: .4px; color: var(--side-mute);
+    letter-spacing: .2px; color: var(--side-mute);
     white-space: normal; text-align: center; line-height: 1.15;
     /* `break-word` y NO `anywhere`: parecen lo mismo y no lo son. `anywhere`
        cuenta para el ancho mínimo que el navegador reserva al elemento —lo
