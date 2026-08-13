@@ -20,3 +20,17 @@ Thumbs.db
 # Google
 credentials.json
 client_secret.json
+
+# Copias de bases de datos reunidas desde el disco.
+#
+# NO se suben. Esta carpeta es un repositorio que va a GitHub y además es el
+# origen del Dockerfile («COPY . .»), así que todo lo que entre aquí acabaría en
+# el servidor público. Son bases de datos de otros sistemas —contabilidad,
+# ATLAS— con datos de clientes: publicarlas por un commit distraído no se
+# deshace, porque queda en el historial aunque después se borren.
+Base datos/
+*.db
+*.sqlite
+*.sqlite3
+*.accdb
+*.mdb

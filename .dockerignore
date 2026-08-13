@@ -5,3 +5,14 @@ __pycache__/
 .env
 *.log
 test_*.py
+
+# Copias de bases de datos reunidas desde el disco. El Dockerfile hace
+# «COPY . .», así que sin esto viajarían dentro de la imagen hasta el servidor
+# público. Son bases de otros sistemas, con datos de clientes; no pintan nada en
+# una imagen de despliegue ni la deben engordar.
+Base datos/
+*.db
+*.sqlite
+*.sqlite3
+*.accdb
+*.mdb
