@@ -5326,10 +5326,14 @@ def create_app():
         start_google_autoheal(app, interval_min=60)
         # Puente con la agenda de ATLAS, en los dos sentidos.
         _atlas.arrancar_autosync(app, TIMEZONE, interval_min=10)
-        # Puente con las PERSONAS de ATLAS (padres, socios, docentes), también
-        # en los dos sentidos. Cada cuarto de hora y no cada diez minutos: los
-        # datos de una persona cambian mucho menos que una agenda, y cada
-        # pasada lee las tablas enteras de los dos lados.
-        _atlas.arrancar_autosync_personas(app, interval_min=15)
+        # Puente con las PERSONAS de ATLAS (padres, socios, docentes), en los
+        # dos sentidos.
+        #
+        # Cada 2 minutos, no cada 15. Lo que sale de aquí ya no espera a esta
+        # pasada —se envía en el acto al guardar la ficha—, pero lo que entra
+        # sí: ATLAS no avisa cuando cambia algo, así que la única forma de
+        # enterarse es preguntando. Dos minutos es lo más cerca de «inmediato»
+        # que se puede estar sin que ATLAS llame a esta puerta.
+        _atlas.arrancar_autosync_personas(app, interval_min=2)
 
     return app

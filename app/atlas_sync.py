@@ -1001,6 +1001,97 @@ def _sincronizar_personas(app, grupos, deadline_segundos):
     return res
 
 
+def _grupo_por_sector(nombre_sector):
+    """De qué colectivo es un contacto, según el sector donde está."""
+    objetivo = _normalizar_texto(nombre_sector)
+    for grupo, sector in SECTOR_POR_GRUPO.items():
+        if _normalizar_texto(sector) == objetivo:
+            return grupo
+    return None
+
+
+def empujar_contacto(app, contacto_id):
+    """Lleva UN contacto a ATLAS en el momento, sin esperar a la pasada general.
+
+    Existe porque «cada quince minutos» no es lo mismo que «al instante». Quien
+    corrige un teléfono y llama por él dos minutos después necesita que el dato
+    ya esté cruzado; que acabe estándolo no le sirve.
+
+    Va en su propio hilo desde quien lo llama: hablar con ATLAS son dos viajes
+    de red, y la persona que guardó la ficha no tiene por qué esperarlos."""
+    if not disponible():
+        return {'success': False, 'error': 'Falta ATLAS_SUPABASE_KEY'}
+    filas = app.supabase.get('contacts', {'id': contacto_id}, select='*')
+    if not filas:
+        return {'success': False, 'error': 'Contacto no encontrado'}
+    c = filas[0]
+
+    tabla = c.get('atlas_tabla')
+    grupo = None
+    if not tabla:
+        # Contacto nuevo, creado aquí: se decide por su sector a qué tabla de
+        # ATLAS pertenece. Sin sector reconocible no se envía a ningún sitio —
+        # es mejor no cruzar nada que escribir a ciegas en la base del colegio.
+        sectores = app.supabase.get('sectors', {'id': c.get('sector_id')},
+                                    select='name') if c.get('sector_id') else []
+        grupo = _grupo_por_sector(sectores[0]['name']) if sectores else None
+        if not grupo:
+            return {'success': False, 'omitido': True,
+                    'error': 'El contacto no pertenece a ningún colectivo de ATLAS'}
+        hallazgo = (explorar().get('grupos') or {}).get(grupo)
+        if not hallazgo:
+            return {'success': False, 'error': f'ATLAS no expone la tabla de {grupo}'}
+        tabla = hallazgo['tabla']
+        columnas = hallazgo['columnas']
+    else:
+        try:
+            muestra = _atlas_get(tabla, 'select=*&limit=1')
+        except Exception as e:
+            return {'success': False, 'error': str(e)[:160]}
+        columnas = sorted(muestra[0].keys()) if muestra else []
+
+    mapa = mapa_de_columnas(columnas)
+    unico = nombre_en_una_columna(mapa)
+    cruzan = tuple(x for x in CAMPOS_PUENTE if mapa.get(x))
+    valores = _valores_de_contacto(c, unico)
+    cuerpo = {mapa[x]: (valores[x] or None) for x in cruzan}
+    if not cuerpo:
+        return {'success': False, 'error': 'Ningún campo de este contacto cruza el puente'}
+
+    huella = _huella_personas(valores, cruzan)
+    ahora = datetime.now(timezone.utc).isoformat()
+    pid = str(c.get('atlas_persona_id') or '')
+    try:
+        if pid:
+            if not _atlas_update(tabla, pid, cuerpo):
+                return {'success': False, 'error': 'ATLAS rechazó la actualización'}
+            app.supabase.update('contacts', c['id'],
+                                {'atlas_hash': huella, 'atlas_synced_at': ahora})
+            return {'success': True, 'accion': 'actualizado', 'tabla': tabla}
+        creada = _atlas_insert(tabla, cuerpo)
+        nuevo = str((creada or {}).get('id') or '')
+        if not nuevo:
+            return {'success': False, 'error': 'ATLAS no devolvió el identificador'}
+        app.supabase.update('contacts', c['id'],
+                            {'atlas_persona_id': nuevo, 'atlas_tabla': tabla,
+                             'atlas_hash': huella, 'atlas_synced_at': ahora})
+        return {'success': True, 'accion': 'creado', 'tabla': tabla, 'id_atlas': nuevo}
+    except Exception as e:
+        return {'success': False, 'error': str(e)[:160]}
+
+
+def empujar_en_segundo_plano(app, contacto_id):
+    """Lanza el envío sin hacer esperar a quien guardó la ficha."""
+    def _ir():
+        try:
+            r = empujar_contacto(app, contacto_id)
+            if not r.get('success') and not r.get('omitido'):
+                print(f'[atlas-personas] envío inmediato: {r.get("error")}')
+        except Exception as e:
+            print(f'[atlas-personas] envío inmediato: {e}')
+    threading.Thread(target=_ir, name='atlas-empuje', daemon=True).start()
+
+
 def arrancar_autosync_personas(app, interval_min=15):
     """Cruza las personas cada cierto tiempo, en segundo plano.
 

@@ -522,6 +522,11 @@ def registrar_directorio(app, ctx):
         nuevo = filas[0]
         _anotar(nuevo['id'], nuevo['doc_number'], 'create',
                 _sanitize(cuerpo.get('reason'), 500) or 'Alta de registro')
+        # Si el registro nuevo pertenece a un colectivo de ATLAS —lo dice su
+        # sector—, se crea también allá en el acto. Si no pertenece a ninguno,
+        # la función lo omite: es mejor no cruzar nada que escribir a ciegas en
+        # la base del colegio.
+        ctx['_atlas'].empujar_en_segundo_plano(app, nuevo['id'])
         return jsonify({'success': True, 'contacto': nuevo, 'sri': info_sri})
 
     # ============================================================
@@ -588,6 +593,12 @@ def registrar_directorio(app, ctx):
         if ok:
             _anotar(cid, registro.get('doc_number') or actual.get('doc_number'),
                     'update', motivo, cambios)
+            # A ATLAS, ya. Esperar a la pasada general significaba que quien
+            # corrige un teléfono y llama por él dos minutos después todavía
+            # tenía el viejo al otro lado. Va en su propio hilo: hablar con
+            # ATLAS son dos viajes de red y quien guardó la ficha no tiene por
+            # qué esperarlos.
+            ctx['_atlas'].empujar_en_segundo_plano(app, cid)
         return jsonify({'success': ok, 'cambios': len(cambios)})
 
     @app.route('/directorio/api/contactos/<cid>', methods=['DELETE'])
