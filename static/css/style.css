@@ -300,6 +300,18 @@ body {
     flex: 0 0 auto; display: flex; align-items: center; gap: 8px;
 }
 
+/* Cuando los botones no caben junto al título, bajan TODOS a su propia fila en
+   lugar de dejar uno descolgado. Al anclar la identidad quedaba menos sitio
+   para ellos, y en el Directorio —cuatro botones— el último caía solo debajo:
+   una fila entera de barra ocupada por un botón huérfano. Tres botones
+   alineados a la derecha se leen como un grupo; uno colgando parece un error. */
+@media (max-width: 1400px) {
+    .topbar { flex-wrap: wrap; row-gap: 6px; }
+    .topbar .topbar-actions {
+        order: 3; flex: 1 1 100%; margin-left: 0; justify-content: flex-end;
+    }
+}
+
 .topbar-user {
     display: flex; flex-direction: column; align-items: flex-end;
     text-decoration: none; color: var(--dark2);
