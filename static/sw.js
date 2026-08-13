@@ -15,7 +15,7 @@
 //     cambio.
 // v5: barra superior (la identidad ya no se cae de fila) e instalar.js (el
 //     aviso de instalación sólo se ofrece en dispositivos de mano).
-const CACHE = 'calmap-v13';
+const CACHE = 'calmap-v14';
 // Sólo lo que se pide SIN parámetro de versión. El CSS y el JS se enlazan con
 // «?v=N», y la caché distingue por URL completa: precargarlos aquí sin el
 // parámetro no serviría de nada (nunca coincidiría con lo que pide la página) y

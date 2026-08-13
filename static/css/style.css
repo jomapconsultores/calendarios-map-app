@@ -195,7 +195,14 @@ body {
     font-size: var(--fs-3xs); font-weight: 800; text-transform: uppercase;
     letter-spacing: .4px; color: var(--side-mute);
     white-space: normal; text-align: center; line-height: 1.15;
-    overflow-wrap: anywhere; hyphens: auto;
+    /* `break-word` y NO `anywhere`: parecen lo mismo y no lo son. `anywhere`
+       cuenta para el ancho mínimo que el navegador reserva al elemento —lo
+       calcula como si cupiera una sola letra—, así que la caja recibía menos
+       sitio del que necesitaba y partía palabras que sí cabían: «TRABAJO» salía
+       como «TRA-BAJO». `break-word` deja el ancho mínimo en la palabra más
+       larga y sólo parte si aun así no entra.
+       Sin `hyphens: auto`, que era quien ponía el guion. */
+    overflow-wrap: break-word;
 }
 
 /* Botón del riel: ícono + etiqueta visible (no hay que adivinar) */
