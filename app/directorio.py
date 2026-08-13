@@ -811,130 +811,16 @@ def registrar_directorio(app, ctx):
                         'rechazados': rechazados, 'total_rechazados': len(rechazados)})
 
     # ============================================================
-    #  IMPORTACIÓN DESDE LA BASE DE ATLAS
+    #  SINCRONIZACIÓN DE PERSONAS CON ATLAS
     #
-    #  La primera carga de personas se hizo con un script suelto que no quedó en
-    #  el repositorio: trajo usuarios y docentes, y a los padres de familia no
-    #  los tocó. No había forma de repetirla ni de ampliarla. Esto la convierte
-    #  en algo que el administrador puede volver a hacer cuando quiera.
+    #  Aquí ya no hay una pantalla de importación. Sobraba: las personas se
+    #  mantienen al día solas y en los dos sentidos (ver app/atlas_sync.py), así
+    #  que un botón para «traerlas» ofrecía a mano lo que el sistema ya hace por
+    #  su cuenta — dos formas de conseguir lo mismo, y una de ellas capaz de
+    #  crear duplicados si alguien la usaba sin saber que la otra existía.
     #
-    #  Se apoya en la importación de archivos que ya existía: `analizar` deja las
-    #  filas en el mismo formato que la vista previa del Excel, así que el
-    #  guardado final es el MISMO /directorio/api/importar/confirmar, con su
-    #  control de duplicados y su bitácora. Una segunda forma de guardar
-    #  contactos sería una segunda forma de equivocarse.
+    #  Queda sólo el cruce inmediato, que no duplica nada: adelanta el reloj.
     # ============================================================
-    ETIQUETAS_ATLAS = {
-        'representantes': 'atlas,representante',
-        'estudiantes':    'atlas,estudiante',
-        'docentes':       'atlas,docente',
-        'usuarios':       'atlas,usuario',
-    }
-
-    def _sector_para(nombre_sector):
-        """Devuelve el id del sector, creándolo si hace falta."""
-        slug = _slug(nombre_sector)
-        filas = db().get('sectors', {'slug': slug}, select='id')
-        if filas:
-            return filas[0]['id']
-        creado = db().insert('sectors', {
-            'name': nombre_sector, 'slug': slug,
-            'description': 'Creado al importar personas desde ATLAS.',
-            'active': True})
-        return creado[0]['id'] if creado else None
-
-    @app.route('/directorio/api/atlas/explorar', methods=['GET'])
-    @login_required
-    def directorio_atlas_explorar():
-        """Qué grupos de personas ofrece ATLAS. Se consulta ANTES de importar
-        para que el administrador elija sobre lo que hay de verdad, y no sobre
-        una lista inventada de este lado."""
-        if not _puede('importar'):
-            return _sin_permiso('importar personas desde ATLAS')
-        try:
-            return jsonify(ctx['_atlas'].explorar())
-        except Exception as e:
-            return jsonify({'success': False, 'error': f'No se pudo consultar ATLAS: {e}'})
-
-    @app.route('/directorio/api/atlas/analizar', methods=['POST'])
-    @login_required
-    def directorio_atlas_analizar():
-        """Vista previa: qué personas entrarían y cuáles se quedan fuera y por qué.
-
-        No guarda nada. Body: {grupo: 'representantes', sector: 'Padres de familia'}"""
-        if not _puede('importar'):
-            return _sin_permiso('importar personas desde ATLAS')
-        cuerpo = request.get_json() or {}
-        grupo  = cuerpo.get('grupo') or ''
-        if grupo not in ETIQUETAS_ATLAS:
-            return jsonify({'success': False, 'error': 'Grupo de personas desconocido'})
-
-        exploracion = ctx['_atlas'].explorar()
-        if not exploracion.get('success'):
-            return jsonify(exploracion)
-        hallazgo = (exploracion.get('grupos') or {}).get(grupo)
-        if not hallazgo:
-            return jsonify({'success': False,
-                            'error': f'ATLAS no expone ninguna tabla de {grupo}. '
-                                     f'Se probaron: {", ".join(ctx["_atlas"].GRUPOS_PERSONAS[grupo])}'})
-
-        try:
-            filas = ctx['_atlas'].leer_personas(hallazgo['tabla'])
-        except Exception as e:
-            return jsonify({'success': False, 'error': f'No se pudieron leer los datos: {e}'})
-
-        ya = _indice_documentos()
-        # Un correo repetido delata a la misma persona aunque no traiga cédula:
-        # sin esto, cada importación volvería a meter a quien ya está.
-        correos = {(c.get('email') or '').lower(): c
-                   for c in (db().get('contacts', select='id,email,first_name,last_name') or [])
-                   if c.get('email')}
-
-        listos, descartados, provisional = [], [], 0
-        for i, fila in enumerate(filas, start=1):
-            registro, motivo = ctx['_atlas'].a_contacto(fila, ETIQUETAS_ATLAS[grupo])
-            if motivo:
-                descartados.append({'fila': i, 'motivo': motivo,
-                                    'quien': str(fila.get('id') or i)})
-                continue
-            nombre = ' '.join(filter(None, [registro['first_name'], registro['last_name']]))
-            correo = (registro.get('email') or '').lower()
-            if correo and correo in correos:
-                descartados.append({'fila': i, 'quien': nombre,
-                                    'motivo': 'Ya está en el directorio (mismo correo)'})
-                continue
-            if registro['doc_number'] and registro['doc_number'] in ya:
-                descartados.append({'fila': i, 'quien': nombre,
-                                    'motivo': 'Ya está en el directorio (mismo documento)'})
-                continue
-            if not registro['doc_number']:
-                # Misma convención que la primera carga: referencia provisional y
-                # una nota que dice claramente que hay que reemplazarla.
-                registro['doc_number'] = f'ATLAS-{grupo[:3].upper()}-{fila.get("id") or i}'
-                registro['notes'] = ('Importado de ATLAS. El número de documento es una '
-                                     'REFERENCIA PROVISIONAL: esta persona no tenía cédula ni '
-                                     'RUC registrados en ATLAS. Reemplázalo por el documento '
-                                     'real para que el sistema pueda verificarlo.')
-                provisional += 1
-            # El identificador de ATLAS viaja hasta el guardado: es lo que deja
-            # ENLAZADA a la persona. Sin él, lo importado sería una copia muerta
-            # —no volvería a cruzar nada— y en la siguiente pasada entraría otra
-            # vez como si fuera alguien nuevo.
-            registro['_atlas_id'] = str(registro.pop('atlas_id', '') or '')
-            registro['_atlas_tabla'] = hallazgo['tabla']
-            listos.append(registro)
-
-        return jsonify({
-            'success': True,
-            'tabla': hallazgo['tabla'],
-            'columnas': hallazgo['columnas'],
-            'total_en_atlas': len(filas),
-            'listos': listos,
-            'descartados': descartados,
-            'sin_documento': provisional,
-            'sector_sugerido': cuerpo.get('sector') or 'Padres de familia',
-        })
-
     @app.route('/directorio/api/atlas/sincronizar', methods=['POST'])
     @login_required
     def directorio_atlas_sincronizar():
@@ -950,68 +836,6 @@ def registrar_directorio(app, ctx):
             return jsonify(ctx['_atlas'].sincronizar_personas(app, grupos))
         except Exception as e:
             return jsonify({'success': False, 'error': f'No se pudo sincronizar: {e}'})
-
-    @app.route('/directorio/api/atlas/confirmar', methods=['POST'])
-    @login_required
-    def directorio_atlas_confirmar():
-        """Guarda las personas aprobadas en la vista previa, en su sector.
-
-        Body: {grupo, sector, filas: [...]}"""
-        if not _puede('importar'):
-            return _sin_permiso('importar personas desde ATLAS')
-        cuerpo = request.get_json() or {}
-        filas  = cuerpo.get('filas') or []
-        grupo  = cuerpo.get('grupo') or ''
-        if not filas:
-            return jsonify({'success': False, 'error': 'No se enviaron personas para guardar'})
-        if grupo not in ETIQUETAS_ATLAS:
-            return jsonify({'success': False, 'error': 'Grupo de personas desconocido'})
-
-        sector_id = _sector_para(_sanitize(cuerpo.get('sector'), 120) or 'Padres de familia')
-        motivo = (f'Importación desde la base de ATLAS · {grupo}. '
-                  f'Sólo las personas con correo y/o teléfono.')
-
-        ya = _indice_documentos()
-        insertados, rechazados = 0, []
-        for fila in filas:
-            registro, _ = _normalizar(fila)
-            numero = registro.get('doc_number') or ''
-            nombre = ' '.join(filter(None, [registro.get('first_name'),
-                                            registro.get('last_name')])) or numero
-            if numero and numero in ya:
-                rechazados.append({'nombre': nombre, 'motivo': 'Ya existe en el directorio'})
-                continue
-            if sector_id:
-                registro['sector_id'] = sector_id
-            registro['created_by'] = current_user.id
-            registro['updated_by'] = current_user.id
-            registro['source'] = 'atlas'
-            registro['source_file'] = f'ATLAS · {grupo}'
-            # Enlace con ATLAS: a partir de aquí esta persona se sincroniza sola
-            # en los dos sentidos. La huella se guarda ya, con los mismos campos
-            # y el mismo cálculo que usa el puente, para que la primera pasada
-            # no crea que todo cambió y lo reescriba entero de vuelta.
-            atlas_id = str(fila.get('_atlas_id') or '')
-            if atlas_id:
-                registro['atlas_persona_id'] = atlas_id
-                registro['atlas_tabla'] = fila.get('_atlas_tabla')
-                registro['atlas_hash'] = ctx['_atlas']._huella_personas({
-                    'nombres': registro.get('first_name'), 'apellidos': registro.get('last_name'),
-                    'documento': registro.get('doc_number'), 'email': registro.get('email'),
-                    'movil': registro.get('mobile'), 'fijo': registro.get('landline'),
-                    'direccion': registro.get('home_address'), 'ciudad': registro.get('city')})
-                registro['atlas_synced_at'] = datetime.now(timezone.utc).isoformat()
-            guardado = db().insert('contacts', registro)
-            if guardado:
-                ya[numero] = guardado[0]
-                insertados += 1
-                _anotar(guardado[0]['id'], numero, 'import', motivo)
-            else:
-                rechazados.append({'nombre': nombre,
-                                   'motivo': 'La base rechazó el registro (posible duplicado)'})
-
-        return jsonify({'success': True, 'insertados': insertados,
-                        'rechazados': rechazados, 'total_rechazados': len(rechazados)})
 
     # ============================================================
     #  EXPORTACIÓN

@@ -32,8 +32,10 @@ no debe destruir el historial del otro.
 """
 import hashlib
 import os
+import re
 import threading
 import time
+import unicodedata
 from datetime import datetime, date, time as _time, timedelta, timezone
 
 import requests as req_lib
@@ -373,10 +375,20 @@ def arrancar_autosync(app, zona, interval_min=10):
 GRUPOS_PERSONAS = {
     'representantes': ('representantes', 'padres', 'padres_familia', 'padres_de_familia',
                        'acudientes', 'apoderados', 'tutores'),
-    'estudiantes':    ('estudiantes', 'alumnos'),
+    'socios':         ('socios', 'asociados', 'miembros'),
     'docentes':       ('docentes', 'profesores', 'maestros'),
+    'estudiantes':    ('estudiantes', 'alumnos'),
     'usuarios':       ('usuarios', 'users', 'personas'),
 }
+
+# Los colectivos que se mantienen al día SOLOS, sin que nadie los estrene a
+# mano: padres de familia, socios y docentes. Son los que se pidieron.
+#
+# Estudiantes y usuarios quedan fuera a propósito. No es un olvido: traerse el
+# alumnado entero de un colegio a un directorio de clientes es una decisión con
+# consecuencias —de volumen y de datos de menores— que nadie ha tomado. Si algún
+# día se quiere, se añade aquí y se dice por qué.
+GRUPOS_AUTOMATICOS = ('representantes', 'socios', 'docentes')
 
 # Columnas de ATLAS que valen para cada campo del Directorio, en orden de
 # preferencia. La primera que exista y traiga algo, gana.
@@ -519,9 +531,19 @@ NUESTRO_NOMBRE = {
 # Etiqueta con la que queda marcado en el Directorio cada colectivo.
 ETIQUETAS_POR_GRUPO = {
     'representantes': 'atlas,representante',
-    'estudiantes':    'atlas,estudiante',
+    'socios':         'atlas,socio',
     'docentes':       'atlas,docente',
+    'estudiantes':    'atlas,estudiante',
     'usuarios':       'atlas,usuario',
+}
+
+# Sector del Directorio donde cae cada colectivo la primera vez.
+SECTOR_POR_GRUPO = {
+    'representantes': 'Padres de familia',
+    'socios':         'Socios',
+    'docentes':       'Clases (ATLAS)',
+    'estudiantes':    'Estudiantes (ATLAS)',
+    'usuarios':       'Clases (ATLAS)',
 }
 
 
@@ -562,14 +584,37 @@ def _valores_de_contacto(contacto):
             for campo in CAMPOS_PUENTE}
 
 
+def _sector_de(app, nombre, _memoria={}):
+    """Id del sector, creándolo la primera vez.
+
+    Antes lo resolvía la pantalla de importación. Al quitarla, el puente tiene
+    que saber dónde deja a cada colectivo: una persona que entra sin sector
+    queda fuera de todos los filtros del Directorio, que es como no haber
+    entrado. Se recuerda por pasada para no consultar lo mismo por cada fila."""
+    if nombre in _memoria:
+        return _memoria[nombre]
+    slug = re.sub(r'[^a-z0-9]+', '-',
+                  unicodedata.normalize('NFKD', nombre.lower())
+                  .encode('ascii', 'ignore').decode()).strip('-')
+    filas = app.supabase.get('sectors', {'slug': slug}, select='id')
+    if filas:
+        _memoria[nombre] = filas[0]['id']
+    else:
+        creado = app.supabase.insert('sectors', {
+            'name': nombre, 'slug': slug, 'active': True,
+            'description': 'Creado por la sincronización con ATLAS.'})
+        _memoria[nombre] = creado[0]['id'] if creado else None
+    return _memoria[nombre]
+
+
 def sincronizar_personas(app, grupos=None, deadline_segundos=90):
     """Cruza las personas de ATLAS con el Directorio, en los dos sentidos.
 
-    `grupos` limita a ciertos colectivos ('representantes', 'docentes'...). Sin
-    él se sincronizan los que YA tienen personas enlazadas aquí: que el sistema
-    empiece a traerse por su cuenta a todo un colectivo que nadie pidió sería
-    una sorpresa desagradable. Estrenar un colectivo es una decisión de la
-    persona que administra, y se hace desde el Directorio."""
+    `grupos` limita a ciertos colectivos. Sin él se sincronizan los de
+    GRUPOS_AUTOMATICOS —padres de familia, socios y docentes—, que es lo que se
+    pidió: que estén al día solos, sin que nadie pulse nada. Los demás
+    colectivos que ATLAS exponga se quedan quietos salvo que se pidan
+    expresamente."""
     if not disponible():
         return {'success': False, 'error': 'Falta ATLAS_SUPABASE_KEY en el servidor'}
     if not _lock.acquire(blocking=False):
@@ -589,16 +634,16 @@ def _sincronizar_personas(app, grupos, deadline_segundos):
     if not exploracion.get('success'):
         return exploracion
     ahora = datetime.now(timezone.utc).isoformat()
+    # Sin lista explícita, los que deben mantenerse al día solos.
+    objetivo = set(grupos or GRUPOS_AUTOMATICOS)
 
     for grupo, hallazgo in (exploracion.get('grupos') or {}).items():
-        if grupos and grupo not in grupos:
+        if grupo not in objetivo:
             continue
         tabla = hallazgo['tabla']
         mapa = mapa_de_columnas(hallazgo.get('columnas'))
 
         contactos = app.supabase.get('contacts', {'atlas_tabla': tabla}, select='*') or []
-        if not contactos and not grupos:
-            continue          # colectivo que nadie ha estrenado todavía
         por_id = {str(c['atlas_persona_id']): c for c in contactos
                   if c.get('atlas_persona_id')}
 
@@ -638,6 +683,9 @@ def _sincronizar_personas(app, grupos, deadline_segundos):
                 registro.update({'atlas_persona_id': pid, 'atlas_tabla': tabla,
                                  'atlas_hash': huella_alla, 'atlas_synced_at': ahora,
                                  'source': 'atlas', 'source_file': f'ATLAS · {grupo}'})
+                sector = _sector_de(app, SECTOR_POR_GRUPO.get(grupo, 'ATLAS'))
+                if sector:
+                    registro['sector_id'] = sector
                 if app.supabase.insert('contacts', registro):
                     res['traidas'] += 1
                 else:
