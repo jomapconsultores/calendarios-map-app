@@ -546,6 +546,7 @@ async function atlasSincronizar() {
   b.disabled = false; b.innerHTML = original;
   if (!r.success) { aviso(r.error || 'No se pudo sincronizar', 'danger'); return; }
   const partes = [];
+  if (r.adoptadas)          partes.push(r.adoptadas + ' enlazada(s) con ATLAS');
   if (r.traidas)            partes.push(r.traidas + ' traída(s) de ATLAS');
   if (r.llevadas)           partes.push(r.llevadas + ' enviada(s) a ATLAS');
   if (r.actualizadas_aqui)  partes.push(r.actualizadas_aqui + ' actualizada(s) aquí');

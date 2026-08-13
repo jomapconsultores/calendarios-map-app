@@ -381,14 +381,21 @@ GRUPOS_PERSONAS = {
     'usuarios':       ('usuarios', 'users', 'personas'),
 }
 
-# Los colectivos que se mantienen al día SOLOS, sin que nadie los estrene a
-# mano: padres de familia, socios y docentes. Son los que se pidieron.
+# Los colectivos que se mantienen al día SOLOS: padres de familia, socios y
+# docentes, que son los que se pidieron.
 #
-# Estudiantes y usuarios quedan fuera a propósito. No es un olvido: traerse el
-# alumnado entero de un colegio a un directorio de clientes es una decisión con
-# consecuencias —de volumen y de datos de menores— que nadie ha tomado. Si algún
-# día se quiere, se añade aquí y se dice por qué.
-GRUPOS_AUTOMATICOS = ('representantes', 'socios', 'docentes')
+# Va también `usuarios`, y no por capricho: los diez contactos que YA están en
+# el Directorio salieron de ahí —ocho etiquetados «atlas,usuario» y dos
+# «atlas,docente»—, y en ATLAS es donde viven los socios. Dejarlo fuera
+# significaba que ocho de los diez no cruzarían nunca, ni en un sentido ni en
+# otro: quedarían como copias muertas en la pantalla, indistinguibles de las
+# vivas.
+#
+# ESTUDIANTES SIGUE FUERA, y no es un olvido: traerse el alumnado entero de un
+# colegio a un directorio de clientes es una decisión con consecuencias —de
+# volumen y de datos de menores— que nadie ha tomado. Si algún día se quiere,
+# se añade a esta lista y se dice por qué.
+GRUPOS_AUTOMATICOS = ('representantes', 'socios', 'docentes', 'usuarios')
 
 # Columnas de ATLAS que valen para cada campo del Directorio, en orden de
 # preferencia. La primera que exista y traiga algo, gana.
@@ -584,6 +591,48 @@ def _valores_de_contacto(contacto):
             for campo in CAMPOS_PUENTE}
 
 
+def _normalizar_texto(t):
+    """Para comparar personas: sin acentos, sin dobles espacios, en minúsculas."""
+    t = unicodedata.normalize('NFKD', str(t or '')).encode('ascii', 'ignore').decode()
+    return ' '.join(t.lower().split())
+
+
+def _claves_de_adopcion(contacto):
+    """Por qué se puede reconocer a una persona que YA está aquí sin enlace.
+
+    En orden de fiabilidad:
+
+      1. El documento heredado. La primera carga —el script suelto que no
+         guardaba el identificador— dejó documentos con la forma
+         «ATLAS-USR-004», y ese 004 ES el id de ATLAS. Enlaza sin ambigüedad.
+      2. El correo, que en la práctica identifica a una persona.
+      3. Nombre y apellido normalizados. El más débil de los tres: dos personas
+         pueden llamarse igual. Va el último a propósito.
+    """
+    claves = []
+    doc = str(contacto.get('doc_number') or '')
+    m = re.match(r'^ATLAS-([A-Z]{3})-0*(\d+)$', doc.strip().upper())
+    if m:
+        claves.append(('doc', m.group(1), m.group(2)))
+    correo = _normalizar_texto(contacto.get('email'))
+    if correo:
+        claves.append(('correo', correo))
+    nombre = _normalizar_texto(f"{contacto.get('first_name') or ''} "
+                               f"{contacto.get('last_name') or ''}")
+    if nombre:
+        claves.append(('nombre', nombre))
+    return claves
+
+
+def _indice_para_adoptar(contactos_sueltos):
+    """Índice de los contactos que vinieron de ATLAS pero no quedaron enlazados."""
+    indice = {}
+    for c in contactos_sueltos:
+        for clave in _claves_de_adopcion(c):
+            indice.setdefault(clave, c)      # el primero gana: no se reasigna
+    return indice
+
+
 def _sector_de(app, nombre, _memoria={}):
     """Id del sector, creándolo la primera vez.
 
@@ -628,7 +677,8 @@ def sincronizar_personas(app, grupos=None, deadline_segundos=90):
 def _sincronizar_personas(app, grupos, deadline_segundos):
     limite = time.monotonic() + deadline_segundos
     res = {'success': True, 'traidas': 0, 'llevadas': 0, 'actualizadas_aqui': 0,
-           'actualizadas_alla': 0, 'conflictos': 0, 'errores': [], 'grupos': []}
+           'actualizadas_alla': 0, 'adoptadas': 0, 'conflictos': 0,
+           'errores': [], 'grupos': []}
 
     exploracion = explorar()
     if not exploracion.get('success'):
@@ -646,6 +696,18 @@ def _sincronizar_personas(app, grupos, deadline_segundos):
         contactos = app.supabase.get('contacts', {'atlas_tabla': tabla}, select='*') or []
         por_id = {str(c['atlas_persona_id']): c for c in contactos
                   if c.get('atlas_persona_id')}
+
+        # Personas que ya están aquí y vinieron de ATLAS, pero SIN enlace: son
+        # las de la primera carga, hecha con un script que no guardaba el
+        # identificador. Sin esto, la fase 1 no las reconocería y crearía un
+        # duplicado de cada una, y la fase 2 no las enviaría nunca porque sólo
+        # recorre las enlazadas — que era justo el síntoma: «lo que corrijo aquí
+        # no llega a ATLAS».
+        sueltos = [c for c in (app.supabase.get('contacts', {'source': 'atlas'},
+                                                select='*') or [])
+                   if not c.get('atlas_tabla')]
+        adoptables = _indice_para_adoptar(sueltos)
+        prefijo = grupo[:3].upper()
 
         try:
             filas = leer_personas(tabla)
@@ -672,6 +734,33 @@ def _sincronizar_personas(app, grupos, deadline_segundos):
                 continue
             huella_alla = _huella_personas(valores)
             contacto = por_id.get(pid)
+
+            # ¿Está ya aquí, sin enlace? Se adopta en vez de duplicar.
+            if not contacto:
+                candidatas = [('doc', prefijo, str(int(pid)) if pid.isdigit() else pid),
+                              ('correo', _normalizar_texto(valores['email'])),
+                              ('nombre', _normalizar_texto(
+                                  f"{valores['nombres']} {valores['apellidos']}"))]
+                for clave in candidatas:
+                    if len(clave) > 1 and not clave[-1]:
+                        continue
+                    hallado = adoptables.get(clave)
+                    if not hallado:
+                        continue
+                    if app.supabase.update('contacts', hallado['id'],
+                                           {'atlas_persona_id': pid, 'atlas_tabla': tabla,
+                                            'atlas_hash': huella_alla,
+                                            'atlas_synced_at': ahora}):
+                        res['adoptadas'] += 1
+                        # Fuera del índice: una persona de ATLAS no puede
+                        # adoptar a dos contactos distintos.
+                        for k in _claves_de_adopcion(hallado):
+                            adoptables.pop(k, None)
+                        contacto = dict(hallado, atlas_persona_id=pid, atlas_tabla=tabla,
+                                        atlas_hash=huella_alla)
+                        contactos.append(contacto)
+                        por_id[pid] = contacto
+                    break
 
             if not contacto:
                 registro, motivo = a_contacto(fila, ETIQUETAS_POR_GRUPO.get(grupo, 'atlas'))
