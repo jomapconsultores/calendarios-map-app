@@ -184,11 +184,18 @@ body {
 .rail-section::before, .rail-section::after {
     content: ''; flex: 0 1 10px; min-width: 4px; height: 1px; background: var(--side-line);
 }
+/* Los rótulos van en dos líneas si hace falta, y una palabra que no quepa se
+   parte antes que desbordar. Red de seguridad: los textos ya se acortaron para
+   que ninguna palabra pase de los 88 px del riel («Planificación y datos» se
+   cortaba a media palabra, «Administración» iba camino de lo mismo), pero un
+   rótulo nuevo y largo no debe volver a romper el menú en silencio — que se vea
+   partido es feo; que se vea a medias es un error. */
 .rail-section span {
-    flex: 1 1 auto;
+    flex: 1 1 auto; min-width: 0;
     font-size: var(--fs-3xs); font-weight: 800; text-transform: uppercase;
     letter-spacing: .4px; color: var(--side-mute);
     white-space: normal; text-align: center; line-height: 1.15;
+    overflow-wrap: anywhere; hyphens: auto;
 }
 
 /* Botón del riel: ícono + etiqueta visible (no hay que adivinar) */
