@@ -841,7 +841,14 @@ def registrar_directorio(app, ctx):
         tabla se llama de otra manera. Con esto se ve, y se deja de apostar."""
         if not _puede('importar'):
             return _sin_permiso('consultar la base de ATLAS')
-        return jsonify(ctx['_atlas'].listar_tablas())
+        catalogo = ctx['_atlas'].listar_tablas()
+        if catalogo.get('success'):
+            return jsonify(catalogo)
+        # El catálogo completo exige la clave de servicio y aquí sólo hay la
+        # pública. Se cae al sondeo, que llega igual al nombre real.
+        sondeo = ctx['_atlas'].sondear_tablas()
+        sondeo['catalogo_no_disponible'] = catalogo.get('error')
+        return jsonify(sondeo)
 
     @app.route('/directorio/api/atlas/sincronizar', methods=['POST'])
     @login_required

@@ -420,6 +420,75 @@ def _primer_valor(fila, claves):
     return ''
 
 
+# Vocabulario con el que se sondea la base de ATLAS. Van también los singulares
+# y formas aproximadas A PROPÓSITO: cuando se pide una tabla que no existe,
+# PostgREST responde con una pista —«Perhaps you meant the table
+# public.X»— y esa pista DELATA el nombre verdadero. Un nombre que falla por
+# poco enseña más que uno que falla del todo.
+VOCABULARIO_SONDEO = (
+    'representantes', 'representante', 'padres', 'padre', 'padres_familia',
+    'padre_familia', 'apoderados', 'apoderado', 'acudientes', 'acudiente',
+    'tutores', 'tutor', 'familiares', 'familia', 'familias',
+    'docentes', 'docente', 'profesores', 'profesor', 'maestros',
+    'socios', 'socio', 'asociados', 'miembros',
+    'estudiantes', 'estudiante', 'alumnos', 'alumno',
+    'personas', 'persona', 'contactos', 'contacto',
+    'matriculas', 'inscripciones', 'clases', 'cursos',
+)
+
+
+def sondear_tablas(nombres=None):
+    """Qué tablas de personas existen realmente en ATLAS.
+
+    El catálogo completo de PostgREST exige la clave de servicio, y aquí sólo
+    hay la pública. Así que se sondea: se pide cada nombre y se mira la
+    respuesta.
+
+      200            -> la tabla existe; se devuelven sus columnas
+      404 con pista  -> no existe, pero PostgREST sugiere el nombre parecido que
+                        SÍ existe, y esa sugerencia es la que resuelve el
+                        problema sin adivinar
+
+    Es lo mismo que preguntar «¿está Pedro?» y que te contesten «no, pero está
+    Pedro Luis»: la respuesta equivocada trae la información correcta."""
+    if not disponible():
+        return {'success': False, 'error': 'Falta ATLAS_SUPABASE_KEY en el servidor'}
+    existen, sugeridas, sondeadas = {}, set(), 0
+    for nombre in (nombres or VOCABULARIO_SONDEO):
+        sondeadas += 1
+        try:
+            r = req_lib.get(f'{ATLAS_URL}/rest/v1/{nombre}?select=*&limit=1',
+                            headers=_cabeceras(), timeout=_TIMEOUT)
+        except Exception:
+            continue
+        if r.status_code == 200:
+            try:
+                muestra = r.json()
+            except Exception:
+                muestra = []
+            existen[nombre] = sorted(muestra[0].keys()) if muestra else []
+            continue
+        # La pista del error delata los nombres reales.
+        try:
+            pista = (r.json() or {}).get('hint') or ''
+        except Exception:
+            pista = ''
+        for m in re.findall(r"public\.([A-Za-z0-9_]+)", pista):
+            sugeridas.add(m)
+    # Lo sugerido se comprueba: una pista no es una certeza.
+    for nombre in sorted(sugeridas - set(existen)):
+        try:
+            r = req_lib.get(f'{ATLAS_URL}/rest/v1/{nombre}?select=*&limit=1',
+                            headers=_cabeceras(), timeout=_TIMEOUT)
+            if r.status_code == 200:
+                muestra = r.json()
+                existen[nombre] = sorted(muestra[0].keys()) if muestra else []
+        except Exception:
+            continue
+    return {'success': True, 'url': ATLAS_URL, 'sondeadas': sondeadas,
+            'existen': existen, 'sugeridas_por_atlas': sorted(sugeridas)}
+
+
 def listar_tablas():
     """TODAS las tablas que ATLAS publica, preguntándoselo a él.
 
