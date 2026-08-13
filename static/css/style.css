@@ -168,12 +168,19 @@ body {
     padding: 12px 2px 5px;
     flex-shrink: 0;
 }
+/* Las rayitas laterales ceden el sitio antes que el texto. Con `flex:1` se lo
+   repartían a partes iguales y, al subir el rótulo a un tamaño legible,
+   «PLANIFICACIÓN Y DATOS» dejó de caber en los 88 px del riel y se cortaba a
+   media palabra. Un separador decorativo no puede comerse el rótulo que
+   separa. */
 .rail-section::before, .rail-section::after {
-    content: ''; flex: 1; height: 1px; background: var(--side-line);
+    content: ''; flex: 0 1 10px; min-width: 4px; height: 1px; background: var(--side-line);
 }
 .rail-section span {
-    font-size: .625rem; font-weight: 800; text-transform: uppercase;
-    letter-spacing: .9px; color: var(--side-mute); white-space: nowrap;
+    flex: 1 1 auto;
+    font-size: var(--fs-3xs); font-weight: 800; text-transform: uppercase;
+    letter-spacing: .4px; color: var(--side-mute);
+    white-space: normal; text-align: center; line-height: 1.15;
 }
 
 /* Botón del riel: ícono + etiqueta visible (no hay que adivinar) */
