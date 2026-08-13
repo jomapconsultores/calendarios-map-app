@@ -96,7 +96,7 @@
    la celda del nombre, que ya lo muestra en su segunda línea.
    ============================================================ */
 @media (max-width: 768px) {
-  .dir-table, .act-table, .task-table { font-size: .8rem; }
+  .dir-table, .act-table, .task-table { font-size: .8125rem; }
   .dir-table th, .dir-table td,
   .act-table th, .act-table td { padding: 8px 8px; }
 
@@ -121,7 +121,7 @@
 
   .stats-row { grid-template-columns: 1fr 1fr; }
   .stat-card { padding: 10px 12px; }
-  .stat-card .sc-num { font-size: 1.3rem; }
+  .stat-card .sc-num { font-size: 1.25rem; }
 }
 
 /* En pantallas muy estrechas se deja lo mínimo imprescindible. */
@@ -143,7 +143,7 @@
   .gantt-wrap { padding: 10px 6px; }
   .gantt-container { min-width: 720px; }
   .g-label-col, .g-label { width: 150px; }
-  .g-label .gl-text { font-size: .78rem; }
+  .g-label .gl-text { font-size: .75rem; }
   .g-row, .g-head { height: 42px; }         /* fila más alta = más fácil de tocar */
   .g-bar { top: 11px; }
 }
@@ -216,7 +216,7 @@
   display: none;
   align-items: center;
   gap: 12px;
-  font-size: .86rem;
+  font-size: .875rem;
   line-height: 1.4;
 }
 #instalarBanner.mostrar { display: flex; }
@@ -227,7 +227,7 @@
   border-radius: 10px;
   padding: 8px 14px;
   font-weight: 700;
-  font-size: .82rem;
+  font-size: .8125rem;
   cursor: pointer;
   white-space: nowrap;
 }
