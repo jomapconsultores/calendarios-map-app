@@ -421,6 +421,15 @@
           <strong>correo o teléfono</strong>: sin ninguna forma de contacto no sirven aquí.
           Verás qué entra y qué se queda fuera <strong>antes</strong> de guardar nada.
         </p>
+        <div class="alert alert-light border small d-flex justify-content-between align-items-center gap-2">
+          <span>
+            🔄 Lo ya traído se mantiene <strong>al día solo, en los dos sentidos</strong>: lo que se
+            corrige en ATLAS aparece aquí y lo que se corrige aquí vuelve allá, cada 15 minutos.
+            Si cambian los dos a la vez, se conserva lo de ATLAS. <strong>Nunca se borra nadie.</strong>
+          </span>
+          <button class="btn btn-outline-secondary btn-sm rounded-pill text-nowrap"
+                  id="atlasBtnSync" onclick="atlasSincronizar()">Sincronizar ahora</button>
+        </div>
         <div id="atlasPaso1">Consultando a ATLAS…</div>
         <div id="atlasPaso2" style="display:none">
           <div class="row g-2 align-items-end mb-3">
@@ -650,6 +659,28 @@ async function atlasElegir(grupo) {
       desc.map(function (d) { return '<li>' + esc(d.quien) + ' — ' + esc(d.motivo) + '</li>'; }).join('') +
       '</ul></details>' : '');
   document.getElementById('atlasBtnGuardar').disabled = !atlasFilas.length;
+}
+
+// Cruce inmediato. No hace falta para que funcione —corre solo cada cuarto de
+// hora—, pero quien acaba de corregir un teléfono quiere verlo cruzar ya.
+async function atlasSincronizar() {
+  const b = document.getElementById('atlasBtnSync');
+  const original = b.innerHTML;
+  b.disabled = true; b.innerHTML = '⏳ Sincronizando…';
+  const r = await pedir('/directorio/api/atlas/sincronizar', {
+    method: 'POST', body: JSON.stringify({})});
+  b.disabled = false; b.innerHTML = original;
+  if (!r.success) { aviso(r.error || 'No se pudo sincronizar', 'danger'); return; }
+  const partes = [];
+  if (r.traidas)            partes.push(r.traidas + ' traída(s) de ATLAS');
+  if (r.llevadas)           partes.push(r.llevadas + ' enviada(s) a ATLAS');
+  if (r.actualizadas_aqui)  partes.push(r.actualizadas_aqui + ' actualizada(s) aquí');
+  if (r.actualizadas_alla)  partes.push(r.actualizadas_alla + ' actualizada(s) allá');
+  aviso(partes.length ? '✅ ' + partes.join(' · ') : '✔ Todo estaba al día.');
+  if (r.conflictos) {
+    aviso('⚠️ ' + r.conflictos + ' persona(s) cambiaron en los dos sistemas. Se conservó lo de ATLAS.', 'warning');
+  }
+  if (partes.length) cargar();
 }
 
 async function atlasGuardar() {

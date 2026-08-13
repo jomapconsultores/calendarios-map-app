@@ -916,7 +916,12 @@ def registrar_directorio(app, ctx):
                                      'RUC registrados en ATLAS. Reemplázalo por el documento '
                                      'real para que el sistema pueda verificarlo.')
                 provisional += 1
-            registro.pop('atlas_id', None)
+            # El identificador de ATLAS viaja hasta el guardado: es lo que deja
+            # ENLAZADA a la persona. Sin él, lo importado sería una copia muerta
+            # —no volvería a cruzar nada— y en la siguiente pasada entraría otra
+            # vez como si fuera alguien nuevo.
+            registro['_atlas_id'] = str(registro.pop('atlas_id', '') or '')
+            registro['_atlas_tabla'] = hallazgo['tabla']
             listos.append(registro)
 
         return jsonify({
@@ -929,6 +934,22 @@ def registrar_directorio(app, ctx):
             'sin_documento': provisional,
             'sector_sugerido': cuerpo.get('sector') or 'Padres de familia',
         })
+
+    @app.route('/directorio/api/atlas/sincronizar', methods=['POST'])
+    @login_required
+    def directorio_atlas_sincronizar():
+        """Cruza AHORA las personas con ATLAS, en los dos sentidos.
+
+        No hace falta pulsarlo para que funcione —corre solo cada cuarto de
+        hora—, pero cuando alguien acaba de corregir un teléfono quiere verlo
+        cruzar ya, no dentro de quince minutos."""
+        if not _puede('importar'):
+            return _sin_permiso('sincronizar personas con ATLAS')
+        grupos = (request.get_json() or {}).get('grupos') or None
+        try:
+            return jsonify(ctx['_atlas'].sincronizar_personas(app, grupos))
+        except Exception as e:
+            return jsonify({'success': False, 'error': f'No se pudo sincronizar: {e}'})
 
     @app.route('/directorio/api/atlas/confirmar', methods=['POST'])
     @login_required
@@ -966,6 +987,20 @@ def registrar_directorio(app, ctx):
             registro['updated_by'] = current_user.id
             registro['source'] = 'atlas'
             registro['source_file'] = f'ATLAS · {grupo}'
+            # Enlace con ATLAS: a partir de aquí esta persona se sincroniza sola
+            # en los dos sentidos. La huella se guarda ya, con los mismos campos
+            # y el mismo cálculo que usa el puente, para que la primera pasada
+            # no crea que todo cambió y lo reescriba entero de vuelta.
+            atlas_id = str(fila.get('_atlas_id') or '')
+            if atlas_id:
+                registro['atlas_persona_id'] = atlas_id
+                registro['atlas_tabla'] = fila.get('_atlas_tabla')
+                registro['atlas_hash'] = ctx['_atlas']._huella_personas({
+                    'nombres': registro.get('first_name'), 'apellidos': registro.get('last_name'),
+                    'documento': registro.get('doc_number'), 'email': registro.get('email'),
+                    'movil': registro.get('mobile'), 'fijo': registro.get('landline'),
+                    'direccion': registro.get('home_address'), 'ciudad': registro.get('city')})
+                registro['atlas_synced_at'] = datetime.now(timezone.utc).isoformat()
             guardado = db().insert('contacts', registro)
             if guardado:
                 ya[numero] = guardado[0]

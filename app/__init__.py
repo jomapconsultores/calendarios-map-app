@@ -5326,5 +5326,10 @@ def create_app():
         start_google_autoheal(app, interval_min=60)
         # Puente con la agenda de ATLAS, en los dos sentidos.
         _atlas.arrancar_autosync(app, TIMEZONE, interval_min=10)
+        # Puente con las PERSONAS de ATLAS (padres, socios, docentes), también
+        # en los dos sentidos. Cada cuarto de hora y no cada diez minutos: los
+        # datos de una persona cambian mucho menos que una agenda, y cada
+        # pasada lee las tablas enteras de los dos lados.
+        _atlas.arrancar_autosync_personas(app, interval_min=15)
 
     return app

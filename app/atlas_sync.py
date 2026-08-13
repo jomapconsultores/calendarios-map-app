@@ -475,3 +475,261 @@ def a_contacto(fila, etiquetas):
         'tags': etiquetas,
         'atlas_id': fila.get('id'),
     }, None
+
+
+# ============================================================
+#  SINCRONIZACIÓN DE PERSONAS EN LOS DOS SENTIDOS
+#
+#  Mismo mecanismo que ya usan las reuniones (ver `_sincronizar`), porque ya
+#  está probado: se guarda una HUELLA del contenido en la última pasada y se
+#  compara contra los dos lados.
+#
+#      la huella de ATLAS ya no coincide  -> cambió allá
+#      la huella nuestra ya no coincide   -> cambió aquí
+#      no coincide ninguna                -> cambiaron los dos: manda ATLAS
+#
+#  Manda ATLAS por la misma razón que en las reuniones: es el sistema donde esos
+#  datos nacen. El teléfono de un padre de familia lo actualiza la secretaría
+#  del colegio; aquí se consulta y se corrige, pero la fuente es aquélla.
+#
+#  NO SE BORRA NADA, en ningún sentido. Que una fila desaparezca de un lado no
+#  prueba que deba desaparecer del otro —puede ser un filtro, un permiso o un
+#  error—, y un padre de familia borrado en el sistema del colegio por un
+#  descuido de este lado no se recupera con un «deshacer».
+# ============================================================
+
+# Campos que cruzan el puente. Sólo estos entran en la huella: así, un cambio en
+# algo que NO se sincroniza —el sector, una nota interna, la verificación del
+# SRI— no se confunde con una modificación que haya que propagar.
+CAMPOS_PUENTE = ('nombres', 'apellidos', 'documento', 'email', 'movil', 'fijo',
+                 'direccion', 'ciudad')
+
+# Cómo se llama cada campo del puente en NUESTRA tabla de contactos.
+NUESTRO_NOMBRE = {
+    'nombres':   'first_name',
+    'apellidos': 'last_name',
+    'documento': 'doc_number',
+    'email':     'email',
+    'movil':     'mobile',
+    'fijo':      'landline',
+    'direccion': 'home_address',
+    'ciudad':    'city',
+}
+
+# Etiqueta con la que queda marcado en el Directorio cada colectivo.
+ETIQUETAS_POR_GRUPO = {
+    'representantes': 'atlas,representante',
+    'estudiantes':    'atlas,estudiante',
+    'docentes':       'atlas,docente',
+    'usuarios':       'atlas,usuario',
+}
+
+
+def _huella_personas(valores):
+    """Huella estable de los campos que cruzan. Se compara en minúsculas y sin
+    espacios de sobra: que alguien escriba «  Ana » en vez de «Ana» no es un
+    cambio que merezca cruzar el puente y volver."""
+    crudo = '|'.join(str(valores.get(c) or '').strip().lower() for c in CAMPOS_PUENTE)
+    return hashlib.sha256(crudo.encode('utf-8')).hexdigest()[:32]
+
+
+def mapa_de_columnas(columnas):
+    """Qué columna de ATLAS corresponde a cada campo del puente, EN ESTA tabla.
+
+    El esquema de ATLAS no consta en este proyecto, así que no se adivina: se
+    mira qué columnas trae de verdad la tabla y se elige, para cada campo, el
+    primer nombre conocido que exista. Lo que no aparezca queda FUERA del puente
+    en lugar de escribirse en una columna equivocada. Escribir en la columna que
+    no era, en la base de otro sistema, es de lo peor que puede hacer un
+    puente."""
+    presentes = set(columnas or [])
+    mapa = {}
+    for campo in CAMPOS_PUENTE:
+        for candidata in EQUIVALENCIAS[campo]:
+            if candidata in presentes:
+                mapa[campo] = candidata
+                break
+    return mapa
+
+
+def _valores_de_atlas(fila, mapa):
+    return {campo: str(fila.get(mapa[campo]) or '').strip() if mapa.get(campo) else ''
+            for campo in CAMPOS_PUENTE}
+
+
+def _valores_de_contacto(contacto):
+    return {campo: str(contacto.get(NUESTRO_NOMBRE[campo]) or '').strip()
+            for campo in CAMPOS_PUENTE}
+
+
+def sincronizar_personas(app, grupos=None, deadline_segundos=90):
+    """Cruza las personas de ATLAS con el Directorio, en los dos sentidos.
+
+    `grupos` limita a ciertos colectivos ('representantes', 'docentes'...). Sin
+    él se sincronizan los que YA tienen personas enlazadas aquí: que el sistema
+    empiece a traerse por su cuenta a todo un colectivo que nadie pidió sería
+    una sorpresa desagradable. Estrenar un colectivo es una decisión de la
+    persona que administra, y se hace desde el Directorio."""
+    if not disponible():
+        return {'success': False, 'error': 'Falta ATLAS_SUPABASE_KEY en el servidor'}
+    if not _lock.acquire(blocking=False):
+        return {'success': False, 'error': 'Ya hay una sincronización en curso'}
+    try:
+        return _sincronizar_personas(app, grupos, deadline_segundos)
+    finally:
+        _lock.release()
+
+
+def _sincronizar_personas(app, grupos, deadline_segundos):
+    limite = time.monotonic() + deadline_segundos
+    res = {'success': True, 'traidas': 0, 'llevadas': 0, 'actualizadas_aqui': 0,
+           'actualizadas_alla': 0, 'conflictos': 0, 'errores': [], 'grupos': []}
+
+    exploracion = explorar()
+    if not exploracion.get('success'):
+        return exploracion
+    ahora = datetime.now(timezone.utc).isoformat()
+
+    for grupo, hallazgo in (exploracion.get('grupos') or {}).items():
+        if grupos and grupo not in grupos:
+            continue
+        tabla = hallazgo['tabla']
+        mapa = mapa_de_columnas(hallazgo.get('columnas'))
+
+        contactos = app.supabase.get('contacts', {'atlas_tabla': tabla}, select='*') or []
+        if not contactos and not grupos:
+            continue          # colectivo que nadie ha estrenado todavía
+        por_id = {str(c['atlas_persona_id']): c for c in contactos
+                  if c.get('atlas_persona_id')}
+
+        try:
+            filas = leer_personas(tabla)
+        except Exception as e:
+            res['errores'].append(f'{grupo}: no se pudo leer ATLAS ({str(e)[:120]})')
+            continue
+
+        # ── 1. ATLAS → sistema ────────────────────────────────────────────
+        # Los que esta fase acaba de reescribir con el contenido de ATLAS. La
+        # fase 2 trabaja sobre la lectura ANTERIOR, así que sin esto vería su
+        # copia vieja, la creería «cambiada aquí» y la devolvería a ATLAS: el
+        # conflicto acabaría ganándolo justo quien no debía.
+        resueltos = set()
+        for fila in filas:
+            if time.monotonic() > limite:
+                res['errores'].append(f'{grupo}: se agotó el tiempo')
+                break
+            pid = fila.get('id')
+            if pid is None:
+                continue
+            pid = str(pid)
+            valores = _valores_de_atlas(fila, mapa)
+            if not (valores['nombres'] or valores['apellidos']):
+                continue
+            huella_alla = _huella_personas(valores)
+            contacto = por_id.get(pid)
+
+            if not contacto:
+                registro, motivo = a_contacto(fila, ETIQUETAS_POR_GRUPO.get(grupo, 'atlas'))
+                if motivo:
+                    continue          # sin forma de contacto: no entra al directorio
+                registro.pop('atlas_id', None)
+                if not registro.get('doc_number'):
+                    registro['doc_number'] = f'ATLAS-{grupo[:3].upper()}-{pid}'
+                registro.update({'atlas_persona_id': pid, 'atlas_tabla': tabla,
+                                 'atlas_hash': huella_alla, 'atlas_synced_at': ahora,
+                                 'source': 'atlas', 'source_file': f'ATLAS · {grupo}'})
+                if app.supabase.insert('contacts', registro):
+                    res['traidas'] += 1
+                else:
+                    res['errores'].append(f'{grupo}: no se pudo crear a la persona {pid}')
+                continue
+
+            huella_guardada = contacto.get('atlas_hash')
+            cambio_alla = huella_alla != huella_guardada
+            cambio_aqui = _huella_personas(_valores_de_contacto(contacto)) != huella_guardada
+            if cambio_alla:
+                if cambio_aqui:
+                    res['conflictos'] += 1        # cambiaron los dos: manda ATLAS
+                cambios = {NUESTRO_NOMBRE[c]: (valores[c] or None)
+                           for c in CAMPOS_PUENTE if mapa.get(c)}
+                cambios.update({'atlas_hash': huella_alla, 'atlas_synced_at': ahora})
+                if app.supabase.update('contacts', contacto['id'], cambios):
+                    res['actualizadas_aqui'] += 1
+                    resueltos.add(pid)
+                else:
+                    res['errores'].append(f'{grupo}: no se pudo actualizar a {pid}')
+
+        # ── 2. sistema → ATLAS ────────────────────────────────────────────
+        for contacto in contactos:
+            if time.monotonic() > limite:
+                break
+            pid = str(contacto.get('atlas_persona_id') or '')
+            if pid and pid in resueltos:
+                continue                      # ya mandó ATLAS en la fase 1
+            valores = _valores_de_contacto(contacto)
+            huella_aqui = _huella_personas(valores)
+            if pid and huella_aqui == contacto.get('atlas_hash'):
+                continue                      # de este lado no cambió nada
+            cuerpo = {mapa[c]: (valores[c] or None) for c in CAMPOS_PUENTE if mapa.get(c)}
+            if not cuerpo:
+                continue
+            try:
+                if pid:
+                    if _atlas_update(tabla, pid, cuerpo):
+                        app.supabase.update('contacts', contacto['id'],
+                                            {'atlas_hash': huella_aqui,
+                                             'atlas_synced_at': ahora})
+                        res['actualizadas_alla'] += 1
+                else:
+                    creada = _atlas_insert(tabla, cuerpo)
+                    nuevo = str((creada or {}).get('id') or '')
+                    if nuevo:
+                        app.supabase.update('contacts', contacto['id'],
+                                            {'atlas_persona_id': nuevo, 'atlas_tabla': tabla,
+                                             'atlas_hash': huella_aqui,
+                                             'atlas_synced_at': ahora})
+                        res['llevadas'] += 1
+            except Exception as e:
+                res['errores'].append(f'{grupo}: {str(e)[:120]}')
+
+        res['grupos'].append({
+            'grupo': grupo, 'tabla': tabla,
+            'campos_puente': sorted(mapa.keys()),
+            # Lo que ATLAS no tiene con ningún nombre conocido. Se informa en vez
+            # de callarlo: un campo que no cruza y nadie sabe que no cruza es un
+            # dato que alguien creerá haber guardado.
+            'sin_equivalencia': sorted(set(CAMPOS_PUENTE) - set(mapa)),
+        })
+    return res
+
+
+def arrancar_autosync_personas(app, interval_min=15):
+    """Cruza las personas cada cierto tiempo, en segundo plano.
+
+    Mismo candado de archivo que el de las reuniones: con dos workers de
+    gunicorn, sin él la sincronización correría por duplicado y los dos procesos
+    se pisarían escribiendo en ATLAS."""
+    try:
+        import fcntl, tempfile
+        ruta = os.path.join(tempfile.gettempdir(), 'atlas_sync_personas.lock')
+        archivo = open(ruta, 'w')
+        fcntl.flock(archivo, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        app._atlas_personas_lock = archivo
+    except Exception:
+        return
+
+    def _bucle():
+        time.sleep(150)      # se deja arrancar la aplicación antes de nada
+        while True:
+            try:
+                r = sincronizar_personas(app)
+                if r.get('success') and any(r.get(k) for k in
+                                            ('traidas', 'llevadas', 'actualizadas_aqui',
+                                             'actualizadas_alla')):
+                    print(f'[atlas-personas] {r}')
+            except Exception as e:
+                print(f'[atlas-personas] {e}')
+            time.sleep(interval_min * 60)
+
+    threading.Thread(target=_bucle, name='atlas-personas', daemon=True).start()
+    print(f'[atlas-personas] activo (cada {interval_min} min)')
