@@ -3157,129 +3157,20 @@ def create_app():
         return redirect('/admin/users')
 
     # ============================================================
-    #  ADMIN — ROLES (catálogo de roles: módulos + calendarios + proyectos + cuentas MS)
+    #  ADMIN — ROLES: retirado
+    #
+    #  El módulo de roles se quitó por pedido expreso. Antes de hacerlo se
+    #  traspasó a permisos PERSONALES todo lo que cada rol concedía —módulos,
+    #  calendarios, proyectos y cuentas de Microsoft—, porque Cristina y Johanna
+    #  sacaban de ahí el cien por cien de sus accesos: retirarlo sin más las
+    #  habría dejado sin un solo módulo ni calendario.
+    #
+    #  Las TABLAS (roles, user_roles, role_calendars…) NO se borran. El código
+    #  las sigue leyendo y sumando en `grants_efectivos`, así que si algún día
+    #  se quiere volver atrás basta con reponer estas pantallas: los datos
+    #  siguen ahí. Quitar una función es reversible; borrar los datos de quién
+    #  podía hacer qué, no.
     # ============================================================
-    @app.route('/admin/roles')
-    @login_required
-    def admin_roles():
-        if not is_admin():
-            return redirect('/dashboard')
-        roles = app.supabase.get('roles', select='id,name,description,modules,level,created_at') or []
-        all_cals = _get_calendar_config(app)
-        all_projects = app.supabase.get('projects', select='id,name') or []
-        ms_accounts = [t.get('email','') for t in (app.supabase.get('ms_tokens', select='email') or []) if t.get('email')]
-        cal_ids   = app.supabase.get('role_calendars',   select='role_id,calendar_id') or []
-        proj_ids  = app.supabase.get('role_projects',    select='role_id,project_id') or []
-        ms_ids    = app.supabase.get('role_ms_accounts', select='role_id,ms_email') or []
-        task_ids  = app.supabase.get('role_tasks',       select='role_id,task_id') or []
-        cals_by_role = defaultdict(set); projs_by_role = defaultdict(set)
-        ms_by_role = defaultdict(set);   tasks_by_role = defaultdict(set)
-        for r in cal_ids:  cals_by_role[r['role_id']].add(r['calendar_id'])
-        for r in proj_ids: projs_by_role[r['role_id']].add(r['project_id'])
-        for r in ms_ids:   ms_by_role[r['role_id']].add(r['ms_email'])
-        for r in task_ids: tasks_by_role[r['role_id']].add(r['task_id'])
-        user_roles_all = app.supabase.get('user_roles', select='user_id,role_id') or []
-        users_by_role = defaultdict(int)
-        for ur in user_roles_all:
-            users_by_role[ur['role_id']] += 1
-        for r in roles:
-            r['modules_list']  = [m for m in (r.get('modules') or '').split(',') if m]
-            r['level']         = r.get('level') or DEFAULT_ROLE_LEVEL
-            r['calendar_ids']  = cals_by_role.get(r['id'], set())
-            r['project_ids']   = projs_by_role.get(r['id'], set())
-            r['ms_emails']     = ms_by_role.get(r['id'], set())
-            r['task_ids']      = tasks_by_role.get(r['id'], set())
-            r['user_count']    = users_by_role.get(r['id'], 0)
-        # Actividades (tareas de proyecto) agrupadas por proyecto, para marcarlas.
-        all_tasks = app.supabase.get('tasks', select='id,title,project_id,phase') or []
-        proj_name = {p['id']: p['name'] for p in all_projects}
-        activities_by_project = defaultdict(list)
-        for t in all_tasks:
-            if t.get('project_id') and t['project_id'] in proj_name:
-                activities_by_project[t['project_id']].append(t)
-        projects_activities = [
-            {'id': pid, 'name': proj_name[pid],
-             'tasks': sorted(activities_by_project[pid], key=lambda x: (x.get('phase') or '', x.get('title') or ''))}
-            for pid in proj_name if activities_by_project.get(pid)
-        ]
-        return render_template('admin_roles.html', roles=roles, calendarios=all_cals,
-                               projects=all_projects, ms_accounts=ms_accounts,
-                               all_modules=ALL_MODULES, role_levels=ROLE_LEVELS,
-                               projects_activities=projects_activities)
-
-    @app.route('/admin/roles/create', methods=['POST'])
-    @login_required
-    @csrf_protect
-    def admin_roles_create():
-        if not is_admin(): return jsonify({'success': False})
-        name = _sanitize(request.form.get('name', ''), 150)
-        if not name:
-            flash('El rol necesita un nombre.', 'danger')
-            return redirect('/admin/roles')
-        level = request.form.get('level', DEFAULT_ROLE_LEVEL)
-        if level not in ROLE_LEVEL_IDS:
-            level = DEFAULT_ROLE_LEVEL
-        data = {
-            'name': name,
-            'description': _sanitize(request.form.get('description', ''), 500),
-            'level': level,
-            'modules': ','.join(request.form.getlist('modules')),
-            'created_by': str(current_user.id),
-        }
-        created = app.supabase.insert('roles', data)
-        role_id = created[0]['id'] if created else None
-        if role_id:
-            for cid in request.form.getlist('calendars'):
-                app.supabase.insert_ignore('role_calendars', {'role_id': role_id, 'calendar_id': cid})
-            for pid in request.form.getlist('projects'):
-                app.supabase.insert_ignore('role_projects', {'role_id': role_id, 'project_id': pid})
-            for ms in request.form.getlist('ms_accounts'):
-                app.supabase.insert_ignore('role_ms_accounts', {'role_id': role_id, 'ms_email': ms})
-            _save_role_activities(app, role_id, request.form.getlist('activities'))
-        flash('Rol creado', 'success')
-        return redirect('/admin/roles')
-
-    @app.route('/admin/roles/update/<rid>', methods=['POST'])
-    @login_required
-    @csrf_protect
-    def admin_roles_update(rid):
-        if not is_admin(): return jsonify({'success': False})
-        name = _sanitize(request.form.get('name', ''), 150)
-        if not name:
-            flash('El rol necesita un nombre.', 'danger')
-            return redirect('/admin/roles')
-        level = request.form.get('level', DEFAULT_ROLE_LEVEL)
-        if level not in ROLE_LEVEL_IDS:
-            level = DEFAULT_ROLE_LEVEL
-        app.supabase.update('roles', rid, {
-            'name': name,
-            'description': _sanitize(request.form.get('description', ''), 500),
-            'level': level,
-            'modules': ','.join(request.form.getlist('modules')),
-        })
-        for tbl, field, values in (
-            ('role_calendars',   'calendar_id', request.form.getlist('calendars')),
-            ('role_projects',    'project_id',  request.form.getlist('projects')),
-            ('role_ms_accounts', 'ms_email',    request.form.getlist('ms_accounts')),
-        ):
-            for row in app.supabase.get(tbl, {'role_id': rid}, select='id'):
-                app.supabase.delete(tbl, row['id'])
-            for v in values:
-                app.supabase.insert_ignore(tbl, {'role_id': rid, field: v})
-        _save_role_activities(app, rid, request.form.getlist('activities'), replace=True)
-        _role_cache.invalidate(rid)
-        flash('Rol actualizado', 'success')
-        return redirect('/admin/roles')
-
-    @app.route('/admin/roles/delete/<rid>', methods=['POST'])
-    @login_required
-    @csrf_protect
-    def admin_roles_delete(rid):
-        if not is_admin(): return jsonify({'success': False})
-        app.supabase.delete('roles', rid)
-        _role_cache.invalidate(rid)
-        flash('Rol eliminado', 'success')
-        return redirect('/admin/roles')
 
     # ============================================================
     #  ADMIN — DATABASE

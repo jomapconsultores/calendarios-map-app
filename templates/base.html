@@ -15,7 +15,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap">
 <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-<link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=23">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}?v=24">
 {# Ajustes de teléfono (muesca del iPhone, zoom de Safari, tablas anchas).
    Va después de style.css para poder corregirlo sin recurrir a !important. #}
 <link rel="stylesheet" href="{{ url_for('static', filename='css/movil.css') }}?v=5">
@@ -47,7 +47,6 @@
   {% elif path.startswith('/directorio') %}{% set ns.active_key = 'directorio' %}
   {% elif path.startswith('/profile') %}{% set ns.active_key = 'profile' %}
   {% elif path.startswith('/admin/users') %}{% set ns.active_key = 'users' %}
-  {% elif path.startswith('/admin/roles') %}{% set ns.active_key = 'roles' %}
   {% elif path.startswith('/admin/database') %}{% set ns.active_key = 'database' %}
   {% elif path.startswith('/admin/browser-sync') %}{% set ns.active_key = 'browser-sync' %}
   {% endif %}
@@ -125,9 +124,6 @@
         <a href="/admin/users" class="rail-btn {{ 'active' if ns.active_key == 'users' }}" data-panel="users" data-group title="Usuarios — Altas, bajas y permisos">
           <span class="rail-ic">👥</span><span class="rail-label">Usuarios</span>
           <span class="nav-badge tono-aviso" data-badge="usuarios" title="Solicitudes por revisar"></span>
-        </a>
-        <a href="/admin/roles" class="rail-btn {{ 'active' if ns.active_key == 'roles' }}" data-panel="roles" data-group title="Roles — Qué habilita cada rol de negocio">
-          <span class="rail-ic">🎛️</span><span class="rail-label">Roles</span>
         </a>
         <a href="/admin/database" class="rail-btn {{ 'active' if ns.active_key == 'database' }}" data-panel="database" data-group title="Catálogos — Tablas internas del sistema">
           <span class="rail-ic">🗄️</span><span class="rail-label">Catálogos</span>
@@ -247,15 +243,6 @@
             <li><a href="/admin/users#registrados"><span class="pl-t">👤 Registrados</span><span class="pl-d">Usuarios activos del sistema</span></a></li>
             <li><a href="/admin/users#pending"><span class="pl-t">📨 Solicitudes <span class="nav-badge tono-aviso" data-badge="usuarios"></span></span><span class="pl-d">Accesos por aprobar</span></a></li>
           </ul>
-        </section>
-
-        <section class="panel-page {{ 'active' if ns.active_key == 'roles' }}" data-page="roles">
-          <div class="panel-head"><span class="panel-head-ic">🎛️</span><span><span class="panel-title">Roles</span><span class="panel-sub">Qué habilita cada rol</span></span></div>
-          <div class="panel-note">
-            Cada rol es un paquete de módulos, calendarios, proyectos y cuentas de
-            Microsoft. Un usuario puede tener varios y alternar entre ellos desde
-            la barra superior.
-          </div>
         </section>
 
         <section class="panel-page {{ 'active' if ns.active_key == 'database' }}" data-page="database">
