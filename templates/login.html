@@ -1,11 +1,11 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="es">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-    <title>Iniciar sesiÃ³n - calendarios-map</title>
-    {# Cabecera propia: esta pantalla no extiende base.html, asÃ­ que la fuente
-       hay que pedirla tambiÃ©n aquÃ­. Y con versiÃ³n en el CSS, como el resto: sin
+    <title>Iniciar sesión - calendarios-map</title>
+    {# Cabecera propia: esta pantalla no extiende base.html, así que la fuente
+       hay que pedirla también aquí. Y con versión en el CSS, como el resto: sin
        ella el navegador sirve la copia vieja y los cambios no se ven. #}
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -32,9 +32,9 @@
     <div class="auth-card">
       <div class="card border-0 shadow-lg"><div class="card-body p-4 p-md-5">
         <div class="auth-logo-img">
-          <img src="{{ url_for('static', filename='images/map_logo.png') }}" alt="MAP ConsultorÃ­a &amp; AsesorÃ­a">
+          <img src="{{ url_for('static', filename='images/map_logo.png') }}" alt="MAP Consultoría &amp; Asesoría">
         </div>
-        <p class="text-center text-muted small mb-4">Inicia sesiÃ³n para continuar</p>
+        <p class="text-center text-muted small mb-4">Inicia sesión para continuar</p>
 
         {% with messages = get_flashed_messages(with_categories=true) %}
           {% if messages %}{% for category, message in messages %}
@@ -44,8 +44,8 @@
 
         <form method="POST">
           <div class="mb-3"><label class="form-label">Email</label><input type="email" name="email" class="form-control" required></div>
-          <div class="mb-3"><label class="form-label">ContraseÃ±a</label><input type="password" name="password" class="form-control" required></div>
-          <button type="submit" class="btn btn-primary w-100 rounded-pill">Iniciar sesiÃ³n</button>
+          <div class="mb-3"><label class="form-label">Contraseña</label><input type="password" name="password" class="form-control" required></div>
+          <button type="submit" class="btn btn-primary w-100 rounded-pill">Iniciar sesión</button>
         </form>
 
         {% if webauthn_available or face_login_enabled %}
@@ -55,30 +55,30 @@
         {% endif %}
         {% if webauthn_available %}
         <button type="button" id="btnFaceId" class="btn btn-outline-primary w-100 rounded-pill mb-2"
-          onclick="waLogin()">ðŸ”“ Entrar con Face ID / huella</button>
+          onclick="waLogin()">🔓 Entrar con Face ID / huella</button>
         {% endif %}
         {% if face_login_enabled %}
         <button type="button" id="btnFaceCam" class="btn btn-outline-secondary w-100 rounded-pill"
-          onclick="faceLogin()">ðŸ“· Entrar con rostro (cÃ¡mara)</button>
+          onclick="faceLogin()">📷 Entrar con rostro (cámara)</button>
         {% endif %}
 
-        {# El registro pÃºblico estÃ¡ cerrado: aquÃ­ entra quien el administrador
+        {# El registro público está cerrado: aquí entra quien el administrador
            da de alta. Se explica en vez de dejar un enlace que ya no lleva a
            ninguna parte. #}
         <div class="text-center mt-3 small text-muted">
-          Â¿No tienes cuenta? El acceso lo concede el <strong>administrador</strong>.
+          ¿No tienes cuenta? El acceso lo concede el <strong>administrador</strong>.
         </div>
         <div class="text-center mt-2">
           <a href="#" class="small text-muted"
-             onclick="var o=document.getElementById('olvide');o.style.display=o.style.display==='none'?'block':'none';return false;">Â¿Olvidaste tu contraseÃ±a?</a>
+             onclick="var o=document.getElementById('olvide');o.style.display=o.style.display==='none'?'block':'none';return false;">¿Olvidaste tu contraseña?</a>
           <div id="olvide" style="display:none" class="alert alert-light border small text-start mt-2 mb-0">
-            Por seguridad no se envÃ­an contraseÃ±as por correo. Pide al <strong>administrador</strong>
-            que entre en <em>Usuarios</em> y use <em>Restablecer</em>: te entregarÃ¡ una contraseÃ±a
-            temporal de un solo uso, vÃ¡lida 72 horas, que deberÃ¡s cambiar apenas ingreses.
+            Por seguridad no se envían contraseñas por correo. Pide al <strong>administrador</strong>
+            que entre en <em>Usuarios</em> y use <em>Restablecer</em>: te entregará una contraseña
+            temporal de un solo uso, válida 72 horas, que deberás cambiar apenas ingreses.
           </div>
         </div>
       </div></div>
-      <p class="text-center text-white-50 small mt-3 mb-0">Â© 2026 Â· Marco Antonio Posligua San MartÃ­n</p>
+      <p class="text-center text-white-50 small mt-3 mb-0">© 2026 · Marco Antonio Posligua San Martín</p>
     </div>
   </div>
   <script src="{{ url_for('static', filename='js/password-toggle.js') }}"></script>
@@ -93,4 +93,3 @@
   </script>
 </body>
 </html>
-
