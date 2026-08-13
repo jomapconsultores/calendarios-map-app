@@ -960,9 +960,13 @@ textarea.form-control { resize: vertical; min-height: 70px; }
 
 /* ---- Tarjetas de cifras ---- */
 .stats-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 16px; }
+/* Más juntas y más bajas. Ocupaban tanto alto que en un portátil apenas
+   quedaban dos filas de tabla visibles: primero cuatro cifras enormes y
+   después, si quedaba sitio, los datos por los que se abre la pantalla. La
+   cifra sigue siendo lo primero que se lee, pero ya no a costa de todo. */
 .stat-card {
-    background: var(--white); border-radius: 14px; padding: 13px 16px;
-    border: 1.5px solid var(--border); display: flex; flex-direction: column; gap: 3px;
+    background: var(--white); border-radius: 14px; padding: 10px 14px;
+    border: 1.5px solid var(--border); display: flex; flex-direction: column; gap: 2px;
     box-shadow: 0 1px 3px rgba(0,0,0,.05); transition: var(--transition);
     position: relative; overflow: hidden;
 }
@@ -971,8 +975,8 @@ textarea.form-control { resize: vertical; min-height: 70px; }
     background: var(--gray); opacity: .55;
 }
 .stat-card:hover { transform: translateY(-1px); box-shadow: 0 6px 16px rgba(0,0,0,.07); }
-.stat-card .sc-num { font-size: 1.5rem; font-weight: 700; line-height: 1; color: var(--dark); }
-.stat-card .sc-lbl { font-size: .75rem; color: var(--gray); font-weight: 500; }
+.stat-card .sc-num { font-size: 1.25rem; font-weight: 700; line-height: 1; color: var(--dark); }
+.stat-card .sc-lbl { font-size: .6875rem; color: var(--gray); font-weight: 500; }
 .stat-card.info::before    { background: var(--primary); opacity: 1; }
 .stat-card.success::before { background: #10b981; opacity: 1; }
 .stat-card.warning::before { background: #f59e0b; opacity: 1; }
