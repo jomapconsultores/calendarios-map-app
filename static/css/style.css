@@ -27,6 +27,28 @@
     --radius: 14px;
     --radius-sm: 10px;
     --transition: all .18s ease;
+
+    /* --- Escala tipográfica ------------------------------------------------
+       Había 41 tamaños distintos en 71 declaraciones: .62, .63, .65, .655,
+       .66, .67 y .68rem convivían en la misma hoja — siete tamaños dentro de un
+       mismo píxel. Nadie los distingue de uno en uno; lo que se nota es el
+       conjunto, que queda desalineado sin que se sepa por qué.
+
+       Ahora son diez escalones. La regla al escribir CSS nuevo: usa uno de
+       estos. Si ninguno sirve, el problema casi siempre es otro (peso, color o
+       espacio), no un tamaño intermedio.
+
+       10px  11px  12px  13px  14px  16px  18px  20px  24px  40px            */
+    --fs-3xs:  .625rem;    /* rótulos de sección, insignias diminutas */
+    --fs-2xs:  .6875rem;   /* pies de tarjeta, texto auxiliar         */
+    --fs-xs:   .75rem;     /* etiquetas de formulario, tablas densas  */
+    --fs-sm:   .8125rem;   /* texto secundario                        */
+    --fs-md:   .875rem;    /* texto normal de la interfaz             */
+    --fs-lg:   1rem;       /* títulos de tarjeta                      */
+    --fs-xl:   1.125rem;   /* iconos del riel                         */
+    --fs-2xl:  1.25rem;    /* encabezados de sección                  */
+    --fs-3xl:  1.5rem;     /* cifras grandes                          */
+    --fs-4xl:  2.5rem;     /* ilustración de estado vacío             */
     --rail-w: 88px;
     --panel-w: 236px;
     --sidebar-w: calc(var(--rail-w) + var(--panel-w));
@@ -119,7 +141,7 @@ body {
     content: ''; flex: 1; height: 1px; background: var(--side-line);
 }
 .rail-section span {
-    font-size: .48rem; font-weight: 800; text-transform: uppercase;
+    font-size: .625rem; font-weight: 800; text-transform: uppercase;
     letter-spacing: .9px; color: var(--side-mute); white-space: nowrap;
 }
 
@@ -139,9 +161,9 @@ body {
     transition: all .15s ease;
     flex-shrink: 0;
 }
-.rail-btn .rail-ic { font-size: 1.15rem; line-height: 1; }
+.rail-btn .rail-ic { font-size: 1.125rem; line-height: 1; }
 .rail-btn .rail-label {
-    font-size: .575rem; font-weight: 600; line-height: 1.2;
+    font-size: .625rem; font-weight: 600; line-height: 1.2;
     letter-spacing: .1px; word-break: break-word; hyphens: auto;
 }
 .rail-btn:hover { background: var(--side-hover); color: var(--side-strong); }
@@ -169,7 +191,7 @@ body {
     width: 38px; height: 38px; border-radius: 50%;
     background: linear-gradient(135deg, #6366f1, #8b5cf6);
     color: #fff; display: grid; place-items: center;
-    font-weight: 700; font-size: .78rem; text-decoration: none;
+    font-weight: 700; font-size: .75rem; text-decoration: none;
     flex-shrink: 0;
 }
 .rail-logout {
@@ -195,7 +217,7 @@ body {
 .panel-wordmark {
     display: block;
     padding: 16px 16px 12px;
-    color: var(--side-txt); font-size: .82rem; font-weight: 600; letter-spacing: .3px;
+    color: var(--side-txt); font-size: .8125rem; font-weight: 600; letter-spacing: .3px;
     text-decoration: none;
     border-bottom: 1px solid var(--side-line);
     flex-shrink: 0;
@@ -218,10 +240,10 @@ body {
     margin-bottom: 4px;
     border-bottom: 1px solid var(--side-line);
 }
-.panel-head-ic { font-size: 1.3rem; flex-shrink: 0; }
+.panel-head-ic { font-size: 1.25rem; flex-shrink: 0; }
 .panel-head > span:last-child { display: flex; flex-direction: column; min-width: 0; line-height: 1.25; }
-.panel-title { color: var(--side-strong); font-size: .95rem; font-weight: 700; }
-.panel-sub { color: var(--side-mute); font-size: .68rem; line-height: 1.35; }
+.panel-title { color: var(--side-strong); font-size: 1rem; font-weight: 700; }
+.panel-sub { color: var(--side-mute); font-size: .6875rem; line-height: 1.35; }
 
 .panel-links { list-style: none; margin: 0; padding: 4px 0 0; }
 .panel-links li { margin-bottom: 2px; }
@@ -235,10 +257,10 @@ body {
 }
 .panel-links .pl-t {
     display: flex; align-items: center; gap: 7px;
-    font-size: .81rem; font-weight: 600; line-height: 1.3;
+    font-size: .8125rem; font-weight: 600; line-height: 1.3;
 }
 .panel-links .pl-d {
-    font-size: .655rem; font-weight: 400; line-height: 1.3;
+    font-size: .625rem; font-weight: 400; line-height: 1.3;
     color: var(--side-mute); transition: color .15s ease;
 }
 .panel-links a:hover { background: var(--side-hover); color: var(--side-strong); }
@@ -253,7 +275,7 @@ body {
 .panel-links a.pill-link .pl-t { justify-content: space-between; width: 100%; }
 
 /* Pill de estado (usado en el panel de Integraciones) */
-.nav-pill { font-size: .58rem; font-weight: 700; padding: 2px 8px; border-radius: 999px; flex-shrink: 0; }
+.nav-pill { font-size: .625rem; font-weight: 700; padding: 2px 8px; border-radius: 999px; flex-shrink: 0; }
 
 /* ====== MAIN ====== */
 .app-main {
@@ -282,12 +304,12 @@ body {
    resto de la barra el que se desborda. */
 .topbar .topbar-title { flex: 1 1 200px; min-width: 0; }
 .topbar .page-title {
-    font-size: .98rem; font-weight: 700; color: var(--dark); margin: 0;
+    font-size: 1rem; font-weight: 700; color: var(--dark); margin: 0;
     letter-spacing: -.2px; line-height: 1.25;
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .topbar .page-sub {
-    font-size: .7rem; color: var(--gray); margin: 0; line-height: 1.3;
+    font-size: .6875rem; color: var(--gray); margin: 0; line-height: 1.3;
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 /* Los botones de la página son los que envuelven cuando falta sitio... */
@@ -320,8 +342,8 @@ body {
     transition: var(--transition); line-height: 1.3;
 }
 .topbar-user:hover { background: #e0e7ff; border-color: var(--primary); color: var(--primary); }
-.topbar-name { display: block; font-size: .78rem; font-weight: 600; white-space: nowrap; max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
-.topbar-role { display: block; font-size: .62rem; font-weight: 500; color: var(--gray); white-space: nowrap; }
+.topbar-name { display: block; font-size: .75rem; font-weight: 600; white-space: nowrap; max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
+.topbar-role { display: block; font-size: .625rem; font-weight: 500; color: var(--gray); white-space: nowrap; }
 .topbar-user:hover .topbar-role { color: var(--primary); }
 
 .menu-toggle {
@@ -330,7 +352,7 @@ body {
     border: none;
     width: 38px; height: 38px;
     border-radius: 10px;
-    font-size: 1.1rem;
+    font-size: 1.125rem;
     color: var(--dark);
     cursor: pointer;
     align-items: center;
@@ -344,7 +366,7 @@ body {
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    font-size: .74rem;
+    font-size: .75rem;
     font-weight: 600;
     padding: 5px 12px;
     border-radius: 999px;
@@ -386,7 +408,7 @@ body {
     border-bottom: 1px solid var(--border);
     font-weight: 700;
     padding: 11px 15px;
-    font-size: .84rem;
+    font-size: .8125rem;
     letter-spacing: -.1px;
 }
 .card-body { padding: 15px; }
@@ -409,12 +431,12 @@ body {
     width: 38px; height: 38px;
     border-radius: 10px;
     display: grid; place-items: center;
-    font-size: 1.05rem;
+    font-size: 1rem;
     margin-bottom: 10px;
 }
-.module-card h6 { font-weight: 700; margin: 0 0 2px; font-size: .84rem; }
-.module-card .m-sub { color: var(--gray); font-size: .73rem; margin: 0; line-height: 1.35; }
-.module-card .m-value { font-size: 1.2rem; font-weight: 800; color: var(--dark); font-variant-numeric: tabular-nums; }
+.module-card h6 { font-weight: 700; margin: 0 0 2px; font-size: .8125rem; }
+.module-card .m-sub { color: var(--gray); font-size: .75rem; margin: 0; line-height: 1.35; }
+.module-card .m-value { font-size: 1.25rem; font-weight: 800; color: var(--dark); font-variant-numeric: tabular-nums; }
 
 /* ============================================
    STAT TILES — fila de indicadores del panel
@@ -447,24 +469,24 @@ body {
 .stat-tile:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
 .stat-label {
     display: block;
-    font-size: .63rem; font-weight: 700; text-transform: uppercase;
+    font-size: .625rem; font-weight: 700; text-transform: uppercase;
     letter-spacing: .7px; color: var(--gray); white-space: nowrap;
 }
 .stat-value {
     display: block;
-    font-size: 1.4rem; font-weight: 800; line-height: 1.15;
+    font-size: 1.5rem; font-weight: 800; line-height: 1.15;
     color: var(--tone-fg, var(--dark));
     font-variant-numeric: tabular-nums; margin-top: 1px;
 }
 .stat-ic {
     width: 33px; height: 33px; border-radius: 9px;
-    display: grid; place-items: center; font-size: .9rem;
+    display: grid; place-items: center; font-size: .875rem;
     background: var(--tone-bg, var(--light)); flex-shrink: 0;
 }
 
 /* Títulos dentro de tarjetas: h6 de Bootstrap sale a 1rem, demasiado
    grande para un panel denso. */
-.card-body h6 { font-size: .845rem; font-weight: 700; color: var(--dark); letter-spacing: -.1px; }
+.card-body h6 { font-size: .875rem; font-weight: 700; color: var(--dark); letter-spacing: -.1px; }
 
 /* Filas "estado por fuente": chip de color + cifra alineada,
    en vez de rellenar la fila entera de color pastel. */
@@ -474,18 +496,18 @@ body {
     border: 1px solid var(--border);
     border-radius: 9px;
     margin-bottom: 6px;
-    font-size: .8rem;
+    font-size: .8125rem;
     transition: var(--transition);
 }
 .src-row:hover { border-color: #cbd5e1; background: #fbfcfe; }
 .src-chip {
     display: inline-flex; align-items: center; gap: 5px;
-    font-size: .7rem; font-weight: 700;
+    font-size: .6875rem; font-weight: 700;
     padding: 3px 9px; border-radius: 999px;
     background: var(--light); color: var(--dark2);
 }
 .src-count { font-weight: 700; color: var(--dark); font-variant-numeric: tabular-nums; white-space: nowrap; }
-.src-count small { font-weight: 500; color: var(--gray); font-size: .72rem; }
+.src-count small { font-weight: 500; color: var(--gray); font-size: .75rem; }
 
 /* Barra de ayuda compacta (reemplaza el bloque tutorial gigante) */
 .hint-bar {
@@ -496,9 +518,9 @@ body {
     border-radius: 10px;
     padding: 10px 14px;
     margin-bottom: 15px;
-    font-size: .775rem; line-height: 1.5; color: var(--gray);
+    font-size: .75rem; line-height: 1.5; color: var(--gray);
 }
-.hint-bar .hint-ic { font-size: .95rem; line-height: 1.4; flex-shrink: 0; }
+.hint-bar .hint-ic { font-size: 1rem; line-height: 1.4; flex-shrink: 0; }
 .hint-bar strong { color: var(--dark2); font-weight: 600; }
 
 /* ============================================
@@ -510,7 +532,7 @@ body {
     padding: 10px 0;
 }
 .navbar-brand { font-weight: 800; font-size: 1.25rem; letter-spacing: -.4px; }
-.navbar .btn { font-weight: 600; font-size: .82rem; padding: 7px 16px; transition: var(--transition); }
+.navbar .btn { font-weight: 600; font-size: .8125rem; padding: 7px 16px; transition: var(--transition); }
 .navbar .btn:hover { transform: translateY(-1px); box-shadow: var(--shadow); }
 
 /* ============================================
@@ -524,13 +546,13 @@ body {
     cursor: pointer;
     transition: var(--transition);
     border-left: 4px solid;
-    font-size: .83rem;
+    font-size: .8125rem;
     font-weight: 600;
     box-shadow: var(--shadow);
     line-height: 1.3;
 }
 .cal-box:hover { transform: translateX(3px); box-shadow: var(--shadow-md); }
-.cal-box .cal-email { font-weight: 400; color: var(--gray); font-size: .7rem; display: block; margin-top: 1px; }
+.cal-box .cal-email { font-weight: 400; color: var(--gray); font-size: .6875rem; display: block; margin-top: 1px; }
 
 /* ============================================
    BUTTONS
@@ -540,7 +562,7 @@ body {
     border-radius: 20px;
     padding: 8px 18px;
     transition: var(--transition);
-    font-size: .84rem;
+    font-size: .8125rem;
     line-height: 1.4;
 }
 .btn:hover { transform: translateY(-1px); box-shadow: var(--shadow); }
@@ -559,7 +581,7 @@ body {
     padding: 10px 20px;
     border: none;
     width: 100%;
-    font-size: .84rem;
+    font-size: .8125rem;
     box-shadow: 0 4px 14px rgba(79,70,229,.35);
     transition: var(--transition);
     cursor: pointer;
@@ -576,18 +598,18 @@ body {
     padding: 10px 12px;
     margin-bottom: 7px;
     border-left: 3px solid var(--warning);
-    font-size: .8rem;
+    font-size: .8125rem;
     box-shadow: var(--shadow);
     transition: var(--transition);
 }
-.pend-item strong { font-size: .82rem; color: var(--dark); }
+.pend-item strong { font-size: .8125rem; color: var(--dark); }
 .pend-item:hover { box-shadow: var(--shadow-md); }
 
 /* ============================================
    FORMS
    ============================================ */
 .form-label {
-    font-size: .7rem;
+    font-size: .6875rem;
     font-weight: 700;
     color: var(--gray);
     text-transform: uppercase;
@@ -598,7 +620,7 @@ body {
 .form-control, .form-select {
     border-radius: var(--radius-sm);
     border: 1.5px solid var(--border);
-    font-size: .85rem;
+    font-size: .875rem;
     padding: 9px 13px;
     transition: var(--transition);
     background: var(--white);
@@ -646,7 +668,7 @@ textarea.form-control { resize: vertical; min-height: 70px; }
 .sug-item {
     padding: 8px 13px;
     cursor: pointer;
-    font-size: .83rem;
+    font-size: .8125rem;
     transition: background .12s;
 }
 .sug-item:hover { background: #eef2ff; }
@@ -661,7 +683,7 @@ textarea.form-control { resize: vertical; min-height: 70px; }
    SECTION LABELS
    ============================================ */
 .section-label {
-    font-size: .68rem;
+    font-size: .6875rem;
     font-weight: 700;
     color: var(--gray);
     text-transform: uppercase;
@@ -678,7 +700,7 @@ textarea.form-control { resize: vertical; min-height: 70px; }
 .fc-button {
     border-radius: 18px !important;
     font-weight: 600 !important;
-    font-size: .78rem !important;
+    font-size: .75rem !important;
     padding: 5px 13px !important;
     transition: all .15s !important;
 }
@@ -687,7 +709,7 @@ textarea.form-control { resize: vertical; min-height: 70px; }
 .fc-button-primary:not(.fc-button-active):not(.fc-prev-button):not(.fc-next-button):hover { transform: translateY(-1px); }
 .fc-event {
     border-radius: 6px !important;
-    font-size: .72rem !important;
+    font-size: .75rem !important;
     font-weight: 600 !important;
     padding: 2px 5px !important;
     border: none !important;
@@ -702,7 +724,7 @@ textarea.form-control { resize: vertical; min-height: 70px; }
 .f-credit {
     text-align: center;
     padding: 14px;
-    font-size: .73rem;
+    font-size: .75rem;
     color: var(--lgray);
     background: var(--white);
     border-top: 1px solid var(--border);
@@ -737,7 +759,7 @@ textarea.form-control { resize: vertical; min-height: 70px; }
 }
 .section-title {
     font-weight: 700;
-    font-size: .88rem;
+    font-size: .875rem;
     color: var(--dark);
     margin-bottom: 11px;
     padding-bottom: 7px;
@@ -747,7 +769,7 @@ textarea.form-control { resize: vertical; min-height: 70px; }
 /* Encabezado de bloque: se usa sobre <h5>, que por defecto sale a 1.25rem */
 .section-heading {
     scroll-margin-top: 74px;
-    font-size: .9rem;
+    font-size: .875rem;
     font-weight: 700;
     color: var(--dark);
     display: flex; align-items: center; gap: 8px;
@@ -757,7 +779,7 @@ textarea.form-control { resize: vertical; min-height: 70px; }
     border: 1.5px solid var(--border);
     border-radius: 6px;
     padding: 5px 8px;
-    font-size: .8rem;
+    font-size: .8125rem;
     width: 100%;
     transition: var(--transition);
 }
@@ -768,7 +790,7 @@ textarea.form-control { resize: vertical; min-height: 70px; }
 }
 .badge-pendiente {
     display: inline-block;
-    font-size: .66rem;
+    font-size: .6875rem;
     font-weight: 700;
     padding: 2px 9px;
     border-radius: 999px;
@@ -791,7 +813,7 @@ textarea.form-control { resize: vertical; min-height: 70px; }
 .cal-check input { width: 18px; height: 18px; cursor: pointer; accent-color: var(--primary); }
 
 .table-sm th {
-    font-size: .67rem;
+    font-size: .6875rem;
     text-transform: uppercase;
     letter-spacing: .5px;
     color: var(--gray);
@@ -800,7 +822,7 @@ textarea.form-control { resize: vertical; min-height: 70px; }
 }
 
 /* Alert improvements */
-.alert { border-radius: var(--radius-sm); border: none; font-size: .85rem; }
+.alert { border-radius: var(--radius-sm); border: none; font-size: .875rem; }
 .alert-warning { background: #fef3c7; color: #92400e; }
 .alert-success { background: #dcfce7; color: #166534; }
 .alert-danger { background: #fee2e2; color: #991b1b; }
@@ -827,17 +849,17 @@ textarea.form-control { resize: vertical; min-height: 70px; }
     .modal-header { padding: 12px 16px; }
 
     .topbar { padding: 8px 14px; min-height: 54px; }
-    .topbar .page-title { font-size: .95rem; }
+    .topbar .page-title { font-size: 1rem; }
     .content { padding: 12px; }
 
-    .cal-box { font-size: .8rem; }
+    .cal-box { font-size: .8125rem; }
     .btn-go { padding: 12px 16px; }
 
     /* FullCalendar mobile */
-    .fc-toolbar-title { font-size: .85rem !important; }
-    .fc-button { font-size: .7rem !important; padding: 4px 9px !important; }
+    .fc-toolbar-title { font-size: .875rem !important; }
+    .fc-button { font-size: .6875rem !important; padding: 4px 9px !important; }
     .fc-header-toolbar { gap: 4px !important; }
-    .fc-event { font-size: .65rem !important; }
+    .fc-event { font-size: .625rem !important; }
 
     /* Stack rows on mobile */
     .row.mb-3 > [class*="col-md"] { margin-bottom: 12px; }
@@ -845,7 +867,7 @@ textarea.form-control { resize: vertical; min-height: 70px; }
 
     /* Module cards */
     .module-card { padding: 16px; }
-    .module-card .m-icon { width: 42px; height: 42px; font-size: 1.2rem; margin-bottom: 10px; }
+    .module-card .m-icon { width: 42px; height: 42px; font-size: 1.25rem; margin-bottom: 10px; }
 
     /* Pend actions */
     .pend-actions .btn { padding: 4px 12px; }
@@ -856,7 +878,7 @@ textarea.form-control { resize: vertical; min-height: 70px; }
 
 @media (max-width: 480px) {
     .topbar-actions .status-pill { display: none; }
-    .topbar-name { max-width: 110px; font-size: .72rem; }
+    .topbar-name { max-width: 110px; font-size: .75rem; }
     .fc-right { display: none !important; }
     .modal-footer { flex-wrap: wrap; gap: 6px; }
     .modal-footer .btn { flex: 1; min-width: 80px; text-align: center; }
@@ -877,10 +899,10 @@ textarea.form-control { resize: vertical; min-height: 70px; }
     padding-bottom: 10px; border-bottom: 1.5px solid var(--border);
 }
 .mod-head h2 {
-    font-size: 1.02rem; font-weight: 700; color: var(--dark);
+    font-size: 1rem; font-weight: 700; color: var(--dark);
     margin: 0; letter-spacing: -.2px;
 }
-.mod-head .mh-sub { font-size: .76rem; color: var(--gray); margin: 2px 0 0; }
+.mod-head .mh-sub { font-size: .75rem; color: var(--gray); margin: 2px 0 0; }
 .mod-head .mh-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 
 /* ---- Tarjetas de cifras ---- */
@@ -896,8 +918,8 @@ textarea.form-control { resize: vertical; min-height: 70px; }
     background: var(--gray); opacity: .55;
 }
 .stat-card:hover { transform: translateY(-1px); box-shadow: 0 6px 16px rgba(0,0,0,.07); }
-.stat-card .sc-num { font-size: 1.6rem; font-weight: 700; line-height: 1; color: var(--dark); }
-.stat-card .sc-lbl { font-size: .73rem; color: var(--gray); font-weight: 500; }
+.stat-card .sc-num { font-size: 1.5rem; font-weight: 700; line-height: 1; color: var(--dark); }
+.stat-card .sc-lbl { font-size: .75rem; color: var(--gray); font-weight: 500; }
 .stat-card.info::before    { background: var(--primary); opacity: 1; }
 .stat-card.success::before { background: #10b981; opacity: 1; }
 .stat-card.warning::before { background: #f59e0b; opacity: 1; }
@@ -918,8 +940,8 @@ textarea.form-control { resize: vertical; min-height: 70px; }
 
 /* ---- Estado vacío ---- */
 .mod-empty { text-align: center; color: var(--gray); padding: 44px 16px; }
-.mod-empty .me-ic { font-size: 2.4rem; margin-bottom: 6px; }
-.mod-empty p { font-size: .88rem; margin: 6px 0 14px; }
+.mod-empty .me-ic { font-size: 2.5rem; margin-bottom: 6px; }
+.mod-empty p { font-size: .875rem; margin: 6px 0 14px; }
 
 /* ============================================
    CONTADORES EN EL MENÚ
@@ -930,7 +952,7 @@ textarea.form-control { resize: vertical; min-height: 70px; }
 .nav-badge {
     display: none; min-width: 18px; height: 18px; padding: 0 5px;
     border-radius: 999px; background: var(--danger); color: #fff;
-    font-size: .62rem; font-weight: 800; line-height: 18px; text-align: center;
+    font-size: .625rem; font-weight: 800; line-height: 18px; text-align: center;
     flex-shrink: 0;
 }
 .nav-badge.show { display: inline-block; }
@@ -949,14 +971,14 @@ textarea.form-control { resize: vertical; min-height: 70px; }
    repite el nombre del módulo ("Ir al panel" estando ya en el panel), se explica
    en una línea qué se hace ahí. Un menú que se apunta a sí mismo es ruido. */
 .panel-note {
-    font-size: .72rem; color: var(--side-mute); line-height: 1.5;
+    font-size: .75rem; color: var(--side-mute); line-height: 1.5;
     padding: 8px 10px; margin-top: 4px;
     background: #ffffff; border-radius: 10px;
     border-left: 2px solid #c7d2fe;
 }
 /* Separador con título dentro de un submenú largo (Catálogos). */
 .panel-group {
-    font-size: .6rem; font-weight: 700; text-transform: uppercase;
+    font-size: .625rem; font-weight: 700; text-transform: uppercase;
     letter-spacing: .08em; color: var(--side-mute);
     padding: 10px 10px 4px; margin-top: 4px;
 }
