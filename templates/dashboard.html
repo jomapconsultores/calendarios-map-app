@@ -83,13 +83,26 @@
                 {% if a.encargado %}<small class="text-muted"> · {{ a.encargado }}</small>{% endif %}
                 <br><small class="text-muted">{{ a.start_time[:16].replace('T', ' ') }}</small>
               </div>
-              <span class="badge {% if a.status == 'confirmed' %}bg-success{% elif a.status == 'pending' %}bg-warning text-dark{% else %}bg-secondary{% endif %}">{{ a.status }}</span>
+              {# El estado se guarda en inglés en la base, pero eso es asunto de
+                 la base. Aquí salía tal cual —«pending», «confirmed»— en mitad
+                 de una pantalla en español. #}
+              <span class="badge {% if a.status == 'confirmed' %}bg-success{% elif a.status == 'pending' %}bg-warning text-dark{% else %}bg-secondary{% endif %}">
+                {{ {'confirmed': 'Confirmada', 'pending': 'Por aprobar', 'cancelled': 'Cancelada'}.get(a.status, a.status) }}
+              </span>
             </div>
           </li>
           {% endfor %}
         </ul>
         {% else %}
-        <p class="text-muted small mb-0">No hay citas en los próximos 7 días.</p>
+        {# La tarjeta se estira para igualar a la de al lado, así que sin citas
+           quedaba un hueco enorme con una línea de texto gris arriba del todo:
+           parecía que faltaba algo por cargar. Un vacío se explica y se ofrece
+           la salida, como ya hace el Cronograma. #}
+        <div class="mod-empty text-center d-flex flex-column justify-content-center h-100 py-4">
+          <div class="me-ic">🗓️</div>
+          <p class="text-muted small mb-3">No tienes citas en los próximos 7 días.</p>
+          <div><a href="/calendar?action=new" class="btn btn-primary btn-sm rounded-pill">+ Agendar una cita</a></div>
+        </div>
         {% endif %}
       </div>
     </div>

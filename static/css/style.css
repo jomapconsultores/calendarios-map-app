@@ -74,6 +74,37 @@
 
 html { scroll-behavior: smooth; }
 
+/* ============================================
+   FOCO VISIBLE
+   ============================================
+   Había cinco reglas de foco en toda la hoja, para tres componentes sueltos.
+   En el resto, quien navega con el teclado —o quien usa el sistema desde un
+   teclado porque el ratón le cuesta— avanzaba a ciegas, sin saber dónde estaba
+   parado. Un sistema no se ve cuidado sólo con el ratón.
+
+   `:focus-visible` y no `:focus`: el anillo aparece al tabular, no al hacer
+   clic, que es lo que molesta y lo que lleva a la gente a quitarlo.
+
+   `:where()` mantiene la especificidad en cero, así que cualquier componente
+   que ya tenga su propio foco sigue mandando sobre esta regla. */
+:where(a, button, [role="button"], input, select, textarea, summary,
+       [tabindex]:not([tabindex="-1"])):focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 2px;
+    border-radius: 6px;
+}
+
+/* Quien pide menos movimiento en su sistema lo pide por algo: mareo, migraña o
+   simplemente para concentrarse. Se respeta. */
+@media (prefers-reduced-motion: reduce) {
+    html { scroll-behavior: auto; }
+    *, *::before, *::after {
+        animation-duration: .01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: .01ms !important;
+    }
+}
+
 body {
     font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
     background: var(--bg);
