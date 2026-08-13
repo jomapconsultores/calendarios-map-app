@@ -831,6 +831,18 @@ def registrar_directorio(app, ctx):
     #
     #  Queda sólo el cruce inmediato, que no duplica nada: adelanta el reloj.
     # ============================================================
+    @app.route('/directorio/api/atlas/tablas', methods=['GET'])
+    @login_required
+    def directorio_atlas_tablas():
+        """Qué tablas y columnas publica ATLAS, preguntándoselo a él.
+
+        Existe porque el puente no encontraba a los padres de familia y desde
+        este lado no había forma de saber si era porque no existen o porque la
+        tabla se llama de otra manera. Con esto se ve, y se deja de apostar."""
+        if not _puede('importar'):
+            return _sin_permiso('consultar la base de ATLAS')
+        return jsonify(ctx['_atlas'].listar_tablas())
+
     @app.route('/directorio/api/atlas/sincronizar', methods=['POST'])
     @login_required
     def directorio_atlas_sincronizar():

@@ -420,6 +420,35 @@ def _primer_valor(fila, claves):
     return ''
 
 
+def listar_tablas():
+    """TODAS las tablas que ATLAS publica, preguntándoselo a él.
+
+    Hasta ahora el puente probaba nombres de una lista: `representantes`,
+    `padres`, `acudientes`... y si ATLAS la llamaba de otra forma, no encontraba
+    nada y no había manera de saber por qué desde este lado. Adivinar el nombre
+    de una tabla ajena es una apuesta, y una apuesta no es una integración.
+
+    PostgREST publica en su raíz el catálogo de lo que expone. Se le pregunta y
+    se acabó la adivinanza."""
+    if not disponible():
+        return {'success': False, 'error': 'Falta ATLAS_SUPABASE_KEY en el servidor'}
+    try:
+        r = req_lib.get(f'{ATLAS_URL}/rest/v1/', headers=_cabeceras(), timeout=_TIMEOUT)
+        if r.status_code != 200:
+            return {'success': False,
+                    'error': f'ATLAS respondió HTTP {r.status_code}: {r.text[:160]}'}
+        catalogo = r.json()
+    except Exception as e:
+        return {'success': False, 'error': f'No se pudo consultar ATLAS: {str(e)[:160]}'}
+
+    tablas = sorted((catalogo.get('definitions') or {}).keys())
+    detalle = {}
+    for t in tablas:
+        props = ((catalogo.get('definitions') or {}).get(t) or {}).get('properties') or {}
+        detalle[t] = sorted(props.keys())
+    return {'success': True, 'url': ATLAS_URL, 'tablas': tablas, 'columnas': detalle}
+
+
 def explorar():
     """Qué tablas de personas expone ATLAS y qué columnas traen.
 
