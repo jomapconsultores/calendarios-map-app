@@ -884,6 +884,20 @@ async function guardarContacto() {
       {method: id ? 'PATCH' : 'POST', body: JSON.stringify(cuerpo)});
   }
 
+  // Falta el motivo. Ahora el servidor ya sabe QUÉ cambió, así que se dice: es
+  // la diferencia entre «justifica algo» y «justifica que cambiaste el celular
+  // y el correo». Y se lleva el cursor al campo, en vez de dejar al usuario
+  // buscándolo por la ficha.
+  if (!r.success && r.falta_motivo) {
+    const campos = (r.campos || []).join(', ');
+    aviso(campos ? `Vas a cambiar: ${campos}. Indica el motivo (mínimo 5 caracteres).`
+                 : r.error, 'warning');
+    const caja = document.getElementById('cReason');
+    document.querySelector('#modalContacto .nav-link').click();
+    caja.focus();
+    caja.scrollIntoView({block: 'center', behavior: 'smooth'});
+    return;
+  }
   if (!r.success) { aviso(r.error || 'No se pudo guardar', 'danger'); return; }
   if (r.sin_cambios) { aviso(r.mensaje, 'info'); modalContacto.hide(); return; }
   aviso(id ? `Guardado (${r.cambios} campo(s) modificado(s))` : 'Registro creado');

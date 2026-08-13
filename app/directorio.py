@@ -534,11 +534,14 @@ def registrar_directorio(app, ctx):
             return _sin_permiso('editar registros')
         cuerpo = request.get_json() or {}
         motivo = _sanitize(cuerpo.get('reason'), 500)
-        if not motivo or len(motivo) < 5:
-            return jsonify({'success': False, 'falta_motivo': True,
-                            'error': 'Indica el motivo del cambio (mínimo 5 caracteres). '
-                                     'Queda registrado en la bitácora.'})
-
+        # OJO con el orden: el motivo se comprueba MÁS ABAJO, después de saber
+        # qué cambió. Antes se exigía aquí, lo primero, y eso obligaba a
+        # justificar cambios que no existían: quien abría una ficha para
+        # consultarla y pulsaba Guardar por costumbre —o corregía una letra y la
+        # volvía a dejar como estaba— se topaba con «indica el motivo» para algo
+        # que el sistema iba a descartar dos pasos después por no ser un cambio.
+        # La regla «sin motivo no hay cambio» sigue intacta; lo que se corrige es
+        # pedir explicaciones por un cambio que no lo es.
         filas = db().get('contacts', {'id': cid}, select='*')
         if not filas:
             return jsonify({'success': False, 'error': 'Registro no encontrado'}), 404
@@ -571,6 +574,13 @@ def registrar_directorio(app, ctx):
         if not cambios:
             return jsonify({'success': True, 'sin_cambios': True,
                             'mensaje': 'No había nada distinto que guardar'})
+
+        # AHORA sí: hay algo que registrar, así que hace falta decir por qué.
+        if not motivo or len(motivo) < 5:
+            return jsonify({'success': False, 'falta_motivo': True,
+                            'campos': sorted(CAMPOS_EDITABLES.get(c, c) for c in cambios),
+                            'error': 'Indica el motivo del cambio (mínimo 5 caracteres). '
+                                     'Queda registrado en la bitácora.'})
 
         registro['updated_at'] = datetime.now(timezone.utc).isoformat()
         registro['updated_by'] = current_user.id
