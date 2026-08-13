@@ -16,7 +16,11 @@
     --dark: #0f172a;
     --dark2: #1e293b;
     --gray: #64748b;
-    --lgray: #94a3b8;
+    /* Era #94a3b8: 2,56:1 sobre blanco. El mínimo legible es 4,5:1, así que ese
+       gris no llegaba ni a la mitad — y no se usa para adornar, sino para texto
+       que alguien tiene que leer. Se elige el gris MÁS CLARO que cumple, para
+       que siga siendo un tono tenue y no un segundo negro. */
+    --lgray: #657388;
     --light: #f1f5f9;
     --bg: #f8fafc;
     --white: #ffffff;
@@ -67,7 +71,11 @@
     --side-hover:   #dfe7f4;   /* fondo al pasar el ratón    */
     --side-txt:     #55637a;   /* texto normal               */
     --side-strong:  #2f3d55;   /* títulos                    */
-    --side-mute:    #8b99ae;   /* descripciones y rótulos    */
+    /* Era #8b99ae: 2,48:1 sobre el riel y 2,74:1 sobre el panel. Con él están
+       escritos los rótulos de sección, las descripciones de cada entrada del
+       menú y el pie — texto informativo, no decoración. Este es el gris más
+       claro que llega a 4,5:1 sobre LOS DOS fondos del menú. */
+    --side-mute:    #5f6d82;   /* descripciones y rótulos    */
 }
 
 *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
@@ -206,7 +214,7 @@ body {
 }
 .rail-btn:hover { background: var(--side-hover); color: var(--side-strong); }
 .rail-btn.active {
-    background: linear-gradient(135deg, #6366f1, #8b5cf6);
+    background: linear-gradient(135deg, #5254ec, #7c3aed);
     color: #fff;
     box-shadow: 0 3px 10px rgba(99,102,241,.28);
 }
@@ -227,7 +235,7 @@ body {
 }
 .rail-avatar {
     width: 38px; height: 38px; border-radius: 50%;
-    background: linear-gradient(135deg, #6366f1, #8b5cf6);
+    background: linear-gradient(135deg, #5254ec, #7c3aed);
     color: #fff; display: grid; place-items: center;
     font-weight: 700; font-size: .75rem; text-decoration: none;
     flex-shrink: 0;
@@ -304,7 +312,7 @@ body {
 .panel-links a:hover { background: var(--side-hover); color: var(--side-strong); }
 .panel-links a:hover .pl-d { color: var(--side-txt); }
 .panel-links a.active {
-    background: linear-gradient(135deg, #6366f1, #8b5cf6);
+    background: linear-gradient(135deg, #5254ec, #7c3aed);
     color: #fff;
 }
 .panel-links a.active .pl-d { color: rgba(255,255,255,.85); }
