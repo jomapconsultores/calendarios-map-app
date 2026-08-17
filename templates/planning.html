@@ -6,29 +6,31 @@
 {% block head %}
 <style>
 /* ===== PLANIFICACIÓN ===== */
-.quick-add-bar{display:flex;gap:8px;align-items:center;background:#fff;border:1.5px solid #e2e8f0;
-  border-radius:14px;padding:8px 12px;margin-bottom:14px;box-shadow:0 1px 4px rgba(0,0,0,.06);flex-wrap:wrap}
-.quick-add-bar input[type=text]{flex:1;min-width:180px;border:none;outline:none;font-size:.92rem;color:#1e293b;background:transparent}
+.quick-add-bar{display:flex;gap:7px;align-items:center;background:#fff;border:1.5px solid #e2e8f0;
+  border-radius:12px;padding:6px 10px;margin-bottom:12px;box-shadow:0 1px 3px rgba(0,0,0,.05);flex-wrap:wrap}
+.quick-add-bar input[type=text]{flex:1;min-width:180px;border:none;outline:none;font-size:.84rem;color:#1e293b;background:transparent}
 .quick-add-bar input[type=text]::placeholder{color:#94a3b8}
 .quick-add-bar select,.quick-add-bar input[type=date]{border:1px solid #e2e8f0;border-radius:8px;
   padding:4px 8px;font-size:.8rem;color:#374151;background:#f8fafc}
-.quick-add-bar .btn-qa{background:#4f46e5;color:#fff;border:none;border-radius:10px;padding:6px 16px;
-  font-size:.82rem;font-weight:600;cursor:pointer;white-space:nowrap}
+.quick-add-bar .btn-qa{background:#4f46e5;color:#fff;border:none;border-radius:9px;padding:5px 14px;
+  font-size:.78rem;font-weight:600;cursor:pointer;white-space:nowrap}
 .quick-add-bar .btn-qa:hover{background:#4338ca}
 
 /* ===== SEMÁFORO =====
-   Cinco tarjetas, una por color, y cada una filtra la lista al pulsarla. Es a
-   la vez el marcador y el mando: mirar cuántas hay en rojo y verlas es el
-   mismo gesto, no dos. */
-.sem-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:16px}
-.sem-card{background:#fff;border:1.5px solid #e2e8f0;border-radius:14px;padding:10px 14px;
-  cursor:pointer;transition:.15s;position:relative;overflow:hidden;text-align:left}
-.sem-card::before{content:'';position:absolute;left:0;top:0;bottom:0;width:5px}
-.sem-card:hover{transform:translateY(-1px);box-shadow:0 6px 16px rgba(0,0,0,.07)}
-.sem-card.on{border-color:currentColor;box-shadow:0 4px 14px rgba(0,0,0,.10)}
-.sem-card .sem-num{font-size:1.35rem;font-weight:800;line-height:1}
-.sem-card .sem-lbl{font-size:.7rem;color:#64748b;font-weight:600;margin-top:2px;display:block}
-@media(max-width:560px){.sem-row{grid-template-columns:repeat(2,1fr)}}
+   Una tira, no cinco tarjetones. Cinco cifras enormes —casi siempre ceros—
+   empujaban la tabla fuera de la pantalla: primero el marcador y después, si
+   quedaba sitio, los datos por los que se abre el módulo. En una línea se lee
+   igual de rápido y cabe el trabajo debajo.
+   Cada pastilla sigue siendo el mando: pulsar «Incumplido» deja sólo esas. */
+.sem-row{display:flex;flex-wrap:wrap;gap:6px;align-items:center;background:#fff;
+  border:1.5px solid #e2e8f0;border-radius:12px;padding:7px 10px;margin-bottom:12px}
+.sem-item{display:inline-flex;align-items:center;gap:6px;background:#fff;color:#475569;
+  border:1.5px solid #e2e8f0;border-radius:999px;padding:3px 11px;
+  font-size:.75rem;font-weight:600;cursor:pointer;transition:.15s;white-space:nowrap}
+.sem-item:hover{border-color:#cbd5e1;background:#f8fafc}
+.sem-item .sem-n{font-weight:800;font-size:.82rem}
+.sem-item.on{box-shadow:0 2px 8px rgba(0,0,0,.10)}
+.sem-item.apagado{opacity:.5}
 
 /* Punto de semáforo: el mismo lenguaje en pestañas, filas y cabeceras */
 .sem-dot{display:inline-block;width:9px;height:9px;border-radius:50%;flex-shrink:0}
@@ -62,23 +64,23 @@
 .bp-urgent{background:#7c3aed;color:#fff}
 
 /* ===== CABECERA DEL PROYECTO ABIERTO ===== */
-.proj-head{display:flex;align-items:center;gap:18px;flex-wrap:wrap;background:#fff;
-  border:1.5px solid #e2e8f0;border-radius:14px;padding:12px 18px;margin-bottom:14px;
-  box-shadow:0 1px 4px rgba(0,0,0,.06)}
+.proj-head{display:flex;align-items:center;gap:14px;flex-wrap:wrap;background:#fff;
+  border:1.5px solid #e2e8f0;border-radius:12px;padding:9px 14px;margin-bottom:12px;
+  box-shadow:0 1px 3px rgba(0,0,0,.05)}
 .proj-head .ph-main{flex:1;min-width:220px}
-.proj-head .ph-name{font-size:1.05rem;font-weight:700;color:#0f172a;line-height:1.2;
-  display:flex;align-items:center;gap:8px}
-.proj-head .ph-meta{display:flex;gap:16px;flex-wrap:wrap;margin-top:4px;font-size:.8rem;color:#475569}
-.proj-head .ph-prog{text-align:center;min-width:130px}
-.proj-head .ph-prog-num{font-size:1.15rem;font-weight:800;color:#4f46e5;line-height:1}
-.proj-head .ph-prog-lbl{font-size:.7rem;color:#94a3b8;margin-top:3px}
+.proj-head .ph-name{font-size:.95rem;font-weight:700;color:#0f172a;line-height:1.2;
+  display:flex;align-items:center;gap:7px}
+.proj-head .ph-meta{display:flex;gap:14px;flex-wrap:wrap;margin-top:3px;font-size:.75rem;color:#475569}
+.proj-head .ph-prog{text-align:center;min-width:120px}
+.proj-head .ph-prog-num{font-size:1rem;font-weight:800;color:#4f46e5;line-height:1}
+.proj-head .ph-prog-lbl{font-size:.66rem;color:#94a3b8;margin-top:2px}
 @media(max-width:640px){.proj-head{gap:10px}.proj-head .ph-prog{text-align:left}}
 
 /* ===== PESTAÑAS DE PROYECTO ===== */
 .entity-tabs{display:flex;gap:2px;flex-wrap:nowrap;overflow-x:auto;overflow-y:hidden;
-  margin-bottom:14px;border-bottom:2px solid #e2e8f0}
-.etab{display:inline-flex;align-items:center;gap:6px;padding:9px 18px;border:1.5px solid transparent;
-  border-bottom:none;border-radius:10px 10px 0 0;background:transparent;font-size:.85rem;font-weight:600;
+  margin-bottom:12px;border-bottom:2px solid #e2e8f0}
+.etab{display:inline-flex;align-items:center;gap:6px;padding:7px 14px;border:1.5px solid transparent;
+  border-bottom:none;border-radius:9px 9px 0 0;background:transparent;font-size:.8rem;font-weight:600;
   cursor:pointer;color:#64748b;white-space:nowrap;transition:.15s;margin-bottom:-2px}
 .etab:hover{background:#f8fafc;color:#4f46e5}
 .etab.active{background:#fff;border-color:#e2e8f0;color:#4f46e5;font-weight:700;
@@ -707,16 +709,23 @@ function renderSemaforo() {
   // «Sin plazo» sólo aparece si hay algo sin fecha. Enseñar un cero fijo sería
   // un recuadro que nunca dice nada; esconder las que existen, un agujero.
   const visibles = SEM_ORDEN.concat(cuenta.gris ? ['gris'] : []);
-  el.innerHTML = visibles.map(id => {
-    const e = SEM[id];
-    const on = curSem === id;
-    return `<button class="sem-card ${on?'on':''}" style="color:${e.color};${on?'border-color:'+e.color:''}"
-      onclick="setSemFilter('${id}')" title="Ver sólo ${esc(e.etiqueta.toLowerCase())}">
-      <span style="position:absolute;left:0;top:0;bottom:0;width:5px;background:${e.color}"></span>
-      <span class="sem-num">${cuenta[id]}</span>
-      <span class="sem-lbl">${e.icono} ${esc(e.etiqueta)}</span>
-    </button>`;
-  }).join('');
+  el.innerHTML =
+    `<span style="font-size:.72rem;font-weight:700;color:#94a3b8;text-transform:uppercase;
+       letter-spacing:.05em;margin-right:4px">Semáforo</span>` +
+    visibles.map(id => {
+      const e = SEM[id];
+      const on = curSem === id;
+      // Lo que está a cero se atenúa en vez de esconderse: enseñar el hueco
+      // dice «aquí no hay nada», y esconderlo hace dudar de si se está mirando.
+      const vacio = !cuenta[id] && !on;
+      return `<button class="sem-item ${on?'on':''} ${vacio?'apagado':''}"
+        style="${on ? 'background:'+e.fondo+';border-color:'+e.color+';color:'+e.color : ''}"
+        onclick="setSemFilter('${id}')" title="Ver sólo lo que está en ${esc(e.etiqueta.toLowerCase())}">
+        <span class="sem-dot" style="background:${e.color}"></span>${esc(e.etiqueta)}
+        <span class="sem-n">${cuenta[id]}</span>
+      </button>`;
+    }).join('') +
+    (curSem ? `<button class="sem-item" onclick="setSemFilter('')" title="Quitar el filtro">✕ Todas <span class="sem-n">${base.length}</span></button>` : '');
 }
 
 // Cuánto se cerró A TIEMPO, que no es lo mismo que cuánto se cerró. Es
@@ -1531,23 +1540,14 @@ async function deleteProject() {
 
 // ——————————————————————————————————————————
 //  VER EN GANTT
-//  Con un proyecto abierto se va directo a SU cronograma: el servidor lo crea
-//  si no existía y le vuelca las actividades del proyecto. Antes eran cuatro
-//  pasos —crear el plan, nombrarlo, abrir «traer», marcar las actividades— y
-//  por cuatro pasos nadie lo hacía: el Gantt se quedaba vacío mientras la
-//  planificación estaba llena.
+//  Con un proyecto abierto se va directo a SU cronograma. No hace falta crear
+//  nada: el cronograma es la otra cara del proyecto y se pone al día solo al
+//  abrirlo.
 // ——————————————————————————————————————————
-async function abrirCronograma() {
-  if (!curProject) { location.href = '/cronograma'; return; }
-  showToast('⏳ Preparando el cronograma del proyecto…', 'info');
-  try {
-    const r = await fetch(`/cronograma/api/proyecto/${curProject}`, {method: 'POST'})
-                      .then(x => x.json());
-    if (!r.success) { showToast('❌ ' + (r.error || 'No se pudo abrir'), 'danger'); return; }
-    location.href = '/cronograma?plan=' + encodeURIComponent(r.plan_id);
-  } catch (e) {
-    showToast('❌ Sin conexión', 'danger');
-  }
+function abrirCronograma() {
+  location.href = curProject
+    ? '/cronograma?proyecto=' + encodeURIComponent(curProject)
+    : '/cronograma';
 }
 
 // ——————————————————————————————————————————

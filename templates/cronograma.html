@@ -7,7 +7,7 @@
 <style>
 /* ===== CRONOGRAMA ===== */
 .plan-pills{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px}
-.plan-pill{padding:6px 15px;border-radius:20px;font-size:.82rem;font-weight:600;cursor:pointer;
+.plan-pill{padding:5px 13px;border-radius:999px;font-size:.78rem;font-weight:600;cursor:pointer;
   border:1.5px solid #e2e8f0;background:#fff;color:#475569;transition:.15s;white-space:nowrap}
 .plan-pill:hover{transform:translateY(-1px);box-shadow:0 3px 8px rgba(0,0,0,.07)}
 .plan-pill.active{color:#fff;box-shadow:0 4px 12px rgba(79,70,229,.25)}
@@ -70,12 +70,12 @@
 .sem-dot{display:inline-block;width:9px;height:9px;border-radius:50%;flex-shrink:0}
 .sem-chip{display:inline-flex;align-items:center;gap:5px;padding:2px 9px;border-radius:20px;
   font-size:.68rem;font-weight:700;white-space:nowrap}
-.sem-resumen{background:#fff;border:1.5px solid #e2e8f0;border-radius:14px;padding:12px 16px;margin-bottom:14px}
-.sem-bar{display:flex;height:10px;border-radius:5px;overflow:hidden;background:#f1f5f9}
+.sem-resumen{background:#fff;border:1.5px solid #e2e8f0;border-radius:12px;padding:8px 12px;margin-bottom:12px}
+.sem-bar{display:flex;height:8px;border-radius:4px;overflow:hidden;background:#f1f5f9}
 .sem-bar span{display:block;height:100%}
-.sem-leyenda{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+.sem-leyenda{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
 .sem-lg{display:inline-flex;align-items:center;gap:6px;background:#fff;border:1.5px solid #e2e8f0;
-  border-radius:20px;padding:3px 12px;font-size:.75rem;font-weight:600;cursor:pointer;transition:.15s}
+  border-radius:999px;padding:3px 11px;font-size:.73rem;font-weight:600;cursor:pointer;transition:.15s}
 .sem-lg:hover{transform:translateY(-1px);box-shadow:0 3px 8px rgba(0,0,0,.07)}
 .sem-lg.on{box-shadow:0 3px 10px rgba(0,0,0,.12)}
 
@@ -120,18 +120,20 @@
 <a href="/planning" class="btn btn-outline-primary btn-sm rounded-pill"
    title="Volver a la lista de proyectos y sus plazos">📋 Planificación</a>
 {% endif %}
-<button class="btn btn-primary btn-sm rounded-pill" onclick="abrirPlan(null)">+ Cronograma</button>
 {% endblock %}
 
 {% block content %}
 
+{# Una pastilla por PROYECTO, no por cronograma. El cronograma no se crea: es
+   la otra cara del proyecto y aparece con él. #}
 <div class="plan-pills" id="planPills"></div>
 
 <div id="sinPlanes" class="mod-empty" style="display:none">
   <div class="me-ic">📊</div>
-  <p class="mt-2">Todavía no hay ningún cronograma.<br>
-  Crea uno y trae las actividades de tus proyectos.</p>
-  <button class="btn btn-primary btn-sm rounded-pill" onclick="abrirPlan(null)">+ Crear el primero</button>
+  <p class="mt-2">Todavía no hay ningún proyecto que dibujar.<br>
+  El cronograma sale de lo planificado: crea el proyecto y sus actividades
+  en Planificación y aquí aparecen como barras.</p>
+  <a href="/planning" class="btn btn-primary btn-sm rounded-pill">📋 Ir a Planificación</a>
 </div>
 
 <div id="zonaPlan" style="display:none">
@@ -149,25 +151,22 @@
   <!-- SEMÁFORO: el reparto del plan por color, y la leyenda de qué es cada uno -->
   <div id="semResumen" class="sem-resumen"></div>
 
+  {# «Traer del plan» y «Actualizar avance» ya no existen: las dos cosas pasan
+     solas al abrir el proyecto. Un cronograma que hay que acordarse de
+     refrescar es un cronograma en el que no se puede confiar. #}
   <div class="mod-toolbar">
     <button class="btn btn-primary btn-sm rounded-pill" onclick="abrirActividad(null)">+ Actividad</button>
-    <button class="btn btn-outline-primary btn-sm rounded-pill" onclick="abrirImportarTareas()">
-      📥 Traer del plan
-    </button>
-    <button class="btn btn-outline-secondary btn-sm rounded-pill" onclick="sincronizarTareas()">
-      🔄 Actualizar avance
-    </button>
     <button class="btn btn-sm rounded-pill fw-bold" id="btnIa"
             style="background:#7c3aed;color:#fff;border:0" onclick="abrirPlanificacion()">
       🤖 Planificar con IA
     </button>
+    <span id="estadoSync" class="small text-muted"></span>
     <div style="flex:1"></div>
     <select id="zoom" class="form-select form-select-sm" style="max-width:150px" onchange="pintarGantt()">
       <option value="dia">Escala: días</option>
       <option value="semana" selected>Escala: semanas</option>
       <option value="mes">Escala: meses</option>
     </select>
-    <button class="btn btn-outline-dark btn-sm rounded-pill" onclick="abrirPlan(planActivo.id)">⚙️ Editar plan</button>
   </div>
 
   <!-- Ruta crítica y riesgos que dejó la última planificación asistida -->
@@ -187,44 +186,6 @@
       </thead>
       <tbody id="actCuerpo"></tbody>
     </table>
-  </div>
-</div>
-
-<!-- ============ PLAN ============ -->
-<div class="modal fade cro-modal" id="modalPlan" tabindex="-1">
-  <div class="modal-dialog">
-    <div class="modal-content border-0 shadow">
-      <div class="modal-header">
-        <h5 class="modal-title text-white" id="tituloPlan">Nuevo cronograma</h5>
-        <button class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
-      </div>
-      <div class="modal-body">
-        <input type="hidden" id="pId">
-        <label class="form-label fw-semibold small">NOMBRE *</label>
-        <input id="pNombre" class="form-control form-control-sm" placeholder="Ej.: Cierre fiscal 2026">
-        <label class="form-label fw-semibold small mt-3">DESCRIPCIÓN</label>
-        <textarea id="pDescripcion" class="form-control form-control-sm" rows="3"
-                  placeholder="Contexto del plan. La IA lo usa para estimar mejor las duraciones."></textarea>
-        <div class="row g-2 mt-1">
-          <div class="col-6">
-            <label class="form-label fw-semibold small">INICIO PREVISTO</label>
-            <input id="pInicio" type="date" class="form-control form-control-sm">
-          </div>
-          <div class="col-6">
-            <label class="form-label fw-semibold small">FIN PREVISTO</label>
-            <input id="pFin" type="date" class="form-control form-control-sm">
-          </div>
-        </div>
-        <label class="form-label fw-semibold small mt-3">COLOR</label>
-        <input id="pColor" type="color" class="form-control form-control-color form-control-sm" value="#4f46e5">
-      </div>
-      <div class="modal-footer">
-        <button class="btn btn-outline-danger btn-sm rounded-pill me-auto" id="btnBorrarPlan"
-                style="display:none" onclick="borrarPlan()">🗑 Eliminar cronograma</button>
-        <button class="btn btn-secondary btn-sm rounded-pill" data-bs-dismiss="modal">Cancelar</button>
-        <button class="btn btn-primary btn-sm rounded-pill" onclick="guardarPlan()">💾 Guardar</button>
-      </div>
-    </div>
   </div>
 </div>
 
@@ -303,42 +264,6 @@
                 style="display:none" onclick="borrarActividad()">🗑 Eliminar</button>
         <button class="btn btn-secondary btn-sm rounded-pill" data-bs-dismiss="modal">Cancelar</button>
         <button class="btn btn-primary btn-sm rounded-pill" onclick="guardarActividad()">💾 Guardar</button>
-      </div>
-    </div>
-  </div>
-</div>
-
-<!-- ============ TRAER ACTIVIDADES DE LA PLANIFICACIÓN ============ -->
-<div class="modal fade cro-modal" id="modalImportarTareas" tabindex="-1">
-  <div class="modal-dialog modal-lg modal-dialog-scrollable">
-    <div class="modal-content border-0 shadow">
-      <div class="modal-header">
-        <h5 class="modal-title text-white">📥 Traer actividades del plan</h5>
-        <button class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
-      </div>
-      <div class="modal-body">
-        <p class="text-muted small">
-          Elige qué pendientes se convierten en actividades del cronograma. Puedes traerlos todos
-          o sólo los que necesites; los que ya están en el plan no aparecen.
-        </p>
-        <div class="d-flex gap-2 mb-2">
-          <input id="buscarTarea" class="form-control form-control-sm" style="max-width:260px"
-                 placeholder="🔍 Filtrar…" oninput="pintarTareasDisponibles()">
-          <button class="btn btn-outline-secondary btn-sm rounded-pill" onclick="marcarTareas(true)">Marcar todas</button>
-          <button class="btn btn-outline-secondary btn-sm rounded-pill" onclick="marcarTareas(false)">Ninguna</button>
-        </div>
-        <table class="act-table">
-          <thead><tr><th style="width:36px"></th><th>Actividad</th><th>Proyecto</th>
-            <th>Vence</th><th>Estado</th></tr></thead>
-          <tbody id="tareasCuerpo"></tbody>
-        </table>
-        <div id="tareasVacio" class="text-muted text-center py-4" style="display:none">
-          No hay pendientes disponibles para traer.
-        </div>
-      </div>
-      <div class="modal-footer">
-        <button class="btn btn-secondary btn-sm rounded-pill" data-bs-dismiss="modal">Cerrar</button>
-        <button class="btn btn-primary btn-sm rounded-pill" onclick="importarTareas()">📥 Traer seleccionadas</button>
       </div>
     </div>
   </div>
@@ -426,9 +351,9 @@
 <script>
 const IA = {{ ia|tojson }};
 
-let planes = [], planActivo = null, actividades = [], tareasDisponibles = [], propuestas = [];
+let proyectos = [], proyectoActivo = null, planActivo = null, actividades = [], propuestas = [];
 let analisisIa = {};   // resumen, riesgos y ruta crítica de la última propuesta
-let modalPlan, modalActividad, modalImportarTareas, modalIa;
+let modalActividad, modalIa;
 
 const ESTADOS = {pending:'Pendiente', in_progress:'En progreso', review:'En revisión',
                  done:'Completada', blocked:'Bloqueada'};
@@ -480,10 +405,8 @@ function textoSemaforo(s) {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
-  modalPlan            = new bootstrap.Modal(document.getElementById('modalPlan'));
-  modalActividad       = new bootstrap.Modal(document.getElementById('modalActividad'));
-  modalImportarTareas  = new bootstrap.Modal(document.getElementById('modalImportarTareas'));
-  modalIa              = new bootstrap.Modal(document.getElementById('modalIa'));
+  modalActividad = new bootstrap.Modal(document.getElementById('modalActividad'));
+  modalIa        = new bootstrap.Modal(document.getElementById('modalIa'));
 
   if (!IA.disponible) {
     const boton = document.getElementById('btnIa');
@@ -492,23 +415,10 @@ document.addEventListener('DOMContentLoaded', () => {
     boton.title = 'IA no disponible: ' + (IA.motivo || '');
   }
 
-  // El cronograma de un proyecto llega por la URL: /cronograma?plan=<id>. Lo
-  // pone el botón «Ver en Gantt» de Planificación, que crea el plan si hacía
-  // falta y trae sus actividades antes de traernos aquí.
+  // Qué proyecto abrir: el que venga por la URL (/cronograma?proyecto=<id>,
+  // que es lo que pone el botón «Ver en Gantt» de Planificación) o el primero.
   const parametros = new URLSearchParams(location.search);
-  cargarPlanes(parametros.get('plan') || undefined).then(() => {
-    const accion = parametros.get('accion');
-    if (accion === 'nuevo') abrirPlan(null);
-    if (accion === 'importar') {
-      // Sin cronograma no hay dónde meter las actividades (cargarPlanes ya
-      // selecciona el primero si existe alguno, así que planActivo sólo es
-      // nulo cuando no hay ninguno). Antes el enlace del menú simplemente no
-      // hacía nada y no se decía por qué; ahora se explica y se ofrece la
-      // salida en vez de dejar al usuario mirando una pantalla quieta.
-      if (planActivo) abrirImportarTareas();
-      else aviso('Todavía no hay ningún cronograma. Crea uno primero y después trae las actividades.', 'warning');
-    }
-  });
+  cargarProyectos(parametros.get('proyecto') || undefined);
 });
 
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c =>
@@ -532,76 +442,54 @@ const aFecha = t => t ? new Date(t + 'T00:00:00') : null;
 const hoyIso = () => new Date().toISOString().slice(0, 10);
 
 // ——————————————————————————————————————————
-//  PLANES
+//  PROYECTOS
+//  Ya no hay una lista de cronogramas que mantener: hay proyectos, y el
+//  cronograma de cada uno nace al abrirlo. El servidor lo crea si no existía,
+//  mete las actividades nuevas y refresca las que ya estaban.
 // ——————————————————————————————————————————
-async function cargarPlanes(seleccionar) {
-  planes = await pedir('/cronograma/api/planes');
-  const hay = planes.length > 0;
+async function cargarProyectos(seleccionar) {
+  proyectos = await pedir('/cronograma/api/proyectos');
+  const hay = Array.isArray(proyectos) && proyectos.length > 0;
   document.getElementById('sinPlanes').style.display = hay ? 'none' : '';
   document.getElementById('zonaPlan').style.display  = hay ? '' : 'none';
   document.getElementById('planPills').style.display = hay ? '' : 'none';
-  if (!hay) { planActivo = null; return; }
+  if (!hay) { proyectoActivo = null; planActivo = null; return; }
 
-  // Si el id pedido ya no existe (plan borrado, enlace viejo) se cae al
+  // Si el id pedido ya no existe (proyecto borrado, enlace viejo) se cae al
   // primero en vez de dejar la pantalla vacía sin explicar por qué.
-  const pedido = seleccionar && planes.some(p => p.id === seleccionar) ? seleccionar : null;
-  const id = pedido ||
-    (planActivo && planes.some(p => p.id === planActivo.id) ? planActivo.id : planes[0].id);
-  pintarPlanes(id);
-  await cargarActividades(id);
+  const pedido = seleccionar && proyectos.some(p => p.id === seleccionar) ? seleccionar : null;
+  await abrirProyecto(pedido || proyectoActivo || proyectos[0].id);
 }
 
-function pintarPlanes(idActivo) {
-  document.getElementById('planPills').innerHTML = planes.map(p => `
-    <button class="plan-pill ${p.id === idActivo ? 'active' : ''}"
-        style="border-color:${esc(p.color)};${p.id === idActivo ? 'background:' + esc(p.color) : 'color:' + esc(p.color)}"
-        onclick="cambiarPlan('${p.id}')">
+function pintarProyectos() {
+  document.getElementById('planPills').innerHTML = proyectos.map(p => `
+    <button class="plan-pill ${p.id === proyectoActivo ? 'active' : ''}"
+        style="border-color:${esc(p.color)};${p.id === proyectoActivo ? 'background:' + esc(p.color) : 'color:' + esc(p.color)}"
+        onclick="abrirProyecto('${p.id}')" title="${esc(p.name)}${p.due_date ? ' — vence ' + p.due_date : ''}">
       ${esc(p.name)} <span class="pp-count">${p.done || 0}/${p.total || 0}</span>
     </button>`).join('');
 }
 
-async function cambiarPlan(id) { pintarPlanes(id); await cargarActividades(id); }
-
-function abrirPlan(id) {
-  const p = id ? planes.find(x => x.id === id) : null;
-  document.getElementById('tituloPlan').textContent = p ? '⚙️ ' + p.name : 'Nuevo cronograma';
-  document.getElementById('pId').value = id || '';
-  document.getElementById('pNombre').value = p ? p.name : '';
-  document.getElementById('pDescripcion').value = (p && p.description) || '';
-  document.getElementById('pInicio').value = (p && p.start_date) || '';
-  document.getElementById('pFin').value = (p && p.end_date) || '';
-  document.getElementById('pColor').value = (p && p.color) || '#4f46e5';
-  document.getElementById('btnBorrarPlan').style.display = id ? '' : 'none';
-  modalPlan.show();
-}
-
-async function guardarPlan() {
-  const id = document.getElementById('pId').value;
-  const cuerpo = {
-    name: document.getElementById('pNombre').value.trim(),
-    description: document.getElementById('pDescripcion').value.trim(),
-    start_date: document.getElementById('pInicio').value,
-    end_date: document.getElementById('pFin').value,
-    color: document.getElementById('pColor').value,
-  };
-  if (!cuerpo.name) { aviso('El nombre es obligatorio', 'warning'); return; }
-  const r = await pedir(id ? `/cronograma/api/planes/${id}` : '/cronograma/api/planes',
-    {method: id ? 'PATCH' : 'POST', body: JSON.stringify(cuerpo)});
-  if (!r.success) { aviso(r.error || 'No se pudo guardar', 'danger'); return; }
-  modalPlan.hide();
-  aviso(id ? 'Cronograma actualizado' : 'Cronograma creado');
-  await cargarPlanes(id || (r.plan && r.plan.id));
-}
-
-async function borrarPlan() {
-  const id = document.getElementById('pId').value;
-  if (!confirm('¿Eliminar el cronograma y todas sus actividades?')) return;
-  const r = await pedir(`/cronograma/api/planes/${id}`, {method: 'DELETE'});
-  if (!r.success) { aviso(r.error || 'No se pudo eliminar', 'danger'); return; }
-  modalPlan.hide();
-  planActivo = null;
-  await cargarPlanes();
-  aviso('Cronograma eliminado');
+async function abrirProyecto(id) {
+  proyectoActivo = id;
+  pintarProyectos();
+  const estado = document.getElementById('estadoSync');
+  if (estado) estado.textContent = '⏳ Poniendo al día…';
+  const r = await pedir(`/cronograma/api/proyecto/${id}`, {method: 'POST'});
+  if (!r.success) {
+    if (estado) estado.textContent = '';
+    aviso(r.error || 'No se pudo abrir el cronograma', 'danger');
+    return;
+  }
+  if (estado) {
+    // Se dice lo que acaba de pasar sólo si pasó algo. Un «0 actualizadas»
+    // permanente es ruido que se acaba dejando de leer.
+    const partes = [];
+    if (r.importadas)   partes.push(`${r.importadas} nueva(s)`);
+    if (r.refrescadas)  partes.push(`${r.refrescadas} al día`);
+    estado.textContent = partes.length ? '🔄 ' + partes.join(' · ') : '';
+  }
+  await cargarActividades(r.plan_id);
 }
 
 // ——————————————————————————————————————————
@@ -974,7 +862,7 @@ async function guardarActividad() {
   if (!r.success) { aviso(r.error || 'No se pudo guardar', 'danger'); return; }
   modalActividad.hide();
   aviso(id ? 'Actividad actualizada' : 'Actividad creada');
-  await cargarPlanes(planActivo.id);
+  await abrirProyecto(proyectoActivo);
 }
 
 async function borrarActividad() {
@@ -983,60 +871,8 @@ async function borrarActividad() {
   const r = await pedir(`/cronograma/api/actividades/${id}`, {method: 'DELETE'});
   if (!r.success) { aviso(r.error || 'No se pudo eliminar', 'danger'); return; }
   modalActividad.hide();
-  await cargarPlanes(planActivo.id);
+  await abrirProyecto(proyectoActivo);
   aviso('Actividad eliminada');
-}
-
-// ——————————————————————————————————————————
-//  TRAER DE LA PLANIFICACIÓN
-// ——————————————————————————————————————————
-async function abrirImportarTareas() {
-  tareasDisponibles = await pedir(`/cronograma/api/planes/${planActivo.id}/tareas-disponibles`);
-  if (tareasDisponibles.success === false) { aviso(tareasDisponibles.error, 'danger'); return; }
-  document.getElementById('buscarTarea').value = '';
-  pintarTareasDisponibles();
-  modalImportarTareas.show();
-}
-
-function pintarTareasDisponibles() {
-  const texto = document.getElementById('buscarTarea').value.trim().toLowerCase();
-  const filas = tareasDisponibles.filter(t =>
-    !texto || [t.title, t.phase, t.proyecto, t.assigned_to]
-      .some(v => String(v || '').toLowerCase().includes(texto)));
-  document.getElementById('tareasVacio').style.display = filas.length ? 'none' : '';
-  document.getElementById('tareasCuerpo').innerHTML = filas.map(t => `
-    <tr>
-      <td><input type="checkbox" class="chk-tarea" value="${t.id}"></td>
-      <td>
-        <div class="fw-semibold">${esc(t.title)}</div>
-        ${t.assigned_to ? `<div class="small text-muted">${esc(t.assigned_to)}</div>` : ''}
-      </td>
-      <td class="small text-muted">${esc(t.proyecto || t.phase || '')}</td>
-      <td>${esc(t.due_date || '—')}</td>
-      <td><span class="badge-estado be-${esc(t.status || 'pending')}">${esc(ESTADOS[t.status] || t.status || '')}</span></td>
-    </tr>`).join('');
-}
-
-function marcarTareas(marcado) {
-  document.querySelectorAll('.chk-tarea').forEach(c => c.checked = marcado);
-}
-
-async function importarTareas() {
-  const ids = [...document.querySelectorAll('.chk-tarea:checked')].map(c => c.value);
-  if (!ids.length) { aviso('No marcaste ninguna tarea', 'warning'); return; }
-  const r = await pedir(`/cronograma/api/planes/${planActivo.id}/importar-tareas`,
-    {method: 'POST', body: JSON.stringify({task_ids: ids})});
-  if (!r.success) { aviso(r.error || 'No se pudo importar', 'danger'); return; }
-  modalImportarTareas.hide();
-  aviso(`${r.importadas} actividad(es) traída(s) de la planificación`);
-  await cargarPlanes(planActivo.id);
-}
-
-async function sincronizarTareas() {
-  const r = await pedir(`/cronograma/api/planes/${planActivo.id}/sincronizar-tareas`, {method: 'POST'});
-  if (!r.success) { aviso(r.error || 'No se pudo sincronizar', 'danger'); return; }
-  aviso(r.mensaje || `${r.actualizadas} actividad(es) actualizada(s) desde la planificación`);
-  if (r.actualizadas) await cargarPlanes(planActivo.id);
 }
 
 // ——————————————————————————————————————————
@@ -1132,7 +968,7 @@ async function aplicarPropuesta() {
   if (!r.success) { aviso(r.error || 'No se pudo aplicar', 'danger'); return; }
   modalIa.hide();
   aviso(`${r.aplicadas} actividad(es) replanificada(s)` + (r.creadas ? `, ${r.creadas} nueva(s)` : ''));
-  await cargarPlanes(planActivo.id);
+  await abrirProyecto(proyectoActivo);
 }
 </script>
 {% endblock %}

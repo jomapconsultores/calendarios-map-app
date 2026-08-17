@@ -4232,6 +4232,8 @@ def create_app():
         '_sanitize_hex_color':   _sanitize_hex_color,
         '_xlsx_safe':            _xlsx_safe,
         'leer_tareas':           leer_tareas,
+        'get_user_projects':     get_user_projects,
+        'user_has_project_access': user_has_project_access,
         # El puente con ATLAS, para que el Directorio pueda traerse de allá a los
         # representantes, docentes y estudiantes.
         '_atlas':                _atlas,

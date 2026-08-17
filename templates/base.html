@@ -174,9 +174,10 @@
           {% if is_adm or 'cronograma' in active_modules %}
           <div class="panel-group">Cronograma (Gantt)</div>
           <ul class="panel-links">
-            <li><a href="/cronograma" class="{{ 'active' if path == '/cronograma' and not request.args.get('accion') }}"><span class="pl-t">📈 Ver cronogramas <span class="nav-badge" data-badge="cronograma"></span></span><span class="pl-d">Los mismos plazos, en barras</span></a></li>
-            <li><a href="/cronograma?accion=nuevo"><span class="pl-t">➕ Nuevo cronograma</span><span class="pl-d">Empezar un plan de trabajo</span></a></li>
-            <li><a href="/cronograma?accion=importar"><span class="pl-t">📥 Traer del plan</span><span class="pl-d">Actividades del proyecto → barras</span></a></li>
+            {# No hay «nuevo cronograma» ni «traer del plan»: el cronograma
+               nace del proyecto y se pone al día solo al abrirlo. Eran dos
+               listas de lo mismo que había que mantener a la par. #}
+            <li><a href="/cronograma" class="{{ 'active' if path == '/cronograma' }}"><span class="pl-t">📈 Ver en barras <span class="nav-badge" data-badge="cronograma"></span></span><span class="pl-d">Los plazos del proyecto, en Gantt</span></a></li>
           </ul>
           {% endif %}
         </section>
