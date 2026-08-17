@@ -2383,6 +2383,17 @@ async function abrirAvisosModal() {
     return;
   }
   const hora = String(r.hora_revision).padStart(2, '0') + ':00';
+  // Si la base no contestó, lo que NO se puede hacer es enseñar dos ceros: se
+  // leerían como "no hay nada incumplido" cuando la verdad es que no se pudo
+  // mirar. Son cosas distintas y aquí se dicen distintas.
+  if (!r.base_ok) {
+    caja.innerHTML = `<div class="alert alert-danger py-2 mb-0">
+      ⚠️ <strong>No se pudo consultar la base</strong>, así que no se sabe qué está
+      incumplido. Esto <strong>no</strong> quiere decir que no haya nada.
+      <div class="text-muted mt-1" style="font-size:.75rem">${esc(r.error_base || '')}</div>
+    </div>`;
+    return;
+  }
   caja.innerHTML = `
     <div class="${r.correo_configurado ? 'alert alert-success' : 'alert alert-warning'} py-2">
       ${r.correo_configurado

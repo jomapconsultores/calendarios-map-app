@@ -136,6 +136,39 @@ def _nombres_de_usuarios(app, ids):
     return {f['id']: (f.get('full_name') or f.get('email') or '') for f in filas}
 
 
+class ConsultaFallida(Exception):
+    """La base no contestó.
+
+    Es distinto de «no hay nada», y confundirlos aquí es el peor fallo que
+    puede tener este módulo: si la consulta caduca y se devuelve una lista
+    vacía, el sistema entiende que no se incumple nada, no manda el correo y
+    nadie se entera de que dejó de mirar. Un aviso que calla cuando falla es
+    peor que no tener aviso, porque además tranquiliza."""
+
+
+def _consultar(app, tabla, filtros, select, intentos=3):
+    """Consulta que, o trae los datos, o dice claramente que no pudo.
+
+    Plazo más largo y tres intentos separados porque esto corre en segundo
+    plano una vez al día: aquí esperar cinco segundos más no le hace daño a
+    nadie, y en cambio rendirse a la primera sí."""
+    url = f'{app.supabase.url}/rest/v1/{tabla}?select={select}'
+    for k, v in (filtros or {}).items():
+        url += f'&{k}={v}'
+    ultimo = 'sin respuesta'
+    for intento in range(1, intentos + 1):
+        try:
+            r = app.supabase._session.get(url, timeout=(5, 30))
+            if r.status_code == 200:
+                return r.json()
+            ultimo = f'HTTP {r.status_code} {r.text[:140]}'
+        except Exception as e:
+            ultimo = str(e)[:140]
+        if intento < intentos:
+            time.sleep(2 * intento)          # 2 s, 4 s
+    raise ConsultaFallida(f'{tabla}: {ultimo}')
+
+
 def _es_compromiso(t):
     """¿Es esto un compromiso del despacho o ruido del buzón?
 
@@ -154,16 +187,16 @@ def incumplidos(app, hoy=None):
     hoy = hoy or hoy_local()
     limite = hoy.isoformat()
 
-    proyectos = app.supabase.get_q(
-        'projects', {'due_date': f'lt.{limite}'},
-        select='id,name,due_date,status,owner,created_by') or []
+    proyectos = _consultar(
+        app, 'projects', {'due_date': f'lt.{limite}'},
+        'id,name,due_date,status,owner,created_by')
     proyectos = [p for p in proyectos
                  if (p.get('status') or 'active') not in ESTADOS_PROYECTO_CERRADO]
 
-    tareas = app.supabase.get_q(
-        'tasks', {'due_date': f'lt.{limite}', 'status': 'neq.done'},
-        select='id,title,due_date,status,assigned_to,assigned_email,'
-               'project_id,created_by,progress_pct,source,source_app') or []
+    tareas = _consultar(
+        app, 'tasks', {'due_date': f'lt.{limite}', 'status': 'neq.done'},
+        'id,title,due_date,status,assigned_to,assigned_email,'
+        'project_id,created_by,progress_pct,source,source_app')
     tareas = [t for t in tareas if _es_compromiso(t)]
 
     # Nombre del responsable: primero lo escrito en la ficha, y si está vacío,
@@ -317,7 +350,15 @@ def revisar_vencimientos(app, forzar=False):
         return {'success': False, 'error': 'Sin base de datos'}
     with _LOCK:
         hoy = hoy_local()
-        datos = incumplidos(app, hoy)
+        try:
+            datos = incumplidos(app, hoy)
+        except ConsultaFallida as e:
+            # No se calla ni se da por bueno: se dice que HOY NO SE PUDO MIRAR.
+            print(f'[avisos] no se pudo comprobar los vencimientos: {e}')
+            return {'success': False, 'enviado': False, 'avisados': 0,
+                    'error': f'No se pudo consultar la base ({e}). No se avisa '
+                             'nada porque no se ha podido mirar, no porque no '
+                             'haya incumplimientos.'}
         proyectos, tareas = datos['proyectos'], datos['tareas']
         total_detectado = len(proyectos) + len(tareas)
 
@@ -360,17 +401,28 @@ def estado(app):
     """Resumen para la pantalla de administración."""
     hoy = hoy_local()
     cf = _conf(app)
-    datos = incumplidos(app, hoy)
-    ultimos = app.supabase.get('vencimiento_avisos', {'fecha': hoy.isoformat()},
-                               select='enviado_en') if app.supabase else []
-    return {
+    resumen = {
         'correo_configurado': correo_configurado(app),
         'destino': cf['destino'],
         'hora_revision': cf['hora'],
-        'proyectos_incumplidos': len(datos['proyectos']),
-        'actividades_incumplidas': len(datos['tareas']),
-        'avisado_hoy': bool(ultimos),
+        'proyectos_incumplidos': 0,
+        'actividades_incumplidas': 0,
+        'avisado_hoy': False,
+        'base_ok': True,
     }
+    try:
+        datos = incumplidos(app, hoy)
+    except ConsultaFallida as e:
+        # Enseñar dos ceros aquí sería mentir con cara de buena noticia.
+        resumen['base_ok'] = False
+        resumen['error_base'] = str(e)
+        return resumen
+    resumen['proyectos_incumplidos'] = len(datos['proyectos'])
+    resumen['actividades_incumplidas'] = len(datos['tareas'])
+    ultimos = app.supabase.get('vencimiento_avisos', {'fecha': hoy.isoformat()},
+                               select='enviado_en') if app.supabase else []
+    resumen['avisado_hoy'] = bool(ultimos)
+    return resumen
 
 
 # ============================================================
