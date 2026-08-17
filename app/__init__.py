@@ -39,11 +39,6 @@ except ImportError:
 
 GOOGLE_SCOPES = ['https://www.googleapis.com/auth/calendar']
 
-# Microsoft Graph — To-Do
-MS_AUTH_URL   = 'https://login.microsoftonline.com/consumers/oauth2/v2.0/authorize'
-MS_TOKEN_URL  = 'https://login.microsoftonline.com/consumers/oauth2/v2.0/token'
-MS_GRAPH_URL  = 'https://graph.microsoft.com/v1.0'
-MS_SCOPES     = 'Tasks.ReadWrite offline_access User.Read'
 GOOGLE_ACCOUNT_EMAIL = 'mposligua0000@gmail.com'
 
 # WebAuthn / passkeys (Face ID, huella). Import protegido: si la librería aún
@@ -72,6 +67,7 @@ from .directorio import registrar_directorio
 from .cronograma import registrar_cronograma
 from . import atlas_sync as _atlas
 from . import avisos as _avisos
+from . import semaforo as _semaforo
 
 load_dotenv()
 os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
@@ -139,7 +135,6 @@ _google_cache   = TTLCache(ttl=120)   # google status   — 2 min
 # obedece cuesta más de lo que ahorra.
 _role_cache       = TTLCache(ttl=10)
 _user_roles_cache = TTLCache(ttl=10)   # roles asignados a un usuario — 10 s
-_ms_cache         = TTLCache(ttl=120)  # ¿hay alguna cuenta Microsoft conectada? — 2 min
 
 
 # ============================================================
@@ -158,11 +153,10 @@ class User(UserMixin):
         self.modules = [m.strip() for m in raw.split(',') if m.strip()]
 
 # Módulos del sistema, en el orden en que se presentan al usuario: primero lo
-# que se usa a diario (actividades y agenda), después lo que se planifica, y al
-# final los datos maestros. Este orden es el que siguen el menú lateral y la
-# pantalla de roles, para que el usuario encuentre lo mismo en los dos sitios.
+# que se planifica, después la agenda, y al final los datos maestros. Este orden
+# es el que siguen el menú lateral y la pantalla de roles, para que el usuario
+# encuentre lo mismo en los dos sitios.
 ALL_MODULES = [
-    ('todo',        '✅ Actividades (To-Do)'),
     # Planificación y Cronograma son la misma cosa vista de dos maneras: la
     # lista de proyectos con sus plazos y esos mismos plazos en barras. Van
     # seguidos y así se conceden juntos; en el menú comparten un solo botón.
@@ -207,13 +201,6 @@ DEFAULT_ROLE_LEVEL = 'funcionario'
 #  persona a persona sin inventar un rol nuevo para cada excepción.
 # ============================================================
 SUBMODULOS = {
-    'todo': [
-        ('ver',        'Ver los pendientes',            False),
-        ('crear',      'Crear pendientes',              False),
-        ('editar',     'Editar pendientes',             False),
-        ('sincronizar','Sincronizar con Microsoft',     True),
-        ('eliminar',   'Eliminar pendientes',           True),
-    ],
     'planning': [
         ('ver',        'Ver tareas y proyectos',        False),
         ('crear',      'Crear tareas',                  False),
@@ -603,522 +590,6 @@ def _build_google_event(apt, attendees):
 
 
 # ============================================================
-#  MICROSOFT TOKEN HELPER
-# ============================================================
-_ms_token_locks = {}
-_ms_token_locks_guard = threading.Lock()
-
-def _get_ms_token_lock(token_id):
-    with _ms_token_locks_guard:
-        lock = _ms_token_locks.get(token_id)
-        if lock is None:
-            lock = threading.Lock()
-            _ms_token_locks[token_id] = lock
-        return lock
-
-def _refresh_ms_token(app, t):
-    """Refresh a single MS token row. Returns new access_token or None.
-
-    Serializado por fila (id) para que dos hilos no renueven el mismo
-    refresh_token en paralelo y se pisen entre sí (MS puede rotarlo en cada uso).
-    """
-    lock = _get_ms_token_lock(t['id'])
-    with lock:
-        # Otro hilo pudo haber refrescado esta misma fila mientras esperábamos el lock.
-        current = app.supabase.get('ms_tokens', {'id': t['id']}, select='*')
-        if current and current[0].get('access_token') != t.get('access_token'):
-            return current[0].get('access_token')
-        refresh_token = (current[0].get('refresh_token') if current else None) or t.get('refresh_token', '')
-        try:
-            r = req_lib.post(MS_TOKEN_URL, data={
-                'client_id':     app.config.get('MS_CLIENT_ID', ''),
-                'client_secret': app.config.get('MS_CLIENT_SECRET', ''),
-                'grant_type':    'refresh_token',
-                'refresh_token': refresh_token,
-                'scope': MS_SCOPES,
-            }, timeout=(5, 15))
-            if r.status_code != 200:
-                return None
-            d = r.json()
-            new_exp = (datetime.now(timezone.utc)
-                       + timedelta(seconds=d.get('expires_in', 3600))).isoformat()
-            app.supabase.update('ms_tokens', t['id'], {
-                'access_token':  d['access_token'],
-                'refresh_token': d.get('refresh_token', refresh_token),
-                'expires_at':    new_exp,
-            })
-            return d['access_token']
-        except Exception:
-            return None
-
-
-def get_ms_token(app):
-    """Return a valid MS Graph access_token for the first connected account."""
-    tokens = app.supabase.get('ms_tokens', select='*')
-    if not tokens: return None
-    t = tokens[0]
-    expiry_str = t.get('expires_at')
-    if expiry_str:
-        try:
-            exp = datetime.fromisoformat(expiry_str.replace('Z', '+00:00'))
-            if datetime.now(timezone.utc) >= exp - timedelta(minutes=5):
-                return _refresh_ms_token(app, t)
-        except Exception:
-            pass
-    return t.get('access_token')
-
-
-def get_ms_token_for(app, ms_email):
-    """Token válido (refresca si toca) para una cuenta MS específica."""
-    rows = app.supabase.get('ms_tokens', {'email': ms_email}, select='*')
-    if not rows: return None
-    t = rows[0]
-    expiry_str = t.get('expires_at')
-    if expiry_str:
-        try:
-            exp = datetime.fromisoformat(expiry_str.replace('Z', '+00:00'))
-            if datetime.now(timezone.utc) >= exp - timedelta(minutes=5):
-                return _refresh_ms_token(app, t)
-        except Exception:
-            pass
-    return t.get('access_token')
-
-
-# Mapeos de estado/prioridad para empujar a MS
-_TO_MS_STATUS = {'pending':'notStarted','in_progress':'inProgress',
-                 'review':'waitingOnOthers','done':'completed','blocked':'deferred'}
-_TO_MS_PRIO   = {'low':'low','medium':'normal','high':'high','urgent':'high'}
-
-def _build_ms_task_body(task):
-    body = {
-        'title':      task.get('title','')[:255],
-        'importance': _TO_MS_PRIO.get(task.get('priority'), 'normal'),
-        'status':     _TO_MS_STATUS.get(task.get('status','pending'), 'notStarted'),
-    }
-    if task.get('description'):
-        body['body'] = {'content': task['description'], 'contentType':'text'}
-    if task.get('due_date'):
-        body['dueDateTime'] = {'dateTime': f"{task['due_date']}T23:59:00",
-                               'timeZone': 'America/Guayaquil'}
-    return body
-
-def push_task_to_ms(app, task):
-    """Empuja un cambio del sistema a Microsoft To-Do.
-    Devuelve (success: bool, new_source_id: str|None). Si se crea una tarea
-    nueva en MS, new_source_id trae el ID asignado por Graph."""
-    ms_email = task.get('ms_email'); list_id = task.get('ms_list_id')
-    src_id   = task.get('source_id')
-    if not (ms_email and list_id): return (False, None)
-    token = get_ms_token_for(app, ms_email)
-    if not token: return (False, None)
-    headers = {'Authorization': f'Bearer {token}','Content-Type':'application/json'}
-    try:
-        if src_id:
-            r = req_lib.patch(f'{MS_GRAPH_URL}/me/todo/lists/{list_id}/tasks/{src_id}',
-                              headers=headers, json=_build_ms_task_body(task), timeout=(5,15))
-            return (r.status_code in (200, 204), None)
-        else:
-            r = req_lib.post(f'{MS_GRAPH_URL}/me/todo/lists/{list_id}/tasks',
-                             headers=headers, json=_build_ms_task_body(task), timeout=(5,15))
-            if r.status_code in (200, 201):
-                return (True, r.json().get('id'))
-            return (False, None)
-    except Exception:
-        return (False, None)
-
-def delete_task_in_ms(app, task):
-    ms_email = task.get('ms_email'); list_id = task.get('ms_list_id')
-    src_id   = task.get('source_id')
-    if task.get('source') != 'ms_todo' or not (ms_email and list_id and src_id): return False
-    token = get_ms_token_for(app, ms_email)
-    if not token: return False
-    try:
-        r = req_lib.delete(f'{MS_GRAPH_URL}/me/todo/lists/{list_id}/tasks/{src_id}',
-                           headers={'Authorization': f'Bearer {token}'}, timeout=(5,15))
-        return r.status_code in (200, 204)
-    except Exception:
-        return False
-
-
-def get_all_ms_tokens(app):
-    """Return list of (email, access_token) for every connected MS account.
-    Refreshes expired tokens automatically. Skips accounts whose refresh fails."""
-    tokens = app.supabase.get('ms_tokens', select='*')
-    out = []
-    for t in tokens:
-        access = t.get('access_token')
-        expiry_str = t.get('expires_at')
-        if expiry_str:
-            try:
-                exp = datetime.fromisoformat(expiry_str.replace('Z', '+00:00'))
-                if datetime.now(timezone.utc) >= exp - timedelta(minutes=5):
-                    access = _refresh_ms_token(app, t)
-            except Exception:
-                pass
-        if access:
-            out.append((t.get('email', 'microsoft'), access))
-    return out
-
-
-# ============================================================
-#  DESTINO POR DEFECTO EN MICROSOFT TO-DO
-#  Sin esto la sincronización iba en un solo sentido de hecho: lo que se creaba
-#  en To-Do bajaba al sistema, pero lo que se creaba en el sistema sólo subía a
-#  To-Do si alguien había elegido a mano una cuenta y una lista. Fijando un
-#  destino por defecto, toda tarea nacida en el sistema aparece también en To-Do.
-# ============================================================
-_todo_target_cache = TTLCache(ttl=60)
-
-
-def get_todo_default_target(app):
-    """{'email', 'list_id', 'list_name'} o None si aún no se ha configurado."""
-    val, hit = _todo_target_cache.get('target')
-    if hit:
-        return val
-    destino = None
-    try:
-        filas = app.supabase.get('app_config', {'key': 'todo_default_target'}, select='value')
-        if filas and filas[0].get('value'):
-            destino = json.loads(filas[0]['value'])
-    except Exception as e:
-        print(f'[todo] no se pudo leer el destino por defecto: {e}')
-    _todo_target_cache.set('target', destino)
-    return destino
-
-
-def set_todo_default_target(app, email, list_id, list_name=''):
-    """Guarda (o borra, con email vacío) la lista de To-Do a la que van las
-    tareas creadas en el sistema."""
-    payload = (json.dumps({'email': email, 'list_id': list_id, 'list_name': list_name})
-               if email and list_id else '')
-    # app_config NO tiene columna `id`: su clave primaria es `key` (texto). Pedir
-    # 'id' devolvía un 400 y la rama de actualización no se ejecutaba nunca, así
-    # que guardar la lista por defecto fallaba en silencio y las tareas creadas
-    # aquí no subían a Microsoft. Se busca y se actualiza por `key`.
-    filas = app.supabase.get('app_config', {'key': 'todo_default_target'}, select='key')
-    if filas:
-        ok = app.supabase.update('app_config', 'todo_default_target',
-                                 {'value': payload}, id_col='key')
-    else:
-        ok = bool(app.supabase.insert('app_config',
-                                      {'key': 'todo_default_target', 'value': payload}))
-    _todo_target_cache.invalidate('target')
-    return ok
-
-
-def _parse_iso_dt(s):
-    """Parsea una fecha ISO-8601 a datetime UTC consciente; None si falla."""
-    if not s: return None
-    try:
-        dt = datetime.fromisoformat(str(s).replace('Z', '+00:00'))
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-        return dt.astimezone(timezone.utc)
-    except Exception:
-        return None
-
-
-# Serializa la sincronización dentro de un mismo worker para evitar que el
-# scheduler en segundo plano y un disparo manual (botón admin) inserten la
-# misma tarea a la vez y la dupliquen.
-_SYNC_LOCK = threading.Lock()
-
-# Filtro de ruido al importar desde Microsoft To-Do (para que el sistema quede
-# enfocado en lo accionable y no se llene de miles de tareas históricas):
-#   - IMPORT_FLAGGED_EMAILS=False -> no importar la lista "Correos marcados".
-#   - IMPORT_COMPLETED=False      -> no importar tareas que YA vienen completadas.
-# OJO: las tareas ya existentes en el sistema se SIGUEN actualizando (incluido
-# marcarlas como completadas); el filtro solo evita crear ruido nuevo.
-IMPORT_FLAGGED_EMAILS = False
-IMPORT_COMPLETED      = False
-
-
-def _prefetch_ms_todo_index(app):
-    """Devuelve (dict {source_id: fila}, ok).
-
-    Trae TODAS las tareas ya importadas de Microsoft To-Do para deduplicar. Pagina
-    con cabecera Range y usa un timeout amplio. Si la lectura falla (timeout/error),
-    ok=False: la sincronización DEBE cancelarse, porque un mapa vacío haría que todas
-    las tareas se traten como nuevas y se re-inserten (causa de los duplicados).
-    """
-    sb = app.supabase
-    url = (f"{sb.url}/rest/v1/tasks"
-           f"?select=id,source_id,last_synced_at,progress_pct&source=eq.ms_todo")
-    out = {}
-    step = 1000
-    start = 0
-    while True:
-        headers = {'Range-Unit': 'items', 'Range': f'{start}-{start + step - 1}'}
-        try:
-            r = sb._session.get(url, headers=headers, timeout=(5, 45))
-        except Exception as e:
-            print(f'[todo-sync] prefetch error: {e}')
-            return {}, False
-        if r.status_code not in (200, 206):
-            print(f'[todo-sync] prefetch HTTP {r.status_code}: {r.text[:120]}')
-            return {}, False
-        try:
-            rows = r.json()
-        except Exception:
-            return {}, False
-        for row in rows:
-            if row.get('source_id'):
-                out[row['source_id']] = row
-        if len(rows) < step:      # última página
-            break
-        start += step
-    return out, True
-
-
-def sync_ms_todo(app, accounts, created_by_id, deadline_seconds=90):
-    """Sincroniza Microsoft To-Do → Sistema para las cuentas dadas.
-
-    - Inserta las tareas nuevas que aún no existen en el sistema.
-    - Actualiza las tareas ya importadas cuando el lado de Microsoft cambió
-      después de nuestra última sincronización (política "gana el más reciente":
-      compara lastModifiedDateTime de Graph contra last_synced_at local).
-
-    La dirección Sistema → To-Do ya es automática (push_task_to_ms en cada edición),
-    así que aquí solo traemos los cambios hechos directamente en Microsoft To-Do.
-    Devuelve un dict con totales y detalle por cuenta.
-    """
-    with _SYNC_LOCK:
-        return _sync_ms_todo_locked(app, accounts, created_by_id, deadline_seconds)
-
-
-def _sync_ms_todo_locked(app, accounts, created_by_id, deadline_seconds=90):
-    import time as _time
-    DEADLINE = _time.monotonic() + deadline_seconds
-    status_map = {
-        'notStarted': 'pending', 'inProgress': 'in_progress',
-        'completed': 'done', 'waitingOnOthers': 'review', 'deferred': 'blocked'
-    }
-    prio_map = {'low': 'low', 'normal': 'medium', 'high': 'high'}
-    WELLKNOWN_NAME = {
-        'flaggedEmails': '📧 Correos marcados',
-        'defaultList':   '📌 Tareas (default)',
-    }
-
-    # Pre-fetch de las tareas ms_todo existentes: source_id -> fila (insertar/actualizar).
-    # CRÍTICO: si no se puede leer el índice de existentes, se CANCELA la sync para no
-    # duplicar (un mapa vacío re-insertaría todas las tareas como nuevas).
-    existing_by_src, prefetch_ok = _prefetch_ms_todo_index(app)
-    if not prefetch_ok:
-        return {'success': False,
-                'error': ('No se pudo leer las tareas existentes (timeout de BD). '
-                          'Sincronización cancelada para evitar duplicados. '
-                          'Verifica que existan los índices de la tabla tasks.'),
-                'imported': 0, 'updated': 0, 'skipped': 0, 'errors': 0,
-                'detail': [], 'partial': True}
-
-    total_imported = 0; total_updated = 0; total_skipped = 0; total_errors = 0
-    per_account = []
-    sync_iso = datetime.now(timezone.utc).isoformat()
-    partial = False
-
-    for ms_email, token in accounts:
-        if _time.monotonic() > DEADLINE:
-            partial = True
-            per_account.append(f'{ms_email}: pendiente (tiempo agotado, reintenta)')
-            continue
-        headers = {'Authorization': f'Bearer {token}', 'Accept': 'application/json'}
-        imported = 0; updated = 0; skipped = 0; errors = 0
-        page_error = False
-        r = req_lib.get(f'{MS_GRAPH_URL}/me/todo/lists', headers=headers, timeout=(8,20))
-        if r.status_code == 401:
-            per_account.append(f'{ms_email}: token expirado, reconecta'); continue
-        if r.status_code != 200:
-            per_account.append(f'{ms_email}: error {r.status_code}'); continue
-        lists = r.json().get('value', [])
-        for lst in lists:
-            if _time.monotonic() > DEADLINE: partial = True; break
-            list_id    = lst['id']
-            wk = lst.get('wellknownListName', '')
-            list_title = WELLKNOWN_NAME.get(wk, lst.get('displayName', 'To-Do'))
-            is_flagged_list = (wk == 'flaggedEmails')
-            # Filtro de ruido: saltar por completo la lista de "Correos marcados".
-            if is_flagged_list and not IMPORT_FLAGGED_EMAILS:
-                continue
-            # Import liviano: las subtareas se cargan bajo demanda al abrir cada tarea.
-            url = f'{MS_GRAPH_URL}/me/todo/lists/{list_id}/tasks?$top=100&$expand=linkedResources'
-            while url:
-                if _time.monotonic() > DEADLINE: partial = True; break
-                tr = req_lib.get(url, headers=headers, timeout=(10,20))
-                if tr.status_code != 200:
-                    print(f'[todo-sync] {ms_email}/{list_title}: error HTTP {tr.status_code} paginando tareas')
-                    page_error = True
-                    partial = True
-                    errors += 1
-                    break
-                tdata = tr.json()
-                batch = []
-                for task in tdata.get('value', []):
-                    title = (task.get('title') or '').strip()
-                    if not title: continue
-                    tid = task.get('id', '')
-                    # Datos comunes (sirven para insertar y para actualizar)
-                    lr = (task.get('linkedResources') or [])
-                    source_url = ''; source_app = ''
-                    if lr:
-                        source_url = lr[0].get('webUrl', '') or ''
-                        source_app = lr[0].get('applicationName', '') or ''
-                    elif is_flagged_list:
-                        source_app = 'Outlook'
-                    due = None
-                    if task.get('dueDateTime'):
-                        try: due = task['dueDateTime']['dateTime'][:10]
-                        except Exception: pass
-                    comp = None
-                    if task.get('completedDateTime'):
-                        try: comp = task['completedDateTime']['dateTime'][:10]
-                        except Exception: pass
-                    status  = status_map.get(task.get('status','notStarted'), 'pending')
-                    is_done = (task.get('status') == 'completed')
-
-                    existing = existing_by_src.get(tid)
-                    if existing:
-                        # ¿Microsoft cambió después de nuestra última sync? -> actualizar.
-                        ms_mod     = _parse_iso_dt(task.get('lastModifiedDateTime'))
-                        local_sync = _parse_iso_dt(existing.get('last_synced_at'))
-                        if ms_mod and local_sync and ms_mod <= local_sync:
-                            skipped += 1
-                            continue
-                        # No tocamos campos locales (project_id, assigned_to, notes…):
-                        # solo los que son propiedad de Microsoft To-Do.
-                        patch = {
-                            'title':          title[:300],
-                            'description':    (task.get('body') or {}).get('content', '')[:5000],
-                            'status':         status,
-                            'priority':       prio_map.get(task.get('importance','normal'), 'medium'),
-                            'due_date':       due,
-                            'completed_date': comp,
-                            'source_url':     source_url,
-                            'source_app':     source_app,
-                            'phase':          (list_title or 'General')[:100],
-                            'tags':           f'{list_title} · {ms_email}',
-                            'ms_list_id':     list_id,
-                            'last_synced_at': sync_iso,
-                        }
-                        if is_done:
-                            patch['progress_pct'] = 100
-                        elif (existing.get('progress_pct') or 0) >= 100:
-                            patch['progress_pct'] = 0
-                        if app.supabase.update('tasks', existing['id'], patch):
-                            updated += 1
-                            existing['last_synced_at'] = sync_iso
-                        else:
-                            errors += 1
-                        continue
-
-                    # Filtro de ruido: no crear tareas que YA vienen completadas
-                    # (las completadas históricas no aportan; las completadas de
-                    # tareas ya existentes sí se reflejan en el bloque de arriba).
-                    if is_done and not IMPORT_COMPLETED:
-                        skipped += 1
-                        continue
-
-                    # Tarea nueva -> insertar
-                    td = {
-                        'title':          title[:300],
-                        'description':    (task.get('body') or {}).get('content', '')[:5000],
-                        'status':         status,
-                        'priority':       prio_map.get(task.get('importance','normal'), 'medium'),
-                        'due_date':       due,
-                        'completed_date': comp,
-                        'tags':           f'{list_title} · {ms_email}',
-                        'phase':          (list_title or 'General')[:100],
-                        'source':         'ms_todo',
-                        'source_id':      tid,
-                        'source_url':     source_url,
-                        'source_app':     source_app,
-                        'ms_email':       ms_email,
-                        'ms_list_id':     list_id,
-                        'last_synced_at': sync_iso,
-                        'created_by':     created_by_id,
-                        'progress_pct':   100 if (is_done and comp) else 0,
-                        'subtasks':       [],
-                    }
-                    batch.append(td)
-                    existing_by_src[tid] = {'id': None, 'source_id': tid,
-                                            'last_synced_at': sync_iso, 'progress_pct': 0}
-                # BULK INSERT — un solo POST por página. ON CONFLICT(source_id) ignora
-                # las que ya existan (defensa contra carreras/reintentos): nunca duplica.
-                if batch:
-                    res = app.supabase.insert_on_conflict('tasks', batch, 'source_id')
-                    if res is None:
-                        errors += len(batch)
-                    else:
-                        imported += len(res)
-                        # Backfill del id real: si el mismo source_id reaparece más
-                        # adelante en esta misma corrida, la rama de "existing" de
-                        # arriba necesita el id real (no None) para poder actualizarlo.
-                        for row in res:
-                            src = row.get('source_id')
-                            if src and src in existing_by_src:
-                                existing_by_src[src]['id'] = row.get('id')
-                url = tdata.get('@odata.nextLink')
-        summary = f'{ms_email}: +{imported} nuevas, {updated} actualizadas, {skipped} sin cambios'
-        if page_error:
-            summary += ' (incompleto: error de red/API a mitad de paginación, reintenta)'
-        per_account.append(summary)
-        total_imported += imported; total_updated += updated
-        total_skipped  += skipped;  total_errors  += errors
-
-    return {'success': True, 'imported': total_imported, 'updated': total_updated,
-            'skipped': total_skipped, 'errors': total_errors,
-            'detail': per_account, 'partial': partial}
-
-
-def _run_todo_autosync_once(app):
-    """Una pasada de sincronización automática (sin sesión de usuario)."""
-    try:
-        accounts = get_all_ms_tokens(app)
-        if not accounts:
-            return
-        admins = app.supabase.get('users', {'role': 'admin'}, select='id') or []
-        created_by = admins[0]['id'] if admins else None
-        res = sync_ms_todo(app, accounts, created_by)
-        if res.get('imported') or res.get('updated'):
-            print(f"[todo-autosync] +{res.get('imported',0)} nuevas, "
-                  f"{res.get('updated',0)} actualizadas")
-    except Exception as e:
-        print(f'[todo-autosync] error: {e}')
-
-
-def start_todo_autosync(app, interval_min=5):
-    """Arranca un hilo que sincroniza To-Do → Sistema cada `interval_min` minutos.
-
-    Con gunicorn (varios workers) usamos un flock para que SOLO un worker corra el
-    scheduler y no se dupliquen las llamadas a Graph ni las inserciones. En Windows
-    (dev local) no hay fcntl: el scheduler no arranca y se usa el botón manual.
-    La dirección Sistema → To-Do sigue siendo inmediata en cada edición.
-    """
-    try:
-        import fcntl
-    except Exception:
-        print('[todo-autosync] fcntl no disponible (dev local): scheduler desactivado')
-        return
-    try:
-        lock_path = os.path.join(tempfile.gettempdir(), 'todo_autosync.lock')
-        lock_file = open(lock_path, 'w')
-        fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        # Mantener la referencia viva para conservar el lock durante toda la vida del worker
-        app._todo_autosync_lock = lock_file
-    except Exception:
-        # Otro worker ya tiene el lock: este no agenda nada
-        return
-
-    def _loop():
-        while True:
-            time.sleep(interval_min * 60)
-            _run_todo_autosync_once(app)
-
-    t = threading.Thread(target=_loop, name='todo-autosync', daemon=True)
-    t.start()
-    print(f'[todo-autosync] activo (cada {interval_min} min)')
-
-
-# ============================================================
 #  GOOGLE CREDENTIALS
 # ============================================================
 def get_google_creds(app):
@@ -1253,8 +724,7 @@ def _guardar_estado_google(app, cambios):
         return
     payload = json.dumps(nuevo)
     try:
-        # Por `key`, no por `id`: app_config no tiene columna id (ver
-        # set_todo_default_target).
+        # Por `key`, no por `id`: app_config no tiene columna id.
         filas = app.supabase.get('app_config', {'key': GOOGLE_HEALTH_KEY}, select='key')
         if filas:
             app.supabase.update('app_config', GOOGLE_HEALTH_KEY,
@@ -1424,9 +894,8 @@ def google_autoreconectar(app):
 def start_google_autoheal(app, interval_min=60):
     """Mantiene vivo el token de Google en segundo plano.
 
-    Mismo patrón que el autosync de To-Do: con gunicorn sólo un worker toma el
-    flock y agenda; en Windows (sin fcntl) no arranca y queda el cron externo o
-    el botón manual."""
+    Con gunicorn sólo un worker toma el flock y agenda; en Windows (sin fcntl)
+    no arranca y queda el cron externo o el botón manual."""
     try:
         import fcntl
     except Exception:
@@ -1538,8 +1007,8 @@ def browser_sync_allowed():
 # ============================================================
 #  ROLES MULTIPLES — un usuario puede tener varios roles de negocio
 #  (ej. "Encargado de Cuenca", "Auditor"), cada uno con su propio paquete de
-#  modulos + calendarios + proyectos + cuentas MS. Reemplaza el modelo directo
-#  de users.modules/calendar_permissions/ms_account_permissions como fuente de
+#  modulos + calendarios + proyectos. Reemplaza el modelo directo
+#  de users.modules/calendar_permissions como fuente de
 #  autorizacion (esas tablas se conservan como respaldo, ver migrations/014-015).
 # ============================================================
 def get_user_roles(app, uid):
@@ -1554,7 +1023,7 @@ def get_user_roles(app, uid):
     return result
 
 def role_grants(app, role_id):
-    """{modules, calendar_ids, project_ids, ms_emails, task_ids, narrowed_projects}
+    """{modules, calendar_ids, project_ids, task_ids, narrowed_projects}
     otorgados por un rol.
 
     task_ids / narrowed_projects modelan el acceso a ACTIVIDADES (tareas):
@@ -1570,14 +1039,12 @@ def role_grants(app, role_id):
     level = ((role[0].get('level') if role else None) or DEFAULT_ROLE_LEVEL)
     cals  = app.supabase.get('role_calendars',   {'role_id': role_id}, select='calendar_id')
     projs = app.supabase.get('role_projects',    {'role_id': role_id}, select='project_id')
-    msacc = app.supabase.get('role_ms_accounts', {'role_id': role_id}, select='ms_email')
     tasks = app.supabase.get('role_tasks',       {'role_id': role_id}, select='task_id,project_id')
     result = {
         'level':        level,
         'modules':      modules,
         'calendar_ids': {c['calendar_id'] for c in (cals or [])},
         'project_ids':  {p['project_id']  for p in (projs or [])},
-        'ms_emails':    {m['ms_email']    for m in (msacc or [])},
         'task_ids':          {t['task_id']    for t in (tasks or [])},
         'narrowed_projects': {t['project_id'] for t in (tasks or []) if t.get('project_id')},
     }
@@ -1621,8 +1088,8 @@ def get_active_role_id(app, uid):
 def get_active_role_grants(app, uid):
     rid = get_active_role_id(app, uid)
     if not rid:
-        return {'level': None, 'modules': [], 'calendar_ids': set(), 'project_ids': set(),
-                'ms_emails': set(), 'task_ids': set(), 'narrowed_projects': set()}
+        return {'level': None, 'modules': [], 'calendar_ids': set(),
+                'project_ids': set(), 'task_ids': set(), 'narrowed_projects': set()}
     return role_grants(app, rid)
 
 # ============================================================
@@ -1644,12 +1111,11 @@ _TABLAS_CONCESION = (
     ('user_modules',     'modulo',      'modules'),
     ('user_calendars',   'calendar_id', 'calendar_ids'),
     ('user_projects',    'project_id',  'project_ids'),
-    ('user_ms_accounts', 'ms_email',    'ms_emails'),
 )
 
 
 def get_user_grants(app, uid):
-    """Módulos, calendarios, proyectos y cuentas MS concedidos a ESTA persona.
+    """Módulos, calendarios y proyectos concedidos a ESTA persona.
 
     Las tablas pueden no existir todavía (migraciones 027 y 028 sin aplicar).
     En ese caso se devuelven conjuntos vacíos y el sistema se comporta como
@@ -1673,8 +1139,8 @@ def grants_efectivos(app, uid):
     """Lo que esta persona puede alcanzar: su ROL ACTIVO más lo suyo propio.
 
     Es el único sitio donde se combinan las dos fuentes. Todo lo que autoriza
-    —módulos, calendarios, proyectos, cuentas de Microsoft y la visibilidad de
-    las tareas— pasa por aquí, para que no puedan discrepar entre sí: un menú
+    —módulos, calendarios, proyectos y la visibilidad de las actividades—
+    pasa por aquí, para que no puedan discrepar entre sí: un menú
     que enseña un módulo que luego no deja entrar es peor que no enseñarlo."""
     rol  = get_active_role_grants(app, uid)
     mio  = get_user_grants(app, uid)
@@ -1684,7 +1150,6 @@ def grants_efectivos(app, uid):
         'modules':      set(rol['modules']) | mio['modules'],
         'calendar_ids': rol['calendar_ids'] | mio['calendar_ids'],
         'project_ids':  rol['project_ids']  | proyectos_propios,
-        'ms_emails':    rol['ms_emails']    | mio['ms_emails'],
         'task_ids':     rol['task_ids'],
         # Un proyecto concedido a la persona se ve ENTERO. El recorte por
         # actividades pertenece al rol; lo que el administrador da aparte, a
@@ -1771,19 +1236,12 @@ def csrf_protect(view):
         return view(*args, **kwargs)
     return wrapped
 
-def get_user_ms_emails(app, uid):
-    """Cuentas MS autorizadas: las del rol activo más las concedidas a la
-    persona (admins ven todas). Son las que deciden qué listas de To-Do ve."""
-    if is_admin():
-        return [t['email'] for t in (app.supabase.get('ms_tokens', select='email') or []) if t.get('email')]
-    return list(grants_efectivos(app, uid)['ms_emails'])
-
 def _delete_user_cascade(app, uid):
     """Borra las filas relacionadas (permisos, credenciales) antes del usuario,
     para no dejar huérfanas en calendar_permissions/webauthn_credentials/etc."""
     for tbl in ['calendar_permissions', 'webauthn_credentials', 'face_descriptors',
-                'ms_account_permissions', 'user_roles', 'user_permissions',
-                'user_modules', 'user_calendars', 'user_projects', 'user_ms_accounts']:
+                'user_roles', 'user_permissions',
+                'user_modules', 'user_calendars', 'user_projects']:
         for row in app.supabase.get(tbl, {'user_id': uid}, select='id'):
             app.supabase.delete(tbl, row['id'])
     ok = app.supabase.delete('users', uid)
@@ -1816,34 +1274,31 @@ def _project_allowed(app, task, uid):
     return True
 
 def _filter_visible_tasks(app, rows, uid):
-    """Misma regla de visibilidad usada en GET /planning/api/tasks: admins ven todo;
-    el resto solo tareas MS de cuentas autorizadas o tareas manuales propias/asignadas,
-    y si la tarea pertenece a un proyecto, ese proyecto debe estar autorizado."""
+    """Misma regla de visibilidad usada en GET /planning/api/tasks: admins ven
+    todo; el resto, las actividades que ha creado o tiene asignadas, y si la
+    actividad pertenece a un proyecto, ese proyecto debe estar autorizado.
+
+    Antes de eso se descarta lo que en su día bajó del To-Do de Microsoft. Esas
+    filas siguen en la base —borrarlas es una decisión de quien tiene los datos,
+    no de un filtro—, pero eran correos marcados y pendientes personales: no
+    son compromisos de un plan y no tienen nada que hacer en la planificación,
+    ni en el cronograma, ni en el panel, ni en el correo de incumplimientos."""
+    rows = [t for t in (rows or []) if t.get('source') != 'ms_todo']
     if is_admin():
         return rows
-    allowed_ms = set(get_user_ms_emails(app, uid))
     grants = grants_efectivos(app, uid)
-    has_todo = 'todo' in grants['modules']
-    has_plan = 'planning' in grants['modules']
+    if 'planning' not in grants['modules']:
+        return []
     suid = str(uid)
+    micorreo = (current_user.email or '').lower()
     def visible(t):
-        if t.get('source') == 'ms_todo':
-            if not has_todo: return False
-            if (t.get('ms_email') or '') not in allowed_ms: return False
-            return _project_allowed(app, t, uid)
-        if not has_plan: return False
         owns = (t.get('created_by') == suid or t.get('assigned_to') == suid or
-                (t.get('assigned_email') or '').lower() == (current_user.email or '').lower())
-        if not owns: return False
-        return _project_allowed(app, t, uid)
+                (t.get('assigned_email') or '').lower() == micorreo)
+        return owns and _project_allowed(app, t, uid)
     return [t for t in rows if visible(t)]
 
 def _user_owns_task(app, task, uid):
     """Misma regla de propiedad usada en planning_bulk_update: admins la evitan (is_admin() aparte)."""
-    if task.get('source') == 'ms_todo':
-        if (task.get('ms_email') or '') not in set(get_user_ms_emails(app, uid)):
-            return False
-        return _project_allowed(app, task, uid)
     owns = (task.get('created_by') == str(uid) or task.get('assigned_to') == str(uid) or
             (task.get('assigned_email') or '').lower() == (current_user.email or '').lower())
     if not owns:
@@ -2110,11 +1565,19 @@ def create_app():
     limiter.init_app(app)
     app.jinja_env.globals['csrf_token'] = generate_csrf
 
+    # La tabla del semáforo viaja tal cual a las plantillas. Es lo que evita que
+    # cada pantalla se invente sus propios colores y acaben discrepando sobre si
+    # un plazo está roto: la definición está en app/semaforo.py y aquí sólo se
+    # sirve. Se calcula una vez al arrancar porque no depende de nadie.
+    _SEMAFORO_JSON = json.dumps({'estados': _semaforo.ESTADOS,
+                                 'umbral_aviso': _semaforo.UMBRAL_AVISO})
+
     @app.context_processor
     def _inject_globals():
         return {'webauthn_available': WEBAUTHN_AVAILABLE,
                 'face_login_enabled': True,
                 'browser_sync_visible': browser_sync_allowed(),
+                'semaforo_json': _SEMAFORO_JSON,
                 # Admin EFECTIVO según el rol activo (no el flag fijo del sistema),
                 # para que la interfaz se limite/habilite al alternar de rol.
                 'is_effective_admin': is_admin()}
@@ -2229,34 +1692,15 @@ def create_app():
                 google_health = _leer_estado_google(app)
             except Exception:
                 pass
-        # Estado real de las otras dos integraciones. El menú las daba por
-        # desconectadas siempre: Microsoft salía «Conectar» aunque estuviera
-        # conectado, y el puente con ATLAS no aparecía en ninguna parte pese a
-        # existir y estar funcionando. Una integración que miente sobre su
-        # estado es peor que no mostrarla.
-        #
-        # Se comprueba sólo si HAY fila en ms_tokens, no se pide un token
-        # válido: get_ms_token puede disparar un refresco contra Microsoft, y
-        # eso no puede pasar al pintar cada página. Con caché de 2 minutos,
-        # igual que Google.
-        ms_connected = False
-        try:
-            if current_user.is_authenticated and app.supabase:
-                val, hit = _ms_cache.get('ms_conectado')
-                if hit:
-                    ms_connected = val
-                else:
-                    ms_connected = bool(app.supabase.get('ms_tokens', select='email'))
-                    _ms_cache.set('ms_conectado', ms_connected)
-        except Exception:
-            pass
+        # Estado real del puente con ATLAS. No aparecía en ninguna parte pese a
+        # existir y estar funcionando; una integración que no se ve es una
+        # integración que nadie sabe si está en pie.
         try:
             atlas_activo = _atlas.disponible()
         except Exception:
             atlas_activo = False
         return {'google_connected_global': connected, 'google_needs_reauth': needs_reauth,
-                'google_health': google_health,
-                'ms_connected_global': ms_connected, 'atlas_activo': atlas_activo,
+                'google_health': google_health, 'atlas_activo': atlas_activo,
                 'user_roles_list': user_roles_list, 'active_role_id': active_role_id,
                 'active_modules': active_modules}
 
@@ -2686,92 +2130,6 @@ def create_app():
                                min_password=MIN_PASSWORD)
 
     # ============================================================
-    #  MICROSOFT OAUTH — To-Do
-    # ============================================================
-    @app.route('/auth/microsoft')
-    @login_required
-    def auth_microsoft():
-        if not is_admin(): return redirect(url_for('planning'))
-        cid = app.config.get('MS_CLIENT_ID', '')
-        if not cid:
-            flash('Configura MS_CLIENT_ID en las variables de entorno.', 'warning')
-            return redirect(url_for('planning'))
-        redirect_uri = app.config.get('MS_REDIRECT_URI') or request.host_url.rstrip('/') + '/auth/microsoft/callback'
-        state = secrets.token_urlsafe(24)
-        session['ms_state'] = state
-        params = (f'?client_id={cid}'
-                  f'&response_type=code'
-                  f'&redirect_uri={_url_quote(redirect_uri, safe="")}'
-                  f'&scope={_url_quote(MS_SCOPES, safe="")}'
-                  f'&response_mode=query'
-                  f'&prompt=select_account'
-                  f'&state={_url_quote(state, safe="")}')
-        return redirect(MS_AUTH_URL + params)
-
-    @app.route('/auth/microsoft/callback')
-    @login_required
-    def auth_microsoft_callback():
-        if not is_admin(): return redirect(url_for('planning'))
-        code  = request.args.get('code')
-        error = request.args.get('error_description') or request.args.get('error')
-        if error:
-            flash(f'Microsoft error: {error}', 'danger')
-            return redirect(url_for('planning'))
-        if not code:
-            flash('No se recibió código de autorización.', 'danger')
-            return redirect(url_for('planning'))
-        expected_state = session.pop('ms_state', None)
-        if not expected_state or request.args.get('state') != expected_state:
-            flash('Sesión expirada o solicitud inválida. Intenta de nuevo.', 'warning')
-            return redirect(url_for('planning'))
-        redirect_uri = app.config.get('MS_REDIRECT_URI') or request.host_url.rstrip('/') + '/auth/microsoft/callback'
-        try:
-            r = req_lib.post(MS_TOKEN_URL, data={
-                'client_id':     app.config.get('MS_CLIENT_ID', ''),
-                'client_secret': app.config.get('MS_CLIENT_SECRET', ''),
-                'grant_type':    'authorization_code',
-                'code':          code,
-                'redirect_uri':  redirect_uri,
-                'scope':         MS_SCOPES,
-            }, timeout=(5, 15))
-            if r.status_code != 200:
-                flash(f'Error al obtener token: {r.text[:200]}', 'danger')
-                return redirect(url_for('planning'))
-            d = r.json()
-            exp = (datetime.now(timezone.utc)
-                   + timedelta(seconds=d.get('expires_in', 3600))).isoformat()
-            # Get user email from Graph
-            me_r = req_lib.get(f'{MS_GRAPH_URL}/me',
-                               headers={'Authorization': f'Bearer {d["access_token"]}'},
-                               timeout=(5, 10))
-            ms_email = me_r.json().get('mail') or me_r.json().get('userPrincipalName', 'microsoft') if me_r.ok else 'microsoft'
-            # Upsert token
-            existing = app.supabase.get('ms_tokens', {'email': ms_email})
-            token_data = {
-                'email':         ms_email,
-                'access_token':  d['access_token'],
-                'refresh_token': d.get('refresh_token', ''),
-                'expires_at':    exp,
-            }
-            if existing:
-                app.supabase.update('ms_tokens', existing[0]['id'], token_data)
-            else:
-                app.supabase.insert('ms_tokens', token_data)
-            flash(f'✅ Microsoft To-Do conectado ({ms_email})', 'success')
-        except Exception as e:
-            flash(f'Error de conexión: {e}', 'danger')
-        return redirect(url_for('planning'))
-
-    @app.route('/auth/microsoft/disconnect', methods=['POST'])
-    @login_required
-    def auth_microsoft_disconnect():
-        if not is_admin(): return jsonify({'success': False})
-        tokens = app.supabase.get('ms_tokens', select='id')
-        for t in (tokens or []):
-            app.supabase.delete('ms_tokens', t['id'])
-        return jsonify({'success': True})
-
-    # ============================================================
     #  GOOGLE OAUTH
     # ============================================================
     @app.route('/auth/google')
@@ -2883,7 +2241,7 @@ def create_app():
         if not filas:
             return jsonify({'success': False, 'error': 'Usuario no encontrado'}), 404
         persona = filas[0]
-        vacio = {'modules': [], 'calendar_ids': set(), 'project_ids': set(), 'ms_emails': set()}
+        vacio = {'modules': [], 'calendar_ids': set(), 'project_ids': set()}
         rol = role_grants(app, persona['active_role_id']) if persona.get('active_role_id') else vacio
         mio = get_user_grants(app, uid)
 
@@ -2910,8 +2268,6 @@ def create_app():
                        for c in _get_calendar_config(app)]
         proyectos = [{'id': p['id'], 'nombre': p.get('name') or '(sin nombre)', 'detalle': ''}
                      for p in (app.supabase.get('projects', select='id,name') or [])]
-        cuentas_ms = [{'id': t['email'], 'nombre': t['email'], 'detalle': 'Microsoft To-Do'}
-                      for t in (app.supabase.get('ms_tokens', select='email') or []) if t.get('email')]
 
         return jsonify({
             'success': True,
@@ -2923,7 +2279,6 @@ def create_app():
             'recursos': {
                 'calendarios': recursos(calendarios, 'calendar_ids', mio['calendar_ids']),
                 'proyectos':   recursos(proyectos,   'project_ids',  mio['project_ids']),
-                'cuentas_ms':  recursos(cuentas_ms,  'ms_emails',    mio['ms_emails']),
             },
         })
 
@@ -2933,8 +2288,7 @@ def create_app():
     def admin_user_permisos_guardar(uid):
         """Reemplaza lo concedido a una persona: módulos, recursos y acciones.
 
-        Body: {modulos: [...], calendarios: [...], proyectos: [...],
-               cuentas_ms: [...], permisos: [...]}
+        Body: {modulos: [...], calendarios: [...], proyectos: [...], permisos: [...]}
 
         Dentro de una categoría se REEMPLAZA: lo que no venga marcado se retira.
         La pantalla envía siempre el estado completo, así que quitar una casilla
@@ -2989,10 +2343,6 @@ def create_app():
         proys_nuevos = sincronizar(
             'user_projects', 'project_id', 'project_ids', 'proyectos',
             {p['id'] for p in (app.supabase.get('projects', select='id') or [])}, 'proyecto')
-        ms_nuevos = sincronizar(
-            'user_ms_accounts', 'ms_email', 'ms_emails', 'cuentas_ms',
-            {t['email'] for t in (app.supabase.get('ms_tokens', select='email') or [])
-             if t.get('email')}, 'cuenta MS')
 
         # ── Acciones dentro de cada módulo ─────────────────────────────────
         actuales = get_user_permissions(app, uid)
@@ -3027,7 +2377,6 @@ def create_app():
                         'modulos_sueltos': sorted(mods_nuevos),
                         'calendarios': sorted(cals_nuevos),
                         'proyectos': sorted(proys_nuevos),
-                        'cuentas_ms': sorted(ms_nuevos),
                         'agregados': len(concedido),
                         'quitados': len(retirado)})
 
@@ -3176,7 +2525,7 @@ def create_app():
     #
     #  El módulo de roles se quitó por pedido expreso. Antes de hacerlo se
     #  traspasó a permisos PERSONALES todo lo que cada rol concedía —módulos,
-    #  calendarios, proyectos y cuentas de Microsoft—, porque Cristina y Johanna
+    #  calendarios y proyectos—, porque Cristina y Johanna
     #  sacaban de ahí el cien por cien de sus accesos: retirarlo sin más las
     #  habría dejado sin un solo módulo ni calendario.
     #
@@ -3441,14 +2790,13 @@ def create_app():
         in_7d_iso = (date.today() + timedelta(days=7)).isoformat()
         # Tareas: aplica los mismos permisos que /planning/api/tasks (rol activo + proyecto)
         all_tasks = app.supabase.get('tasks',
-            select='id,status,due_date,priority,source,ms_email,created_by,assigned_to,assigned_email,subtasks,project_id') or []
+            select='id,status,due_date,priority,created_by,assigned_to,assigned_email,subtasks,project_id') or []
         all_tasks = _filter_visible_tasks(app, all_tasks, current_user.id)
         pending_all   = [t for t in all_tasks if t.get('status') != 'done']
         overdue       = [t for t in pending_all if t.get('due_date') and t['due_date'] < today_iso]
         today_tasks   = [t for t in pending_all if t.get('due_date') == today_iso]
         week_tasks    = [t for t in pending_all if t.get('due_date') and today_iso <= t['due_date'] <= in_7d_iso]
-        manual_pend   = [t for t in pending_all if t.get('source') != 'ms_todo']
-        todo_pend     = [t for t in pending_all if t.get('source') == 'ms_todo']
+        manual_pend   = pending_all
         # Subtareas pendientes (suma global)
         sub_pending = 0
         for t in pending_all:
@@ -3470,11 +2818,6 @@ def create_app():
             next_apts = next_apts[:5]
         except Exception:
             next_apts = []
-        # Cuentas MS conectadas (solo admin)
-        ms_accounts = []
-        if is_admin():
-            ms_accounts = [t.get('email','') for t in (app.supabase.get('ms_tokens', select='email') or []) if t.get('email')]
-
         # Directorio y Cronograma. Se consultan sólo si el usuario tiene el
         # módulo: al que no lo tiene no se le hace pagar la consulta, y las
         # tablas pueden no existir todavía si aún no se aplicó la migración 020
@@ -3509,10 +2852,8 @@ def create_app():
             'today_count':    len(today_tasks),
             'week_count':     len(week_tasks),
             'manual_pending': len(manual_pend),
-            'todo_pending':   len(todo_pend),
             'sub_pending':    sub_pending,
             'next_apts':      next_apts,
-            'ms_accounts':    ms_accounts,
             'contactos':      contactos_total,
             'sectores':       sectores_total,
             'planes':         planes_total,
@@ -3561,7 +2902,6 @@ def create_app():
                                pending_all=pending_all, google_connected=google_ok,
                                widgets=widgets,
                                can_planning=user_can('planning'),
-                               can_todo=user_can('todo'),
                                can_calendar=user_can('calendar'),
                                can_directorio=user_can('directorio'),
                                can_cronograma=user_can('cronograma'))
@@ -4262,25 +3602,11 @@ def create_app():
         if not user_can('planning'):
             flash('No tienes acceso al módulo Planificación.', 'warning')
             return redirect('/dashboard')
-        ms_connected = bool(get_ms_token(app))
-        return render_template('planning.html', ms_connected=ms_connected,
-                               is_admin_user=is_admin(), scope='planning',
+        return render_template('planning.html',
+                               is_admin_user=is_admin(),
                                can_cronograma=user_can('cronograma'),
                                page_title='Planificación',
                                page_sub='Cada proyecto con su responsable, su plazo y sus actividades')
-
-    @app.route('/todo')
-    @login_required
-    def todo():
-        if not user_can('todo'):
-            flash('No tienes acceso al módulo To-Do externo.', 'warning')
-            return redirect('/dashboard')
-        ms_connected = bool(get_ms_token(app))
-        return render_template('planning.html', ms_connected=ms_connected,
-                               is_admin_user=is_admin(), scope='todo',
-                               can_cronograma=False,
-                               page_title='Actividades',
-                               page_sub='Pendientes sincronizados en ambos sentidos con Microsoft To-Do')
 
     @app.route('/planning/api/projects', methods=['GET'])
     @login_required
@@ -4409,20 +3735,12 @@ def create_app():
     @app.route('/planning/api/tasks', methods=['GET'])
     @login_required
     def planning_tasks():
-        pid    = request.args.get('project_id')
-        scope  = request.args.get('scope', 'all')   # all | planning | todo
+        pid = request.args.get('project_id')
         if pid:
             rows = app.supabase.get('tasks', {'project_id': pid}, select='*')
         else:
             rows = app.supabase.get('tasks', select='*')
-        rows = rows or []
-        # Filtrar por scope (planning = manual; todo = MS)
-        if scope == 'planning':
-            rows = [t for t in rows if t.get('source') != 'ms_todo']
-        elif scope == 'todo':
-            rows = [t for t in rows if t.get('source') == 'ms_todo']
-        # Permisos por usuario
-        rows = _filter_visible_tasks(app, rows, current_user.id)
+        rows = _filter_visible_tasks(app, rows or [], current_user.id)
         return jsonify(rows)
 
     # ============================================================
@@ -4493,18 +3811,17 @@ def create_app():
         all_users = app.supabase.get('users', select='id,full_name,email,active_role_id') or []
         # Independiente del usuario: se consulta una sola vez fuera del bucle.
         rows = app.supabase.get('tasks',
-            select='id,due_date,status,created_by,assigned_to,assigned_email,ms_email,source,project_id') or []
+            select='id,due_date,status,created_by,assigned_to,assigned_email,project_id') or []
         sent_total = 0
-        empty_grants = {'modules': [], 'calendar_ids': set(), 'project_ids': set(), 'ms_emails': set()}
+        empty_grants = {'modules': [], 'calendar_ids': set(), 'project_ids': set()}
         for u in all_users:
             uid = u['id']
             # Job en segundo plano: se usa el rol activo PERSISTIDO de cada usuario
             # (users.active_role_id), no session['active_role_id'] (eso es del admin
             # que disparó el cron, no del usuario que se está evaluando).
             grants = role_grants(app, u['active_role_id']) if u.get('active_role_id') else empty_grants
-            mods = grants['modules']
-            if 'planning' not in mods and 'todo' not in mods: continue
-            has_todo = 'todo' in mods
+            if 'planning' not in grants['modules']: continue
+            micorreo = (u.get('email') or '').lower()
             overdue = []
             for t in rows:
                 if t.get('status') == 'done': continue
@@ -4512,107 +3829,15 @@ def create_app():
                 if not d or d >= today_iso: continue
                 pid = t.get('project_id')
                 if pid and pid not in grants['project_ids']: continue
-                if t.get('source') == 'ms_todo':
-                    if has_todo and (t.get('ms_email') or '') in grants['ms_emails']: overdue.append(t)
-                else:
-                    if (t.get('created_by') == uid or t.get('assigned_to') == uid or
-                        (t.get('assigned_email') or '').lower() == (u.get('email') or '').lower()):
-                        overdue.append(t)
+                if (t.get('created_by') == uid or t.get('assigned_to') == uid or
+                        (t.get('assigned_email') or '').lower() == micorreo):
+                    overdue.append(t)
             if overdue:
                 sent_total += send_push_to_user(app, uid,
-                    f'⛔ Tienes {len(overdue)} tareas vencidas',
-                    'Abre el sistema para revisar y reorganizar tus pendientes.',
-                    '/todo?tf=overdue')
+                    f'⛔ Tienes {len(overdue)} actividad(es) incumplida(s)',
+                    'Abre la planificación para revisar y reorganizar tus plazos.',
+                    '/planning?tf=overdue')
         return jsonify({'success': True, 'sent': sent_total})
-
-    @app.route('/planning/api/ms-accounts', methods=['GET'])
-    @login_required
-    def planning_ms_accounts():
-        if not is_admin(): return jsonify([])
-        rows = app.supabase.get('ms_tokens', select='email') or []
-        return jsonify([r.get('email') for r in rows if r.get('email')])
-
-    @app.route('/planning/api/ms-lists', methods=['GET'])
-    @login_required
-    def planning_ms_lists():
-        if not is_admin(): return jsonify([])
-        email = request.args.get('email', '')
-        if not email: return jsonify([])
-        token = get_ms_token_for(app, email)
-        if not token: return jsonify([])
-        try:
-            r = req_lib.get(f'{MS_GRAPH_URL}/me/todo/lists',
-                            headers={'Authorization': f'Bearer {token}'}, timeout=(5,15))
-            if r.status_code != 200: return jsonify([])
-            lists = r.json().get('value', [])
-            return jsonify([{'id': l['id'], 'name': l.get('displayName','To-Do')} for l in lists])
-        except Exception:
-            return jsonify([])
-
-    @app.route('/planning/api/todo-target', methods=['GET', 'POST'])
-    @login_required
-    def planning_todo_target():
-        """Lista de Microsoft To-Do a la que se envían las tareas creadas en el
-        sistema. Es lo que hace que la sincronización sea de ida y vuelta sin que
-        nadie tenga que elegir cuenta y lista en cada tarea."""
-        if request.method == 'GET':
-            return jsonify({'target': get_todo_default_target(app),
-                            'puede_configurar': is_admin()})
-        if not is_admin():
-            return jsonify({'success': False, 'error': 'Sólo un administrador puede fijar la lista por defecto'}), 403
-        cuerpo = request.get_json() or {}
-        email   = _sanitize(cuerpo.get('email'), 200)
-        list_id = _sanitize(cuerpo.get('list_id'), 300)
-        if email and not app.supabase.get('ms_tokens', {'email': email}, select='id'):
-            return jsonify({'success': False, 'error': 'Esa cuenta de Microsoft no está conectada'})
-        ok = set_todo_default_target(app, email, list_id, _sanitize(cuerpo.get('list_name'), 200))
-        return jsonify({'success': ok, 'target': get_todo_default_target(app)})
-
-    @app.route('/planning/api/push-pending-to-todo', methods=['POST'])
-    @login_required
-    def planning_push_pending():
-        """Sube a Microsoft To-Do las tareas del sistema que todavía no están allá.
-
-        Fijar la lista por defecto sólo afecta a las tareas NUEVAS. Sin esto, todo
-        lo creado en el sistema antes de configurarla se quedaba abajo para
-        siempre, y la promesa de que ambas caras muestran lo mismo era falsa para
-        el histórico. Esta ruta hace ese arrastre una vez."""
-        if not user_can('todo.sincronizar'):
-            return jsonify({'success': False,
-                            'error': 'No tienes permiso para sincronizar con Microsoft.'}), 403
-        destino = get_todo_default_target(app)
-        if not (destino and destino.get('email') and destino.get('list_id')):
-            return jsonify({'success': False,
-                            'error': 'Primero elige la lista de To-Do por defecto.'})
-
-        cuerpo = request.get_json(silent=True) or {}
-        incluir_completadas = bool(cuerpo.get('incluir_completadas'))
-        pendientes = [t for t in (app.supabase.get('tasks', select='*') or [])
-                      if not t.get('ms_email') and not t.get('source_id')
-                      and (incluir_completadas or t.get('status') != 'done')]
-
-        import time as _time
-        limite = _time.monotonic() + 90       # mismo tope que el resto de lotes
-        subidas, errores, parcial = 0, 0, False
-        for tarea in pendientes:
-            if _time.monotonic() > limite:
-                parcial = True
-                break
-            tarea['ms_email']   = destino['email']
-            tarea['ms_list_id'] = destino['list_id']
-            ok, nuevo_id = push_task_to_ms(app, tarea)
-            if ok and nuevo_id:
-                app.supabase.update('tasks', tarea['id'], {
-                    'ms_email':   destino['email'],
-                    'ms_list_id': destino['list_id'],
-                    'source_id':  nuevo_id,
-                    'source':     'ms_todo',
-                    'last_synced_at': datetime.now(timezone.utc).isoformat()})
-                subidas += 1
-            else:
-                errores += 1
-        return jsonify({'success': True, 'subidas': subidas, 'errores': errores,
-                        'pendientes': len(pendientes), 'parcial': parcial})
 
     @app.route('/planning/api/deps/<dep_id>', methods=['DELETE'])
     @login_required
@@ -4622,71 +3847,11 @@ def create_app():
             if not rows:
                 return jsonify({'success': False, 'error': 'No encontrada'}), 404
             task_rows = app.supabase.get('tasks', {'id': rows[0]['task_id']},
-                select='id,created_by,assigned_to,assigned_email,ms_email,source,project_id')
+                select='id,created_by,assigned_to,assigned_email,project_id')
             if not task_rows or not _user_owns_task(app, task_rows[0], current_user.id):
                 return jsonify({'success': False, 'error': 'Sin permisos'}), 403
         ok = app.supabase.delete('task_deps', dep_id)
         return jsonify({'success': ok})
-
-    @app.route('/planning/api/tasks/<tid>/refresh-subtasks', methods=['POST'])
-    @login_required
-    def planning_refresh_subtasks(tid):
-        """Trae las subtareas más recientes desde Microsoft To-Do para una tarea concreta."""
-        if not is_admin(): return jsonify({'success': False, 'error': 'Solo admin'})
-        rows = app.supabase.get('tasks', {'id': tid}, select='*')
-        if not rows: return jsonify({'success': False, 'error': 'Tarea no encontrada'})
-        task = rows[0]
-        ms_email = task.get('ms_email'); list_id = task.get('ms_list_id')
-        src_id   = task.get('source_id')
-        if not (ms_email and src_id):
-            return jsonify({'success': False, 'error': 'Esta tarea no es de Microsoft To-Do'})
-        token = get_ms_token_for(app, ms_email)
-        if not token: return jsonify({'success': False, 'error': 'Token MS no disponible'})
-        headers = {'Authorization': f'Bearer {token}'}
-        # Si no sabemos en qué lista vive la tarea, la buscamos
-        if not list_id:
-            try:
-                lr = req_lib.get(f'{MS_GRAPH_URL}/me/todo/lists', headers=headers, timeout=(5,15))
-                if lr.status_code != 200:
-                    return jsonify({'success': False, 'error': f'MS lists error {lr.status_code}'})
-                for lst in lr.json().get('value', []):
-                    cand = lst['id']
-                    chk = req_lib.get(
-                        f'{MS_GRAPH_URL}/me/todo/lists/{cand}/tasks/{src_id}',
-                        headers=headers, timeout=(5,10))
-                    if chk.status_code == 200:
-                        list_id = cand
-                        # Guardar para no buscar de nuevo
-                        app.supabase.update('tasks', tid, {'ms_list_id': list_id})
-                        break
-                if not list_id:
-                    return jsonify({'success': False, 'error': 'Tarea no encontrada en MS (¿borrada?)'})
-            except Exception as e:
-                return jsonify({'success': False, 'error': f'Buscando lista: {str(e)[:200]}'})
-        items = []
-        url = f'{MS_GRAPH_URL}/me/todo/lists/{list_id}/tasks/{src_id}/checklistItems?$top=200'
-        try:
-            while url:
-                r = req_lib.get(url, headers=headers, timeout=(5,15))
-                if r.status_code != 200:
-                    return jsonify({'success': False, 'error': f'MS error {r.status_code}'})
-                d = r.json()
-                items.extend(d.get('value', []))
-                url = d.get('@odata.nextLink')
-        except Exception as e:
-            return jsonify({'success': False, 'error': str(e)[:200]})
-        subs = [{
-            'id':   ci.get('id',''),
-            'name': (ci.get('displayName') or '').strip(),
-            'done': bool(ci.get('isChecked')),
-            'checked_at': ci.get('checkedDateTime'),
-        } for ci in items]
-        prog = int(sum(1 for s in subs if s.get('done')) * 100 / len(subs)) if subs else (task.get('progress_pct') or 0)
-        app.supabase.update('tasks', tid, {
-            'subtasks':       subs,
-            'progress_pct':   prog,
-            'last_synced_at': datetime.now(timezone.utc).isoformat()})
-        return jsonify({'success': True, 'count': len(subs), 'progress': prog, 'subtasks': subs})
 
     @app.route('/planning/api/tasks/<tid>/subtask/<sid>', methods=['PATCH'])
     @login_required
@@ -4713,30 +3878,14 @@ def create_app():
         upd = {'subtasks': subs, 'progress_pct': prog,
                'updated_at': datetime.now(timezone.utc).isoformat()}
         ok = app.supabase.update('tasks', tid, upd)
-        # Push a Microsoft si corresponde
-        pushed = False
-        if ok and task.get('source') == 'ms_todo' and task.get('ms_email') and task.get('ms_list_id') and task.get('source_id'):
-            token = get_ms_token_for(app, task['ms_email'])
-            if token:
-                try:
-                    r = req_lib.patch(
-                        f"{MS_GRAPH_URL}/me/todo/lists/{task['ms_list_id']}/tasks/{task['source_id']}/checklistItems/{sid}",
-                        headers={'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'},
-                        json={'isChecked': done}, timeout=(5,15))
-                    pushed = r.status_code in (200, 204)
-                except Exception:
-                    pass
-        return jsonify({'success': ok, 'pushed_to_ms': pushed, 'progress': prog})
+        return jsonify({'success': ok, 'progress': prog})
 
     @app.route('/planning/api/tasks', methods=['POST'])
     @login_required
     def planning_create_task():
         d = request.get_json() or {}
-        wants_ms = bool(d.get('ms_email') and d.get('ms_list_id'))
-        if not user_can('todo' if wants_ms else 'planning'):
-            return jsonify({'success': False, 'error': 'Sin acceso a este módulo'})
-        if wants_ms and not is_admin() and d['ms_email'] not in get_user_ms_emails(app, current_user.id):
-            return jsonify({'success': False, 'error': 'No tienes autorización sobre esa cuenta de Microsoft'})
+        if not user_can('planning'):
+            return jsonify({'success': False, 'error': 'Sin acceso al módulo Planificación'})
         if d.get('project_id') and not is_admin() and not user_has_project_access(app, current_user.id, d['project_id']):
             return jsonify({'success': False, 'error': 'No tienes acceso a ese proyecto'})
         d['created_by'] = current_user.id
@@ -4768,67 +3917,29 @@ def create_app():
                 d['due_date'] = heredada
             if not d.get('start_date'):
                 d['start_date'] = date.today().isoformat()
-        # Sin destino explícito se usa la lista por defecto, de modo que toda
-        # tarea creada aquí aparezca también en Microsoft To-Do. Es lo que cierra
-        # el círculo de la sincronización: antes sólo bajaba, ahora también sube.
-        # Sólo para quien tiene el módulo To-Do: si no lo tuviera, la tarea
-        # pasaría a source='ms_todo' y dejaría de verla el propio autor.
-        if not d.get('ms_email') and d.get('sync_todo', True) and user_can('todo'):
-            destino = get_todo_default_target(app)
-            if destino and destino.get('email') and destino.get('list_id'):
-                permitidas = get_user_ms_emails(app, current_user.id)
-                if is_admin() or destino['email'] in permitidas:
-                    d['ms_email']   = destino['email']
-                    d['ms_list_id'] = destino['list_id']
-        d.pop('sync_todo', None)
-        # Si se solicita sincronizar con MS, marcar como ms_todo
-        if d.get('ms_email') and d.get('ms_list_id'):
-            d.setdefault('source', 'ms_todo')
         r = app.supabase.insert('tasks', d)
-        task = r[0] if r else None
-        # Push a Microsoft si corresponde
-        if task and task.get('ms_email') and task.get('ms_list_id'):
-            ok, new_src = push_task_to_ms(app, task)
-            if ok and new_src:
-                app.supabase.update('tasks', task['id'],
-                    {'source_id': new_src,
-                     'last_synced_at': datetime.now(timezone.utc).isoformat()})
-                task['source_id'] = new_src
-        return jsonify({'success': bool(r), 'task': task})
+        return jsonify({'success': bool(r), 'task': r[0] if r else None})
 
     @app.route('/planning/api/tasks/<tid>', methods=['PATCH'])
     @login_required
     def planning_update_task(tid):
         if not is_admin():
             rows = app.supabase.get('tasks', {'id': tid},
-                select='id,created_by,assigned_to,assigned_email,ms_email,source,project_id')
+                select='id,created_by,assigned_to,assigned_email,project_id')
             task = rows[0] if rows else None
             if not task or not _user_owns_task(app, task, current_user.id):
                 return jsonify({'success': False, 'error': 'Sin permisos'}), 403
         d = request.get_json() or {}
-        # No basta con validar el estado PREVIO de la tarea: si el body intenta
-        # reasignarla a un proyecto o cuenta MS fuera del rol activo, se rechaza.
+        # No basta con validar el estado PREVIO de la actividad: si el body
+        # intenta reasignarla a un proyecto fuera del rol activo, se rechaza.
         if not is_admin():
             if d.get('project_id') and not user_has_project_access(app, current_user.id, d['project_id']):
                 return jsonify({'success': False, 'error': 'No tienes acceso a ese proyecto'}), 403
-            if d.get('ms_email') and d['ms_email'] not in get_user_ms_emails(app, current_user.id):
-                return jsonify({'success': False, 'error': 'No tienes autorización sobre esa cuenta de Microsoft'}), 403
         d['updated_at'] = datetime.now(timezone.utc).isoformat()
         if d.get('status') == 'done' and not d.get('completed_date'):
             d['completed_date'] = date.today().isoformat()
         ok = app.supabase.update('tasks', tid, d)
-        pushed = False
-        if ok:
-            current = app.supabase.get('tasks', {'id': tid}, select='*')
-            if current:
-                pushed, new_src = push_task_to_ms(app, current[0])
-                if pushed:
-                    upd = {'last_synced_at': datetime.now(timezone.utc).isoformat()}
-                    if new_src and not current[0].get('source_id'):
-                        upd['source_id'] = new_src
-                        upd['source']    = 'ms_todo'
-                    app.supabase.update('tasks', tid, upd)
-        return jsonify({'success': ok, 'pushed_to_ms': pushed})
+        return jsonify({'success': ok})
 
     @app.route('/planning/api/tasks/bulk', methods=['POST'])
     @login_required
@@ -4843,36 +3954,26 @@ def create_app():
         if patch.get('status') == 'done' and not patch.get('completed_date'):
             patch['completed_date'] = date.today().isoformat()
             patch['progress_pct']   = 100
-        # Permisos: si no es admin, valida que todas le pertenezcan (dueño/asignado/cuenta MS + proyecto del rol activo)
+        # Permisos: si no es admin, valida que todas le pertenezcan (dueño o
+        # asignado, y el proyecto dentro del rol activo)
         if not is_admin():
             if patch.get('project_id') and not user_has_project_access(app, current_user.id, patch['project_id']):
                 return jsonify({'success': False, 'error': 'No tienes acceso a ese proyecto'}), 403
-            if patch.get('ms_email') and patch['ms_email'] not in get_user_ms_emails(app, current_user.id):
-                return jsonify({'success': False, 'error': 'No tienes autorización sobre esa cuenta de Microsoft'}), 403
             rows = app.supabase.get_in('tasks', 'id', ids,
-                select='id,created_by,assigned_to,assigned_email,ms_email,source,project_id')
+                select='id,created_by,assigned_to,assigned_email,project_id')
             ids = [t['id'] for t in rows if _user_owns_task(app, t, current_user.id)]
             if not ids:
                 return jsonify({'success': False, 'error': 'Sin permisos'})
         import time as _time
         DEADLINE = _time.monotonic() + 90
-        updated = 0; pushed = 0; errors = 0; partial = False
+        updated = 0; errors = 0; partial = False
         for tid in ids:
             if _time.monotonic() > DEADLINE: partial = True; break
-            ok = app.supabase.update('tasks', tid, patch)
-            if ok:
+            if app.supabase.update('tasks', tid, patch):
                 updated += 1
-                # Push a MS si la tarea es de To-Do
-                try:
-                    rows = app.supabase.get('tasks', {'id': tid}, select='*')
-                    if rows:
-                        pushed_ok, _ = push_task_to_ms(app, rows[0])
-                        if pushed_ok: pushed += 1
-                except Exception:
-                    pass
             else:
                 errors += 1
-        return jsonify({'success': True, 'updated': updated, 'pushed_to_ms': pushed,
+        return jsonify({'success': True, 'updated': updated,
                         'errors': errors, 'partial': partial})
 
     @app.route('/planning/api/tasks/bulk-delete', methods=['POST'])
@@ -4884,63 +3985,51 @@ def create_app():
         # Borrar de golpe es borrar, así que pide el mismo permiso que borrar de
         # una en una. Antes era «solo admin», y eso dejaba el interruptor
         # «Eliminar tareas» sin efecto por este camino.
-        if not (is_admin() or user_can('todo.eliminar') or user_can('planning.eliminar')):
+        if not (is_admin() or user_can('planning.eliminar')):
             return jsonify({'success': False,
-                            'error': 'No tienes permiso para eliminar tareas.'}), 403
+                            'error': 'No tienes permiso para eliminar actividades.'}), 403
         import time as _time
         DEADLINE = _time.monotonic() + 90
-        deleted = 0; deleted_ms = 0; partial = False; omitidas = 0
+        deleted = 0; partial = False; omitidas = 0
         for tid in ids:
             if _time.monotonic() > DEADLINE: partial = True; break
             rows = app.supabase.get('tasks', {'id': tid}, select='*')
             task = rows[0] if rows else None
-            # A diferencia del borrado de una sola tarea, aquí no había ninguna
-            # comprobación por tarea: bastaba mandar los ids. Como ahora entra
-            # gente que no es administrador, cada una se verifica —que sea suya
-            # y que tenga el permiso del módulo al que pertenece— en vez de
-            # confiar en la lista que llega del navegador.
+            # A diferencia del borrado de una sola actividad, aquí no había
+            # ninguna comprobación por fila: bastaba mandar los ids. Como ahora
+            # entra gente que no es administrador, cada una se verifica —que sea
+            # suya y que tenga el permiso— en vez de confiar en la lista que
+            # llega del navegador.
             if task and not is_admin():
-                ambito = 'todo' if task.get('ms_email') else 'planning'
                 if not (_user_owns_task(app, task, current_user.id)
-                        and user_can(f'{ambito}.eliminar')):
+                        and user_can('planning.eliminar')):
                     omitidas += 1
                     continue
             if app.supabase.delete('tasks', tid):
                 deleted += 1
-                if task and delete_task_in_ms(app, task):
-                    deleted_ms += 1
-        return jsonify({'success': True, 'deleted': deleted, 'deleted_in_ms': deleted_ms,
+        return jsonify({'success': True, 'deleted': deleted,
                         'omitidas': omitidas, 'partial': partial})
 
     @app.route('/planning/api/tasks/<tid>', methods=['DELETE'])
     @login_required
     def planning_delete_task(tid):
-        # Obtener tarea antes de borrar para poder eliminarla en MS
         rows = app.supabase.get('tasks', {'id': tid}, select='*')
         task = rows[0] if rows else None
         if not task:
             return jsonify({'success': False, 'error': 'No encontrada'}), 404
         if not is_admin() and not _user_owns_task(app, task, current_user.id):
             return jsonify({'success': False, 'error': 'Sin permisos'}), 403
-        # El permiso de borrado depende de dónde vive la tarea: si está atada a
-        # una cuenta de Microsoft es del módulo Actividades, si no es de
-        # Proyectos. Es la misma regla que usa el alta (planning_create_task).
-        ambito = 'todo' if task.get('ms_email') else 'planning'
-        if not user_can(f'{ambito}.eliminar'):
+        if not user_can('planning.eliminar'):
             return jsonify({'success': False,
-                            'error': 'No tienes permiso para eliminar tareas.'}), 403
-        ok = app.supabase.delete('tasks', tid)
-        deleted_ms = False
-        if ok and task:
-            deleted_ms = delete_task_in_ms(app, task)
-        return jsonify({'success': ok, 'deleted_in_ms': deleted_ms})
+                            'error': 'No tienes permiso para eliminar actividades.'}), 403
+        return jsonify({'success': app.supabase.delete('tasks', tid)})
 
     @app.route('/planning/api/deps/<tid>', methods=['GET'])
     @login_required
     def planning_task_deps(tid):
         if not is_admin():
             task_rows = app.supabase.get('tasks', {'id': tid},
-                select='id,created_by,assigned_to,assigned_email,ms_email,source,project_id')
+                select='id,created_by,assigned_to,assigned_email,project_id')
             if not task_rows or not _user_owns_task(app, task_rows[0], current_user.id):
                 return jsonify({'success': False, 'error': 'Sin permisos'}), 403
         rows = app.supabase.get('task_deps', {'task_id': tid}, select='id,depends_on')
@@ -4954,58 +4043,11 @@ def create_app():
             for field in ('task_id', 'depends_on'):
                 tid = d.get(field)
                 task_rows = app.supabase.get('tasks', {'id': tid},
-                    select='id,created_by,assigned_to,assigned_email,ms_email,source,project_id') if tid else []
+                    select='id,created_by,assigned_to,assigned_email,project_id') if tid else []
                 if not task_rows or not _user_owns_task(app, task_rows[0], current_user.id):
                     return jsonify({'success': False, 'error': 'Sin permisos sobre una de las tareas'}), 403
         r = app.supabase.insert_ignore('task_deps', d)
         return jsonify({'success': bool(r)})
-
-    @app.route('/planning/api/import-todo', methods=['POST'])
-    @login_required
-    def planning_import_todo():
-        # Antes era «sólo admin» y por eso el interruptor «Sincronizar con
-        # Microsoft» de la pantalla de permisos no servía de nada: se podía
-        # conceder y seguía sin dejar pulsar el botón. Ahora manda el permiso,
-        # que para un administrador siempre es cierto.
-        if not user_can('todo.sincronizar'):
-            return jsonify({'success': False,
-                            'error': 'No tienes permiso para sincronizar con Microsoft.'}), 403
-        accounts = get_all_ms_tokens(app)
-        # Filtro opcional: ?email=jomap@... para sincronizar una sola cuenta
-        only_email = (request.args.get('email') or '').strip().lower()
-        if only_email:
-            accounts = [(e, t) for (e, t) in accounts if e.lower() == only_email]
-        if not accounts:
-            return jsonify({'success': False, 'needs_auth': True,
-                'error': 'Microsoft To-Do no está conectado. Conecta primero desde Planificación.'})
-        try:
-            return jsonify(sync_ms_todo(app, accounts, current_user.id))
-        except Exception as e:
-            return jsonify({'success': False, 'error': str(e)[:300]})
-
-    @app.route('/planning/api/sync-todo-cron', methods=['POST', 'GET'])
-    def planning_sync_todo_cron():
-        """Sincronización automática To-Do ⇄ Sistema disparada por un cron externo.
-
-        No requiere sesión: se autentica con un secreto (header X-Cron-Secret o
-        ?secret=...). Trae a Microsoft los cambios hechos en el sistema ya se empujan
-        en cada edición; aquí jalamos los cambios hechos directamente en To-Do, aunque
-        nadie tenga la página abierta.
-        """
-        secret = app.config.get('CRON_SECRET') or ''
-        given  = request.headers.get('X-Cron-Secret') or request.args.get('secret') or ''
-        if not secret or given != secret:
-            return jsonify({'success': False, 'error': 'No autorizado'}), 401
-        accounts = get_all_ms_tokens(app)
-        if not accounts:
-            return jsonify({'success': False, 'error': 'Sin cuentas Microsoft conectadas'})
-        # created_by para las tareas nuevas: el primer admin del sistema
-        admins = app.supabase.get('users', {'role': 'admin'}, select='id') or []
-        created_by = admins[0]['id'] if admins else None
-        try:
-            return jsonify(sync_ms_todo(app, accounts, created_by))
-        except Exception as e:
-            return jsonify({'success': False, 'error': str(e)[:300]})
 
     @app.route('/planning/api/export-excel')
     @login_required
@@ -5184,19 +4226,17 @@ def create_app():
             return jsonify(val)
 
         hoy = date.today().isoformat()
-        datos = {'actividades': 0, 'proyectos': 0, 'calendario': 0,
+        datos = {'proyectos': 0, 'calendario': 0,
                  'cronograma': 0, 'directorio': 0, 'usuarios': 0}
         try:
-            if user_can('todo') or user_can('planning'):
+            if user_can('planning'):
                 tareas = _filter_visible_tasks(app, app.supabase.get(
-                    'tasks', select='id,status,due_date,source,ms_email,created_by,'
+                    'tasks', select='id,status,due_date,created_by,'
                                     'assigned_to,assigned_email,project_id') or [],
                     current_user.id)
-                vencidas = [t for t in tareas
-                            if t.get('status') != 'done' and t.get('due_date')
-                            and t['due_date'] < hoy]
-                datos['actividades'] = sum(1 for t in vencidas if t.get('source') == 'ms_todo')
-                datos['proyectos']   = sum(1 for t in vencidas if t.get('source') != 'ms_todo')
+                datos['proyectos'] = sum(
+                    1 for t in tareas
+                    if t.get('status') != 'done' and t.get('due_date') and t['due_date'] < hoy)
         except Exception:
             pass
         try:
@@ -5315,7 +4355,6 @@ def create_app():
 
     # Trabajos de fondo (un solo worker se los queda mediante flock).
     if app.supabase:
-        start_todo_autosync(app, interval_min=5)
         # Mantiene vivo el permiso de Google y sube las citas que quedaron
         # atrasadas en cuanto la conexión vuelve.
         start_google_autoheal(app, interval_min=60)

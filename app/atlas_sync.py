@@ -319,7 +319,7 @@ def _sincronizar(app, zona, deadline_segundos):
 
 
 def arrancar_autosync(app, zona, interval_min=10):
-    """Hilo de fondo, con el mismo candado de un solo worker que el de To-Do."""
+    """Hilo de fondo, con el mismo candado de un solo worker que los demás."""
     if not disponible():
         print('[atlas-sync] sin ATLAS_SUPABASE_KEY: desactivado')
         return

@@ -66,6 +66,19 @@
 .g-riesgos ul{margin:0;padding-left:20px}
 .g-riesgos li{font-size:.82rem;color:#475569;margin-bottom:3px}
 
+/* ===== SEMÁFORO ===== */
+.sem-dot{display:inline-block;width:9px;height:9px;border-radius:50%;flex-shrink:0}
+.sem-chip{display:inline-flex;align-items:center;gap:5px;padding:2px 9px;border-radius:20px;
+  font-size:.68rem;font-weight:700;white-space:nowrap}
+.sem-resumen{background:#fff;border:1.5px solid #e2e8f0;border-radius:14px;padding:12px 16px;margin-bottom:14px}
+.sem-bar{display:flex;height:10px;border-radius:5px;overflow:hidden;background:#f1f5f9}
+.sem-bar span{display:block;height:100%}
+.sem-leyenda{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+.sem-lg{display:inline-flex;align-items:center;gap:6px;background:#fff;border:1.5px solid #e2e8f0;
+  border-radius:20px;padding:3px 12px;font-size:.75rem;font-weight:600;cursor:pointer;transition:.15s}
+.sem-lg:hover{transform:translateY(-1px);box-shadow:0 3px 8px rgba(0,0,0,.07)}
+.sem-lg.on{box-shadow:0 3px 10px rgba(0,0,0,.12)}
+
 .badge-estado{display:inline-block;padding:2px 9px;border-radius:20px;font-size:.68rem;font-weight:700;white-space:nowrap}
 .be-pending{background:#fef3c7;color:#92400e}
 .be-in_progress{background:#dbeafe;color:#1e40af}
@@ -117,22 +130,29 @@
 <div id="sinPlanes" class="mod-empty" style="display:none">
   <div class="me-ic">📊</div>
   <p class="mt-2">Todavía no hay ningún cronograma.<br>
-  Crea uno y trae las actividades desde tus pendientes del To-Do.</p>
+  Crea uno y trae las actividades de tus proyectos.</p>
   <button class="btn btn-primary btn-sm rounded-pill" onclick="abrirPlan(null)">+ Crear el primero</button>
 </div>
 
 <div id="zonaPlan" style="display:none">
+  {# El marcador responde a la pregunta del cronograma: QUÉ SE CUMPLIÓ Y QUÉ
+     NO. «Avance del plan» solo no la contesta —se puede ir al 90 % habiendo
+     incumplido todos los plazos—, así que al lado va el porcentaje de lo que
+     se cerró A TIEMPO. #}
   <div class="stats-row">
     <div class="stat-card info"><div class="sc-num" id="stActividades">0</div><div class="sc-lbl">Actividades</div></div>
-    <div class="stat-card success"><div class="sc-num" id="stCompletadas">0</div><div class="sc-lbl">Completadas</div></div>
     <div class="stat-card warning"><div class="sc-num" id="stAvance">0%</div><div class="sc-lbl">Avance del plan</div></div>
-    <div class="stat-card danger"><div class="sc-num" id="stVencidas">0</div><div class="sc-lbl">Vencidas</div></div>
+    <div class="stat-card success"><div class="sc-num" id="stCumplimiento">—</div><div class="sc-lbl">Cumplidas a tiempo</div></div>
+    <div class="stat-card danger"><div class="sc-num" id="stVencidas">0</div><div class="sc-lbl">Incumplidas</div></div>
   </div>
+
+  <!-- SEMÁFORO: el reparto del plan por color, y la leyenda de qué es cada uno -->
+  <div id="semResumen" class="sem-resumen"></div>
 
   <div class="mod-toolbar">
     <button class="btn btn-primary btn-sm rounded-pill" onclick="abrirActividad(null)">+ Actividad</button>
     <button class="btn btn-outline-primary btn-sm rounded-pill" onclick="abrirImportarTareas()">
-      📥 Traer de Actividades
+      📥 Traer del plan
     </button>
     <button class="btn btn-outline-secondary btn-sm rounded-pill" onclick="sincronizarTareas()">
       🔄 Actualizar avance
@@ -162,7 +182,7 @@
       <thead>
         <tr>
           <th>#</th><th>Actividad</th><th>Responsable</th><th>Inicio</th><th>Fin</th>
-          <th>Días</th><th>Avance</th><th>Estado</th><th>Origen</th><th></th>
+          <th>Días</th><th>Avance</th><th>Estado</th><th>Semáforo</th><th></th>
         </tr>
       </thead>
       <tbody id="actCuerpo"></tbody>
@@ -288,12 +308,12 @@
   </div>
 </div>
 
-<!-- ============ TRAER TAREAS DEL TO-DO ============ -->
+<!-- ============ TRAER ACTIVIDADES DE LA PLANIFICACIÓN ============ -->
 <div class="modal fade cro-modal" id="modalImportarTareas" tabindex="-1">
   <div class="modal-dialog modal-lg modal-dialog-scrollable">
     <div class="modal-content border-0 shadow">
       <div class="modal-header">
-        <h5 class="modal-title text-white">📥 Traer actividades del To-Do</h5>
+        <h5 class="modal-title text-white">📥 Traer actividades del plan</h5>
         <button class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
       </div>
       <div class="modal-body">
@@ -308,7 +328,7 @@
           <button class="btn btn-outline-secondary btn-sm rounded-pill" onclick="marcarTareas(false)">Ninguna</button>
         </div>
         <table class="act-table">
-          <thead><tr><th style="width:36px"></th><th>Tarea</th><th>Proyecto / lista</th>
+          <thead><tr><th style="width:36px"></th><th>Actividad</th><th>Proyecto</th>
             <th>Vence</th><th>Estado</th></tr></thead>
           <tbody id="tareasCuerpo"></tbody>
         </table>
@@ -416,6 +436,49 @@ const COLORES = {pending:'#f59e0b', in_progress:'#4f46e5', review:'#8b5cf6',
                  done:'#10b981', blocked:'#ef4444'};
 const hoy = new Date(); hoy.setHours(0,0,0,0);
 
+// El semáforo viene de app/semaforo.py, el mismo que pinta la lista de
+// Planificación y el que escribe el correo de incumplimientos. Aquí no se
+// redefine nada: una barra en ámbar y su fila en rojo sería el sistema
+// contradiciéndose sobre si un plazo está roto.
+const SEMAFORO = {{ semaforo_json|default('{"estados":{},"umbral_aviso":3}', true)|safe }};
+const SEM = SEMAFORO.estados;
+const UMBRAL = SEMAFORO.umbral_aviso;
+const SEM_ORDEN = ['rojo','ambar','verde','tardio','cumplido','gris'];
+
+function hoyISO() { return new Date().toISOString().split('T')[0]; }
+function diasEntre(a, b) {
+  return Math.round((new Date(a + 'T00:00:00') - new Date(b + 'T00:00:00')) / 86400000);
+}
+
+// Misma regla que el servidor, letra por letra.
+function evaluarSemaforo(fin, estado, cerrada) {
+  if (estado === 'done') {
+    if (!fin || !cerrada) return {id:'cumplido', dias:null};
+    const d = diasEntre(fin, cerrada);
+    return {id: d >= 0 ? 'cumplido' : 'tardio', dias: d};
+  }
+  if (!fin) return {id:'gris', dias:null};
+  const d = diasEntre(fin, hoyISO());
+  if (d < 0)       return {id:'rojo',  dias:d};
+  if (d <= UMBRAL) return {id:'ambar', dias:d};
+  return {id:'verde', dias:d};
+}
+
+function semActividad(a) {
+  return evaluarSemaforo(a.end_date, a.status, a.completed_date);
+}
+
+function textoSemaforo(s) {
+  switch (s.id) {
+    case 'rojo':     return `Incumplida · ${Math.abs(s.dias)} d de retraso`;
+    case 'ambar':    return s.dias === 0 ? 'Vence hoy' : `Vence en ${s.dias} d`;
+    case 'verde':    return `En plazo · ${s.dias} d`;
+    case 'cumplido': return s.dias === null ? 'Cumplida' : `Cumplida · ${s.dias} d antes`;
+    case 'tardio':   return `Cumplida ${Math.abs(s.dias)} d tarde`;
+    default:         return 'Sin plazo';
+  }
+}
+
 document.addEventListener('DOMContentLoaded', () => {
   modalPlan            = new bootstrap.Modal(document.getElementById('modalPlan'));
   modalActividad       = new bootstrap.Modal(document.getElementById('modalActividad'));
@@ -429,8 +492,12 @@ document.addEventListener('DOMContentLoaded', () => {
     boton.title = 'IA no disponible: ' + (IA.motivo || '');
   }
 
-  cargarPlanes().then(() => {
-    const accion = new URLSearchParams(location.search).get('accion');
+  // El cronograma de un proyecto llega por la URL: /cronograma?plan=<id>. Lo
+  // pone el botón «Ver en Gantt» de Planificación, que crea el plan si hacía
+  // falta y trae sus actividades antes de traernos aquí.
+  const parametros = new URLSearchParams(location.search);
+  cargarPlanes(parametros.get('plan') || undefined).then(() => {
+    const accion = parametros.get('accion');
     if (accion === 'nuevo') abrirPlan(null);
     if (accion === 'importar') {
       // Sin cronograma no hay dónde meter las actividades (cargarPlanes ya
@@ -475,7 +542,11 @@ async function cargarPlanes(seleccionar) {
   document.getElementById('planPills').style.display = hay ? '' : 'none';
   if (!hay) { planActivo = null; return; }
 
-  const id = seleccionar || (planActivo && planes.some(p => p.id === planActivo.id) ? planActivo.id : planes[0].id);
+  // Si el id pedido ya no existe (plan borrado, enlace viejo) se cae al
+  // primero en vez de dejar la pantalla vacía sin explicar por qué.
+  const pedido = seleccionar && planes.some(p => p.id === seleccionar) ? seleccionar : null;
+  const id = pedido ||
+    (planActivo && planes.some(p => p.id === planActivo.id) ? planActivo.id : planes[0].id);
   pintarPlanes(id);
   await cargarActividades(id);
 }
@@ -541,6 +612,13 @@ async function cargarActividades(planId) {
   if (r.success === false) { aviso(r.error, 'danger'); return; }
   planActivo = r.plan;
   actividades = r.actividades || [];
+  pintar();
+}
+
+// Todo lo que depende de `actividades` se repinta junto. Antes cada sitio se
+// llamaba por su cuenta y el filtro de semáforo habría dejado la tabla y las
+// barras discrepando.
+function pintar() {
   pintarEstadisticas();
   pintarAnalisis();
   pintarGantt();
@@ -570,26 +648,73 @@ function pintarAnalisis() {
 
 function pintarEstadisticas() {
   const total = actividades.length;
-  const hechas = actividades.filter(a => a.status === 'done').length;
   const avance = total ? Math.round(actividades.reduce((s, a) => s + (a.progress_pct || 0), 0) / total) : 0;
-  const vencidas = actividades.filter(a =>
-    a.status !== 'done' && a.end_date && aFecha(a.end_date) < hoy).length;
+
+  const cuenta = {};
+  SEM_ORDEN.forEach(k => cuenta[k] = 0);
+  actividades.forEach(a => { const id = semActividad(a).id; cuenta[id]++; });
+
+  // Cumplimiento = qué parte de lo que TENÍA PLAZO se cerró a tiempo. Lo
+  // entregado con retraso cuenta como entregado, no como cumplido: es justo la
+  // distinción que el porcentaje de avance borra.
+  const conPlazo = total - cuenta.gris;
+  const cumplimiento = conPlazo ? Math.round(cuenta.cumplido * 100 / conPlazo) : null;
+
   document.getElementById('stActividades').textContent = total;
-  document.getElementById('stCompletadas').textContent = hechas;
   document.getElementById('stAvance').textContent = avance + '%';
-  document.getElementById('stVencidas').textContent = vencidas;
+  document.getElementById('stCumplimiento').textContent =
+    cumplimiento === null ? '—' : cumplimiento + '%';
+  document.getElementById('stVencidas').textContent = cuenta.rojo;
+
+  pintarSemaforo(cuenta, total);
+}
+
+// La barra dice de un vistazo cómo está repartido el plan, y la leyenda de
+// debajo filtra: pulsar «Incumplidas» deja sólo esas, en la tabla y en el Gantt.
+function pintarSemaforo(cuenta, total) {
+  const caja = document.getElementById('semResumen');
+  if (!caja) return;
+  if (!total) { caja.innerHTML = ''; return; }
+  const trozos = SEM_ORDEN.filter(k => cuenta[k]).map(k =>
+    `<span style="width:${cuenta[k] * 100 / total}%;background:${SEM[k].color}"
+           title="${esc(SEM[k].etiqueta)}: ${cuenta[k]}"></span>`).join('');
+  const leyenda = SEM_ORDEN.map(k => {
+    const on = filtroSem === k;
+    return `<button class="sem-lg ${on ? 'on' : ''}" onclick="filtrarSemaforo('${k}')"
+      style="color:${SEM[k].color};${on ? 'background:' + SEM[k].fondo + ';border-color:' + SEM[k].color : ''}"
+      title="Ver sólo lo que está en ${esc(SEM[k].etiqueta.toLowerCase())}">
+      <span class="sem-dot" style="background:${SEM[k].color}"></span>
+      ${esc(SEM[k].etiqueta)} <strong>${cuenta[k]}</strong></button>`;
+  }).join('');
+  caja.innerHTML = `<div class="sem-bar">${trozos}</div><div class="sem-leyenda">${leyenda}
+    ${filtroSem ? `<button class="sem-lg" onclick="filtrarSemaforo('')">✕ Quitar filtro</button>` : ''}</div>`;
+}
+
+let filtroSem = '';
+function filtrarSemaforo(id) {
+  filtroSem = (filtroSem === id) ? '' : id;
+  pintar();
+}
+
+// Lo que se enseña en la tabla y en las barras, ya filtrado por color.
+function actividadesVisibles() {
+  return filtroSem ? actividades.filter(a => semActividad(a).id === filtroSem) : actividades;
 }
 
 function pintarTablaActividades() {
   const cuerpo = document.getElementById('actCuerpo');
-  if (!actividades.length) {
+  const lista = actividadesVisibles();
+  if (!lista.length) {
     cuerpo.innerHTML = `<tr><td colspan="10" class="text-center text-muted py-4">
-      Sin actividades. Agrégalas o tráelas de tus pendientes del To-Do.</td></tr>`;
+      ${actividades.length
+        ? 'Ninguna actividad está en ese color.'
+        : 'Sin actividades. Agrégalas o tráelas de la planificación.'}</td></tr>`;
     return;
   }
-  cuerpo.innerHTML = actividades.map((a, i) => {
-    const vencida = a.status !== 'done' && a.end_date && aFecha(a.end_date) < hoy;
-    return `<tr class="${vencida ? 'vencida' : ''}">
+  cuerpo.innerHTML = lista.map((a, i) => {
+    const s = semActividad(a);
+    const e = SEM[s.id];
+    return `<tr class="${s.id === 'rojo' ? 'vencida' : ''}">
       <td class="text-muted">${i + 1}</td>
       <td>
         <div class="fw-semibold">${a.is_milestone ? '◆ ' : ''}${esc(a.name)}</div>
@@ -597,16 +722,17 @@ function pintarTablaActividades() {
       </td>
       <td>${esc(a.responsible || '')}</td>
       <td>${esc(a.start_date || '—')}</td>
-      <td>${vencida ? `<span class="text-danger fw-bold">${esc(a.end_date)}</span>` : esc(a.end_date || '—')}</td>
+      <td style="color:${e.color};font-weight:${s.id === 'rojo' ? '700' : '400'}">${esc(a.end_date || '—')}</td>
       <td>${a.duration_days ?? '—'}</td>
       <td>
         <div class="progress" style="height:6px;width:70px">
-          <div class="progress-bar" style="width:${a.progress_pct || 0}%;background:${COLORES[a.status] || '#4f46e5'}"></div>
+          <div class="progress-bar" style="width:${a.progress_pct || 0}%;background:${e.color}"></div>
         </div>
         <span class="small text-muted">${a.progress_pct || 0}%</span>
       </td>
       <td><span class="badge-estado be-${esc(a.status)}">${esc(ESTADOS[a.status] || a.status)}</span></td>
-      <td>${a.task_id ? '<span class="small text-muted">✅ To-Do</span>' : '<span class="small text-muted">✍️ manual</span>'}</td>
+      <td><span class="sem-chip" style="background:${e.fondo};color:${e.color}"
+            title="${esc(textoSemaforo(s))}"><span class="sem-dot" style="background:${e.color}"></span>${esc(e.etiqueta)}</span></td>
       <td><button class="btn-xs btn-xs-edit" onclick="abrirActividad('${a.id}')">Abrir</button></td>
     </tr>`;
   }).join('');
@@ -617,11 +743,15 @@ function pintarTablaActividades() {
 // ——————————————————————————————————————————
 function pintarGantt() {
   const caja = document.getElementById('ganttInterior');
-  const conFechas = actividades.filter(a => a.start_date || a.end_date);
+  // El filtro por color vale también aquí: pedir «sólo las incumplidas» y que
+  // el diagrama siguiera enseñándolas todas sería contestar otra pregunta.
+  const lista = actividadesVisibles();
+  const conFechas = lista.filter(a => a.start_date || a.end_date);
   if (!conFechas.length) {
     caja.innerHTML = `<div class="mod-empty"><div class="me-ic">📊</div>
-      <p class="mt-2">Ninguna actividad tiene fechas todavía.<br>
-      Ponlas a mano o deja que la IA proponga el cronograma completo.</p></div>`;
+      <p class="mt-2">${actividades.length && filtroSem
+        ? 'Ninguna actividad de ese color tiene fechas.'
+        : 'Ninguna actividad tiene fechas todavía.<br>Ponlas a mano o deja que la IA proponga el cronograma completo.'}</p></div>`;
     return;
   }
 
@@ -672,7 +802,7 @@ function pintarGantt() {
   // guardar dónde quedó cada barra no hay forma de unirlas.
   const ALTO_FILA = window.matchMedia('(max-width:768px)').matches ? 42 : 38;
   const geometria = {};
-  actividades.forEach((a, indice) => {
+  lista.forEach((a, indice) => {
     if (!(a.start_date || a.end_date)) return;
     const ini = aFecha(a.start_date || a.end_date);
     const fin = aFecha(a.end_date || a.start_date);
@@ -684,7 +814,7 @@ function pintarGantt() {
     };
   });
 
-  const filas = actividades.map(a => {
+  const filas = lista.map(a => {
     if (!(a.start_date || a.end_date)) {
       return `<div class="g-row" onclick="abrirActividad('${a.id}')">
         <div class="g-label"><span class="gl-text text-muted">${esc(a.name)}</span></div>
@@ -695,24 +825,31 @@ function pintarGantt() {
     const fin = aFecha(a.end_date || a.start_date);
     const izq = pct(ini);
     const ancho = Math.max(pct(fin) + unDia - izq, unDia * 0.6);
-    const color = a.color || COLORES[a.status] || '#4f46e5';
+    const s = semActividad(a);
+    const e = SEM[s.id];
+    // El color de la barra lo pone el SEMÁFORO, no el estado. Antes una tarea
+    // «en progreso» se pintaba azul tanto si le sobraba un mes como si llevaba
+    // dos semanas de retraso: el diagrama enseñaba en qué se está trabajando,
+    // no qué se está incumpliendo. Un color propio elegido a mano (a.color)
+    // sigue mandando, porque es una decisión explícita de quien hizo el plan.
+    const color = a.color || e.color;
     const avance = a.progress_pct || 0;
-    const vencida = a.status !== 'done' && aFecha(a.end_date || a.start_date) < hoy;
 
     const barra = a.is_milestone
       ? `<div class="g-milestone" style="left:calc(${izq}% - 11px);background:${esc(color)}"
-              title="${esc(a.name)} — hito ${esc(a.end_date || a.start_date)}"></div>`
+              title="${esc(a.name)} — hito ${esc(a.end_date || a.start_date)} · ${esc(textoSemaforo(s))}"></div>`
       : `<div class="g-bar" style="left:${izq}%;width:${ancho}%;background:${esc(color)}"
-              title="${esc(a.name)} · ${esc(a.start_date || '?')} → ${esc(a.end_date || '?')} · ${avance}%">
+              title="${esc(a.name)} · ${esc(a.start_date || '?')} → ${esc(a.end_date || '?')} · ${avance}% · ${esc(textoSemaforo(s))}">
            <div class="g-fill" style="width:${avance}%"></div>
            <span class="g-txt">${ancho > 7 ? esc(a.name.slice(0, 28)) : ''}</span>
          </div>`;
 
     return `<div class="g-row" onclick="abrirActividad('${a.id}')">
-      <div class="g-label" title="${esc(a.name)}">
-        <span class="badge-estado be-${esc(a.status)}">${esc((ESTADOS[a.status] || '').slice(0, 3))}</span>
+      <div class="g-label" title="${esc(a.name)} — ${esc(textoSemaforo(s))}">
+        <span class="sem-dot" style="background:${e.color}"></span>
         <span class="gl-text">${a.is_milestone ? '◆ ' : ''}${esc(a.name)}</span>
-        ${vencida ? '<span class="text-danger">⛔</span>' : ''}
+        ${s.id === 'rojo' ? '<span class="text-danger">⛔</span>' : ''}
+        ${s.id === 'tardio' ? '<span style="color:#c2410c">🟠</span>' : ''}
       </div>
       <div class="g-track">${lineaHoy}${barra}</div>
     </div>`;
@@ -724,7 +861,7 @@ function pintarGantt() {
       <div class="g-scale">${fondo}${meses}${encabezado}
         ${pctHoy === null ? '' : `<div class="g-today" style="left:${pctHoy}%"></div>`}</div>
     </div>
-    <div style="position:relative">${filas}${dibujarDependencias(geometria)}</div>
+    <div style="position:relative">${filas}${dibujarDependencias(geometria, lista)}</div>
   </div>`;
 }
 
@@ -736,9 +873,9 @@ function pintarGantt() {
 //  incumple (B arranca antes de que A termine), que es justo lo que hay que
 //  detectar de un vistazo.
 // ——————————————————————————————————————————
-function dibujarDependencias(geometria) {
+function dibujarDependencias(geometria, lista) {
   let trazos = '';
-  actividades.forEach(b => {
+  (lista || actividades).forEach(b => {
     const destino = geometria[b.id];
     if (!destino) return;
     (b.depends_on || []).forEach(idA => {
@@ -851,7 +988,7 @@ async function borrarActividad() {
 }
 
 // ——————————————————————————————————————————
-//  TRAER DEL TO-DO
+//  TRAER DE LA PLANIFICACIÓN
 // ——————————————————————————————————————————
 async function abrirImportarTareas() {
   tareasDisponibles = await pedir(`/cronograma/api/planes/${planActivo.id}/tareas-disponibles`);
@@ -891,14 +1028,14 @@ async function importarTareas() {
     {method: 'POST', body: JSON.stringify({task_ids: ids})});
   if (!r.success) { aviso(r.error || 'No se pudo importar', 'danger'); return; }
   modalImportarTareas.hide();
-  aviso(`${r.importadas} actividad(es) traída(s) del To-Do`);
+  aviso(`${r.importadas} actividad(es) traída(s) de la planificación`);
   await cargarPlanes(planActivo.id);
 }
 
 async function sincronizarTareas() {
   const r = await pedir(`/cronograma/api/planes/${planActivo.id}/sincronizar-tareas`, {method: 'POST'});
   if (!r.success) { aviso(r.error || 'No se pudo sincronizar', 'danger'); return; }
-  aviso(r.mensaje || `${r.actualizadas} actividad(es) actualizada(s) desde el To-Do`);
+  aviso(r.mensaje || `${r.actualizadas} actividad(es) actualizada(s) desde la planificación`);
   if (r.actualizadas) await cargarPlanes(planActivo.id);
 }
 

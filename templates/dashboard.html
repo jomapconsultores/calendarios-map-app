@@ -42,21 +42,24 @@
 {% endif %}
 
 <!-- INDICADORES: estado del día -->
-{% if can_planning or can_todo %}
+{# Los indicadores son el semáforo del panel: rojo lo incumplido, ámbar lo que
+   aprieta, verde lo que va con margen. Los mismos colores que la lista de
+   Planificación y las barras del cronograma, y cada uno abre justo eso. #}
+{% if can_planning %}
 <div class="stat-grid">
-  <a href="/todo?tf=overdue" class="stat-tile" style="--tone:#dc2626;--tone-bg:#fef2f2;--tone-fg:#b91c1c" title="Tareas cuyo plazo ya venció">
-    <span><span class="stat-label">Vencidas</span><span class="stat-value d-block">{{widgets.overdue}}</span></span>
-    <span class="stat-ic">⛔</span>
+  <a href="/planning?tf=overdue" class="stat-tile" style="--tone:#dc2626;--tone-bg:#fef2f2;--tone-fg:#b91c1c" title="Actividades cuyo plazo ya venció">
+    <span><span class="stat-label">Incumplidas</span><span class="stat-value d-block">{{widgets.overdue}}</span></span>
+    <span class="stat-ic">🔴</span>
   </a>
-  <a href="/todo?tf=today" class="stat-tile" style="--tone:#059669;--tone-bg:#ecfdf5;--tone-fg:#047857" title="Tareas que vencen hoy">
-    <span><span class="stat-label">Para hoy</span><span class="stat-value d-block">{{widgets.today_count}}</span></span>
-    <span class="stat-ic">📌</span>
+  <a href="/planning?tf=today" class="stat-tile" style="--tone:#d97706;--tone-bg:#fffbeb;--tone-fg:#b45309" title="Actividades que vencen hoy">
+    <span><span class="stat-label">Vencen hoy</span><span class="stat-value d-block">{{widgets.today_count}}</span></span>
+    <span class="stat-ic">🟡</span>
   </a>
-  <a href="/todo?tf=week" class="stat-tile" style="--tone:#7c3aed;--tone-bg:#f5f3ff;--tone-fg:#6d28d9" title="Tareas de los próximos 7 días">
+  <a href="/planning?tf=week" class="stat-tile" style="--tone:#16a34a;--tone-bg:#f0fdf4;--tone-fg:#15803d" title="Actividades de los próximos 7 días">
     <span><span class="stat-label">Esta semana</span><span class="stat-value d-block">{{widgets.week_count}}</span></span>
-    <span class="stat-ic">🗓</span>
+    <span class="stat-ic">🟢</span>
   </a>
-  <a href="/todo" class="stat-tile" style="--tone:#2563eb;--tone-bg:#eff6ff;--tone-fg:#1d4ed8" title="Todas las tareas pendientes">
+  <a href="/planning" class="stat-tile" style="--tone:#2563eb;--tone-bg:#eff6ff;--tone-fg:#1d4ed8" title="Todas las actividades pendientes">
     <span><span class="stat-label">Pendientes</span><span class="stat-value d-block">{{widgets.total_pending}}</span></span>
     <span class="stat-ic">📋</span>
   </a>
@@ -112,20 +115,14 @@
   <div class="col-md-{% if can_calendar %}5{% else %}12{% endif %}">
     <div class="card border-0 shadow-sm h-100">
       <div class="card-body p-3">
-        <h6 class="mb-2">📊 Estado por fuente</h6>
+        <h6 class="mb-2">📊 Estado del trabajo</h6>
         {% if can_planning %}
         <div class="src-row">
-          <span class="src-chip" style="background:#eef2ff;color:#3730a3">✍️ Sistema</span>
+          <span class="src-chip" style="background:#eef2ff;color:#3730a3">📋 Actividades</span>
           <span class="src-count">{{widgets.manual_pending}} <small>pendientes</small></span>
         </div>
-        {% endif %}
-        {% if can_todo %}
         <div class="src-row">
-          <span class="src-chip" style="background:#e0f2fe;color:#075985">📋 Microsoft</span>
-          <span class="src-count">{{widgets.todo_pending}} <small>pendientes</small></span>
-        </div>
-        <div class="src-row">
-          <span class="src-chip" style="background:#fef3c7;color:#92400e">📑 Subtareas</span>
+          <span class="src-chip" style="background:#fef3c7;color:#92400e">📑 Pasos</span>
           <span class="src-count">{{widgets.sub_pending}} <small>pendientes</small></span>
         </div>
         {% endif %}
@@ -141,9 +138,6 @@
           <span class="src-count">{{widgets.contactos}} <small>registro(s) en {{widgets.sectores}} sector(es)</small></span>
         </div>
         {% endif %}
-        {% if widgets.ms_accounts %}
-        <small class="text-muted">Cuentas MS conectadas: {{ widgets.ms_accounts|length }}</small>
-        {% endif %}
       </div>
     </div>
   </div>
@@ -153,16 +147,6 @@
    trabajo del día primero, después planificación y datos, y al final la cuenta
    y la administración. Cada una aparece sólo si el rol activo la habilita. #}
 <div class="row g-3 mt-1">
-  {% if can_todo %}
-  <div class="col-md-6 col-xl-4">
-    <a href="/todo" class="module-card">
-      <div class="m-icon" style="background:#dcfce7">✅</div>
-      <h6>Actividades</h6>
-      <p class="m-sub mb-2">{{widgets.total_pending}} pendiente(s) · sincronizado con To-Do</p>
-      <span class="btn btn-primary btn-sm rounded-pill">Ver pendientes →</span>
-    </a>
-  </div>
-  {% endif %}
   {# Una sola tarjeta para toda la planificación: la lista de proyectos con sus
      plazos y el cronograma de barras son la misma cosa vista de dos maneras, y
      en dos tarjetas seguidas parecían dos sistemas para planificar lo mismo. #}

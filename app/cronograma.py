@@ -5,15 +5,20 @@
 
 Un plan agrupa actividades; cada actividad tiene fechas, duración, avance,
 responsable y dependencias. Las actividades pueden escribirse a mano o traerse
-del To-Do — todas o sólo las que hagan falta, que es como se trabaja: no todo lo
-que está en la lista de pendientes entra en un cronograma formal.
+de la planificación — todas o sólo las que hagan falta, que es como se trabaja:
+no toda actividad de un proyecto entra en un cronograma formal.
+
+Las barras se pintan con el SEMÁFORO (app/semaforo.py), no con el estado: una
+actividad «en progreso» se veía azul tanto si le sobraba un mes como si llevaba
+dos semanas de retraso, y así el diagrama enseñaba en qué se trabaja, no qué se
+está incumpliendo — que es lo que se viene a mirar.
 
 La IA hace el trabajo pesado de planificar: propone fechas de inicio y fin,
 duraciones y el orden de dependencias. Lo que devuelve es una PROPUESTA, no un
 cambio: se muestra al usuario y se aplica sólo lo que él aprueba. Planificar es
 una decisión suya; la IA le ahorra el borrador.
 
-La actividad importada guarda `task_id`, así que el avance del To-Do se puede
+La actividad importada guarda `task_id`, así que el avance del plan se puede
 refrescar sobre el cronograma sin volver a crearla.
 """
 from datetime import datetime, timezone, date, timedelta
@@ -25,7 +30,13 @@ from . import ia as ia_mod
 
 CAMPOS_ACTIVIDAD = {'name', 'description', 'responsible', 'start_date', 'end_date',
                     'duration_days', 'progress_pct', 'status', 'priority', 'color',
-                    'is_milestone', 'depends_on', 'order_index', 'ai_notes', 'task_id'}
+                    'is_milestone', 'depends_on', 'order_index', 'ai_notes', 'task_id',
+                    # La fecha en que se cerró de verdad. Es lo que separa
+                    # «cumplida» de «cumplida con retraso»: sin ella, marcar algo
+                    # como hecho tres semanas tarde se vería igual de verde que
+                    # entregarlo a tiempo, y el cronograma dejaría de servir para
+                    # analizar qué se cumplió.
+                    'completed_date'}
 
 ESTADOS = ('pending', 'in_progress', 'review', 'done', 'blocked')
 PRIORIDADES = ('low', 'medium', 'high', 'urgent')
@@ -92,6 +103,63 @@ def registrar_cronograma(app, ctx):
         filas = db().get('gantt_plans', {'id': pid}, select='*')
         return filas[0] if filas else None
 
+    def _guardar_actividad(aid, cambios):
+        """Guarda tolerando que la migración 031 no esté aplicada.
+
+        `completed_date` sólo existe a partir de esa migración. Si todavía no se
+        corrió, PostgREST rechaza el PATCH ENTERO y el usuario ve que marcar una
+        actividad como hecha «no hace nada», sin ninguna pista de por qué. Así
+        que se reintenta sin esa columna: lo que se pierde es distinguir el
+        retraso, no el cambio de estado. Mismo criterio que `_crear_usuario` en
+        app/__init__.py con `created_by_admin`."""
+        if db().update('gantt_activities', aid, cambios):
+            return True
+        recorte = {k: v for k, v in cambios.items() if k != 'completed_date'}
+        if recorte == cambios:
+            return False
+        return db().update('gantt_activities', aid, recorte)
+
+    def _volcar_tareas(pid, tareas):
+        """Convierte actividades de la planificación en barras de este plan.
+
+        Devuelve las filas creadas, o None si no había ninguna nueva. Lo usan
+        los dos caminos: la importación a mano y el cronograma que se abre desde
+        un proyecto."""
+        existentes = db().get('gantt_activities', {'plan_id': pid},
+                              select='task_id,order_index') or []
+        ya_importadas = {a.get('task_id') for a in existentes}
+        orden = max([a.get('order_index') or 0 for a in existentes], default=0)
+
+        nuevas = []
+        for t in tareas:
+            if t['id'] in ya_importadas:
+                continue
+            orden += 1
+            inicio = _fecha(t.get('start_date'))
+            fin    = _fecha(t.get('due_date'))
+            nuevas.append({
+                'plan_id': pid, 'task_id': t['id'],
+                'name': _sanitize(t.get('title'), 300),
+                'description': _sanitize(t.get('description'), 2000) or None,
+                'responsible': _sanitize(t.get('assigned_to'), 200) or None,
+                'start_date': inicio, 'end_date': fin,
+                'duration_days': _dias_habiles(inicio, fin),
+                'progress_pct': t.get('progress_pct') or 0,
+                'status': t.get('status') if t.get('status') in ESTADOS else 'pending',
+                'priority': t.get('priority') if t.get('priority') in PRIORIDADES else 'medium',
+                'completed_date': _fecha(t.get('completed_date')),
+                'order_index': orden,
+                'created_by': current_user.id,
+            })
+        if not nuevas:
+            return None
+        filas = db().insert('gantt_activities', nuevas)
+        if filas is None:
+            for fila in nuevas:                   # migración 031 sin aplicar
+                fila.pop('completed_date', None)
+            filas = db().insert('gantt_activities', nuevas)
+        return filas or []
+
     def _normalizar_actividad(entrada):
         """Deja una actividad lista para guardar: fechas válidas, duración
         coherente con ellas, avance acotado, dependencias como lista de ids."""
@@ -104,11 +172,19 @@ def registrar_cronograma(app, ctx):
                 act[campo] = _sanitize(act[campo], 2000) or None
         if 'responsible' in act:
             act['responsible'] = _sanitize(act['responsible'], 200) or None
-        for campo in ('start_date', 'end_date'):
+        for campo in ('start_date', 'end_date', 'completed_date'):
             if campo in act:
                 act[campo] = _fecha(act[campo])
         if 'status' in act and act['status'] not in ESTADOS:
             act['status'] = 'pending'
+        # Cerrar una actividad sin decir cuándo dejaría el semáforo sin poder
+        # distinguir a tiempo de tarde; se apunta hoy, que es cuando se cerró.
+        if act.get('status') == 'done' and not act.get('completed_date'):
+            act['completed_date'] = date.today().isoformat()
+        elif act.get('status'):
+            # Reabrir una actividad borra su fecha de cierre: si se quedara,
+            # seguiría contando como cumplida en el marcador.
+            act['completed_date'] = None
         if 'priority' in act and act['priority'] not in PRIORIDADES:
             act['priority'] = 'medium'
         if 'color' in act and act['color']:
@@ -276,6 +352,9 @@ def registrar_cronograma(app, ctx):
         actividad['plan_id'] = pid
         actividad['created_by'] = current_user.id
         fila = db().insert('gantt_activities', actividad)
+        if not fila and 'completed_date' in actividad:
+            actividad.pop('completed_date')      # migración 031 sin aplicar
+            fila = db().insert('gantt_activities', actividad)
         return jsonify({'success': bool(fila), 'actividad': fila[0] if fila else None})
 
     @app.route('/cronograma/api/actividades/<aid>', methods=['PATCH'])
@@ -294,7 +373,7 @@ def registrar_cronograma(app, ctx):
         if not cambios:
             return jsonify({'success': False, 'error': 'Nada que actualizar'})
         cambios['updated_at'] = datetime.now(timezone.utc).isoformat()
-        return jsonify({'success': db().update('gantt_activities', aid, cambios)})
+        return jsonify({'success': _guardar_actividad(aid, cambios)})
 
     @app.route('/cronograma/api/actividades/<aid>', methods=['DELETE'])
     @login_required
@@ -311,16 +390,17 @@ def registrar_cronograma(app, ctx):
         return jsonify({'success': db().delete('gantt_activities', aid)})
 
     # ============================================================
-    #  TRAER ACTIVIDADES DESDE EL TO-DO
+    #  TRAER ACTIVIDADES DESDE LA PLANIFICACIÓN
     # ============================================================
     @app.route('/cronograma/api/planes/<pid>/tareas-disponibles', methods=['GET'])
     @login_required
     def cronograma_tareas_disponibles(pid):
-        """Tareas del To-Do que el usuario ve y que aún no están en este plan.
+        """Actividades de la planificación que el usuario ve y que aún no están
+        en este plan.
 
-        Se filtran con la MISMA regla de visibilidad que el módulo de tareas: el
-        cronograma no puede convertirse en una puerta trasera para ver tareas de
-        cuentas o proyectos ajenos al rol activo."""
+        Se filtran con la MISMA regla de visibilidad que el módulo de
+        Planificación: el cronograma no puede convertirse en una puerta trasera
+        para ver actividades de proyectos ajenos al rol activo."""
         if not user_can('cronograma'):
             return _sin_acceso()
         plan = _cargar_plan(pid)
@@ -343,8 +423,7 @@ def registrar_cronograma(app, ctx):
                 'status': t.get('status'), 'priority': t.get('priority'),
                 'start_date': t.get('start_date'), 'due_date': t.get('due_date'),
                 'progress_pct': t.get('progress_pct') or 0,
-                'assigned_to': t.get('assigned_to'), 'ms_email': t.get('ms_email'),
-                'source': t.get('source'),
+                'assigned_to': t.get('assigned_to'),
                 'proyecto': proyectos.get(t.get('project_id')),
             })
         disponibles.sort(key=lambda t: (t.get('due_date') or '9999-99-99', t.get('title') or ''))
@@ -353,7 +432,7 @@ def registrar_cronograma(app, ctx):
     @app.route('/cronograma/api/planes/<pid>/importar-tareas', methods=['POST'])
     @login_required
     def cronograma_importar_tareas(pid):
-        """Convierte tareas del To-Do en actividades del cronograma.
+        """Convierte actividades de la planificación en barras del cronograma.
 
         Body: {task_ids: [...]}  — o {todas: true} para traerlas todas."""
         if not user_can('cronograma'):
@@ -379,39 +458,64 @@ def registrar_cronograma(app, ctx):
         ya_importadas = {a.get('task_id') for a in existentes}
         orden = max([a.get('order_index') or 0 for a in existentes], default=0)
 
-        nuevas = []
-        for t in tareas:
-            if t['id'] in ya_importadas:
-                continue
-            orden += 1
-            inicio = _fecha(t.get('start_date'))
-            fin    = _fecha(t.get('due_date'))
-            nuevas.append({
-                'plan_id': pid, 'task_id': t['id'],
-                'name': _sanitize(t.get('title'), 300),
-                'description': _sanitize(t.get('description'), 2000) or None,
-                'responsible': _sanitize(t.get('assigned_to'), 200) or None,
-                'start_date': inicio, 'end_date': fin,
-                'duration_days': _dias_habiles(inicio, fin),
-                'progress_pct': t.get('progress_pct') or 0,
-                'status': t.get('status') if t.get('status') in ESTADOS else 'pending',
-                'priority': t.get('priority') if t.get('priority') in PRIORIDADES else 'medium',
-                'order_index': orden,
-                'created_by': current_user.id,
-            })
-        if not nuevas:
+        filas = _volcar_tareas(pid, tareas)
+        if filas is None:
             return jsonify({'success': True, 'importadas': 0,
-                            'mensaje': 'Esas tareas ya estaban en el cronograma'})
-        filas = db().insert('gantt_activities', nuevas)
+                            'mensaje': 'Esas actividades ya estaban en el cronograma'})
         return jsonify({'success': bool(filas), 'importadas': len(filas or []),
                         'actividades': filas or []})
+
+    @app.route('/cronograma/api/proyecto/<pid>', methods=['POST'])
+    @login_required
+    def cronograma_de_proyecto(pid):
+        """El cronograma de un proyecto: si no existe se crea, y se llena con
+        las actividades del proyecto.
+
+        Sin esto, ver un proyecto en barras eran cuatro pasos —crear un plan,
+        ponerle nombre, abrir «traer del plan», marcar las actividades—, y por
+        cuatro pasos la gente no lo hace: el Gantt se quedaba vacío mientras la
+        planificación estaba llena. Ahora es un botón."""
+        if not user_can('cronograma'):
+            return _sin_acceso()
+        proyectos = db().get('projects', {'id': pid}, select='*')
+        if not proyectos:
+            return jsonify({'success': False, 'error': 'Proyecto no encontrado'}), 404
+        proyecto = proyectos[0]
+
+        # ¿Ya tenía cronograma? No se crea otro: dos planes para el mismo
+        # proyecto es exactamente la duplicación que esto viene a evitar.
+        planes = [p for p in (db().get('gantt_plans', {'project_id': pid}, select='*') or [])
+                  if _plan_visible(p)]
+        if planes:
+            plan = planes[0]
+            creado = False
+        else:
+            fila = db().insert('gantt_plans', {
+                'name': _sanitize(proyecto.get('name'), 200) or 'Cronograma',
+                'description': _sanitize(proyecto.get('description'), 1000) or None,
+                'start_date': _fecha(proyecto.get('start_date')),
+                'end_date':   _fecha(proyecto.get('due_date')),
+                'color': _sanitize_hex_color(proyecto.get('color')),
+                'project_id': pid,
+                'created_by': current_user.id,
+            })
+            if not fila:
+                return jsonify({'success': False, 'error': 'No se pudo crear el cronograma'})
+            plan, creado = fila[0], True
+
+        tareas = [t for t in _filter_visible_tasks(
+                      app, db().get('tasks', {'project_id': pid}, select='*') or [],
+                      current_user.id)]
+        traidas = _volcar_tareas(plan['id'], tareas)
+        return jsonify({'success': True, 'plan_id': plan['id'], 'creado': creado,
+                        'importadas': len(traidas or [])})
 
     @app.route('/cronograma/api/planes/<pid>/sincronizar-tareas', methods=['POST'])
     @login_required
     def cronograma_sincronizar_tareas(pid):
-        """Refresca desde el To-Do el avance y el estado de las actividades que
-        vinieron de una tarea. Lo que se planificó en el cronograma (fechas) no
-        se toca: esas son decisiones del plan, no del pendiente."""
+        """Refresca desde la planificación el avance y el estado de las
+        actividades que vinieron de ella. Lo que se planificó en el cronograma
+        (fechas) no se toca: esas son decisiones del plan."""
         if not user_can('cronograma'):
             return _sin_acceso()
         plan = _cargar_plan(pid)
@@ -422,10 +526,11 @@ def registrar_cronograma(app, ctx):
                        if a.get('task_id')]
         if not actividades:
             return jsonify({'success': True, 'actualizadas': 0,
-                            'mensaje': 'Ninguna actividad viene del To-Do'})
+                            'mensaje': 'Ninguna actividad viene de la planificación'})
         tareas = {t['id']: t for t in
                   (db().get_in('tasks', 'id', [a['task_id'] for a in actividades],
-                               select='id,status,progress_pct,title,assigned_to') or [])}
+                               select='id,status,progress_pct,title,assigned_to,'
+                                      'completed_date') or [])}
         actualizadas = 0
         for act in actividades:
             tarea = tareas.get(act['task_id'])
@@ -433,10 +538,13 @@ def registrar_cronograma(app, ctx):
                 continue
             estado = tarea.get('status') if tarea.get('status') in ESTADOS else 'pending'
             avance = tarea.get('progress_pct') or 0
-            if estado == act.get('status') and avance == (act.get('progress_pct') or 0):
+            cerrada = _fecha(tarea.get('completed_date'))
+            if (estado == act.get('status') and avance == (act.get('progress_pct') or 0)
+                    and cerrada == act.get('completed_date')):
                 continue
-            if db().update('gantt_activities', act['id'], {
+            if _guardar_actividad(act['id'], {
                     'status': estado, 'progress_pct': avance,
+                    'completed_date': cerrada,
                     'updated_at': datetime.now(timezone.utc).isoformat()}):
                 actualizadas += 1
         return jsonify({'success': True, 'actualizadas': actualizadas})
@@ -466,7 +574,8 @@ def registrar_cronograma(app, ctx):
         actividades = db().get('gantt_activities', {'plan_id': pid}, select='*') or []
         if not actividades:
             return jsonify({'success': False,
-                            'error': 'El cronograma no tiene actividades. Agrégalas o impórtalas del To-Do.'})
+                            'error': 'El cronograma no tiene actividades. '
+                                     'Agrégalas o tráelas de la planificación.'})
 
         # Sólo lo pendiente de planificar, salvo que se pida replanificar todo.
         candidatas = actividades

@@ -45,7 +45,6 @@
      Planificación, así que comparte botón y panel con ella. Estaban separados
      en el menú y parecían dos sistemas distintos para lo mismo. #}
   {% elif path.startswith('/planning') or path.startswith('/cronograma') %}{% set ns.active_key = 'planning' %}
-  {% elif path.startswith('/todo') %}{% set ns.active_key = 'todo' %}
   {% elif path.startswith('/directorio') %}{% set ns.active_key = 'directorio' %}
   {% elif path.startswith('/profile') %}{% set ns.active_key = 'profile' %}
   {% elif path.startswith('/admin/users') %}{% set ns.active_key = 'users' %}
@@ -72,13 +71,6 @@
         <a href="/dashboard" class="rail-btn {{ 'active' if ns.active_key == 'dashboard' }}" data-panel="dashboard" title="Panel — Resumen general del sistema">
           <span class="rail-ic">📊</span><span class="rail-label">Panel</span>
         </a>
-
-        {% if is_adm or 'todo' in active_modules %}
-        <a href="/todo" class="rail-btn {{ 'active' if ns.active_key == 'todo' }}" data-panel="todo" data-group title="Actividades — Pendientes sincronizados con Microsoft To-Do">
-          <span class="rail-ic">✅</span><span class="rail-label">Actividades</span>
-          <span class="nav-badge" data-badge="actividades" title="Pendientes vencidos"></span>
-        </a>
-        {% endif %}
 
         {# Un solo botón para toda la planificación: proyectos, sus actividades y
            el cronograma de barras. Quien sólo tenga concedido el cronograma
@@ -135,7 +127,7 @@
           <span class="rail-ic">🔗</span><span class="rail-label">Integraciones</span>
         </a>
         {% else %}
-        <a href="/auth/google" class="rail-btn" data-panel="integraciones" data-group title="Integraciones — Conectar Google y Microsoft">
+        <a href="/auth/google" class="rail-btn" data-panel="integraciones" data-group title="Integraciones — Conectar Google Calendar">
           <span class="rail-ic">🔗</span><span class="rail-label">Integraciones</span>
         </a>
         {% endif %}
@@ -164,18 +156,6 @@
           </div>
         </section>
 
-        {% if is_adm or 'todo' in active_modules %}
-        <section class="panel-page {{ 'active' if ns.active_key == 'todo' }}" data-page="todo">
-          <div class="panel-head"><span class="panel-head-ic">✅</span><span><span class="panel-title">Actividades</span><span class="panel-sub">Pendientes sincronizados con To-Do</span></span></div>
-          <ul class="panel-links">
-            <li><a href="/todo" class="{{ 'active' if path == '/todo' and not request.args.get('tf') }}"><span class="pl-t">📋 Todos los pendientes</span><span class="pl-d">De cada cuenta conectada</span></a></li>
-            <li><a href="/todo?tf=my-day"><span class="pl-t">🌤️ Mi día</span><span class="pl-d">Lo que toca hoy</span></a></li>
-            <li><a href="/todo?tf=overdue"><span class="pl-t">⛔ Vencidas <span class="nav-badge" data-badge="actividades"></span></span><span class="pl-d">Ya pasaron de plazo</span></a></li>
-            <li><a href="/todo?tf=week"><span class="pl-t">📆 Esta semana</span><span class="pl-d">Vencen en siete días</span></a></li>
-          </ul>
-        </section>
-        {% endif %}
-
         {# Planificación es UNA sola cosa con dos formas de verla: la lista de
            proyectos con sus plazos y el cronograma de barras. Antes eran dos
            módulos separados en el menú, y separados parecían dos sistemas
@@ -187,8 +167,8 @@
           <div class="panel-group">Proyectos y actividades</div>
           <ul class="panel-links">
             <li><a href="/planning" class="{{ 'active' if path == '/planning' and not request.args.get('tf') }}"><span class="pl-t">📝 Ver planificación</span><span class="pl-d">Cada proyecto con su responsable y su plazo</span></a></li>
-            <li><a href="/planning?tf=overdue"><span class="pl-t">⛔ Incumplidas <span class="nav-badge" data-badge="proyectos"></span></span><span class="pl-d">El plazo ya pasó</span></a></li>
-            <li><a href="/planning?tf=week"><span class="pl-t">📆 Esta semana</span><span class="pl-d">Vencen en siete días</span></a></li>
+            <li><a href="/planning?tf=overdue"><span class="pl-t">🔴 Incumplidas <span class="nav-badge" data-badge="proyectos"></span></span><span class="pl-d">El plazo ya pasó</span></a></li>
+            <li><a href="/planning?tf=week"><span class="pl-t">🟡 Por vencer</span><span class="pl-d">Vencen hoy o en los próximos días</span></a></li>
           </ul>
           {% endif %}
           {% if is_adm or 'cronograma' in active_modules %}
@@ -196,7 +176,7 @@
           <ul class="panel-links">
             <li><a href="/cronograma" class="{{ 'active' if path == '/cronograma' and not request.args.get('accion') }}"><span class="pl-t">📈 Ver cronogramas <span class="nav-badge" data-badge="cronograma"></span></span><span class="pl-d">Los mismos plazos, en barras</span></a></li>
             <li><a href="/cronograma?accion=nuevo"><span class="pl-t">➕ Nuevo cronograma</span><span class="pl-d">Empezar un plan de trabajo</span></a></li>
-            <li><a href="/cronograma?accion=importar"><span class="pl-t">📥 Traer de Actividades</span><span class="pl-d">Pendientes → actividades del plan</span></a></li>
+            <li><a href="/cronograma?accion=importar"><span class="pl-t">📥 Traer del plan</span><span class="pl-d">Actividades del proyecto → barras</span></a></li>
           </ul>
           {% endif %}
         </section>
@@ -285,11 +265,6 @@
             <li><a class="pill-link" style="cursor:default"><span class="pl-t">🔗 Google Calendar <span class="nav-pill" style="background:#dcfce7;color:#166534">Conectado</span></span><span class="pl-d">Las citas se sincronizan solas</span></a></li>
             {% else %}
             <li><a href="/auth/google" class="pill-link"><span class="pl-t">🔗 Google Calendar <span class="nav-pill" style="background:#fee2e2;color:#991b1b">Conectar</span></span><span class="pl-d">Para sincronizar tus citas</span></a></li>
-            {% endif %}
-            {% if ms_connected_global %}
-            <li><a class="pill-link" style="cursor:default"><span class="pl-t">📋 Microsoft To-Do <span class="nav-pill" style="background:#dcfce7;color:#166534">Conectado</span></span><span class="pl-d">Los pendientes viajan en los dos sentidos</span></a></li>
-            {% else %}
-            <li><a href="/auth/microsoft" class="pill-link"><span class="pl-t">📋 Microsoft To-Do <span class="nav-pill" style="background:#fee2e2;color:#991b1b">Conectar</span></span><span class="pl-d">Para sincronizar tus pendientes</span></a></li>
             {% endif %}
             {# El puente con ATLAS existe y funciona, pero no figuraba en ningún
                menú: sólo se llegaba a él por un botón dentro del calendario. #}

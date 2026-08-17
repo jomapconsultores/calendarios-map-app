@@ -1,32 +1,54 @@
 {% extends "base.html" %}
 {% block title %}{{ page_title|default('Planificación') }} — CalendarioMAP{% endblock %}
 {% block page_title %}{{ page_title|default('Planificación') }}{% endblock %}
-{% block page_sub %}<p class="page-sub">{{ page_sub|default('Proyectos, tareas y seguimiento de procesos') }}</p>{% endblock %}
+{% block page_sub %}<p class="page-sub">{{ page_sub|default('Proyectos, actividades y plazos') }}</p>{% endblock %}
 
 {% block head %}
 <style>
-/* ===== PLANNING STYLES ===== */
+/* ===== PLANIFICACIÓN ===== */
 .quick-add-bar{display:flex;gap:8px;align-items:center;background:#fff;border:1.5px solid #e2e8f0;
-  border-radius:14px;padding:8px 12px;margin-bottom:14px;box-shadow:0 1px 4px rgba(0,0,0,.06)}
-.quick-add-bar input{flex:1;border:none;outline:none;font-size:.92rem;color:#1e293b;background:transparent}
-.quick-add-bar input::placeholder{color:#94a3b8}
-.quick-add-bar select{border:1px solid #e2e8f0;border-radius:8px;padding:4px 8px;font-size:.8rem;color:#374151;background:#f8fafc}
+  border-radius:14px;padding:8px 12px;margin-bottom:14px;box-shadow:0 1px 4px rgba(0,0,0,.06);flex-wrap:wrap}
+.quick-add-bar input[type=text]{flex:1;min-width:180px;border:none;outline:none;font-size:.92rem;color:#1e293b;background:transparent}
+.quick-add-bar input[type=text]::placeholder{color:#94a3b8}
+.quick-add-bar select,.quick-add-bar input[type=date]{border:1px solid #e2e8f0;border-radius:8px;
+  padding:4px 8px;font-size:.8rem;color:#374151;background:#f8fafc}
 .quick-add-bar .btn-qa{background:#4f46e5;color:#fff;border:none;border-radius:10px;padding:6px 16px;
   font-size:.82rem;font-weight:600;cursor:pointer;white-space:nowrap}
 .quick-add-bar .btn-qa:hover{background:#4338ca}
 
-/* .stats-row y .stat-card viven en static/css/style.css: estaban
-   copiados en las tres plantillas y ya habían empezado a divergir. */
-/* LIST VIEW */
+/* ===== SEMÁFORO =====
+   Cinco tarjetas, una por color, y cada una filtra la lista al pulsarla. Es a
+   la vez el marcador y el mando: mirar cuántas hay en rojo y verlas es el
+   mismo gesto, no dos. */
+.sem-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:16px}
+.sem-card{background:#fff;border:1.5px solid #e2e8f0;border-radius:14px;padding:10px 14px;
+  cursor:pointer;transition:.15s;position:relative;overflow:hidden;text-align:left}
+.sem-card::before{content:'';position:absolute;left:0;top:0;bottom:0;width:5px}
+.sem-card:hover{transform:translateY(-1px);box-shadow:0 6px 16px rgba(0,0,0,.07)}
+.sem-card.on{border-color:currentColor;box-shadow:0 4px 14px rgba(0,0,0,.10)}
+.sem-card .sem-num{font-size:1.35rem;font-weight:800;line-height:1}
+.sem-card .sem-lbl{font-size:.7rem;color:#64748b;font-weight:600;margin-top:2px;display:block}
+@media(max-width:560px){.sem-row{grid-template-columns:repeat(2,1fr)}}
+
+/* Punto de semáforo: el mismo lenguaje en pestañas, filas y cabeceras */
+.sem-dot{display:inline-block;width:9px;height:9px;border-radius:50%;flex-shrink:0}
+.sem-chip{display:inline-flex;align-items:center;gap:5px;padding:2px 9px;border-radius:20px;
+  font-size:.7rem;font-weight:700;white-space:nowrap}
+
+/* Barra de cumplimiento: cuánto se cerró a tiempo, no cuánto se cerró */
+.sem-bar{display:flex;height:8px;border-radius:5px;overflow:hidden;background:#f1f5f9;min-width:120px}
+.sem-bar span{display:block;height:100%}
+
+/* ===== TABLA ===== */
 .task-table{width:100%;border-collapse:collapse;font-size:.84rem}
 .task-table th{background:#f8fafc;color:#64748b;font-size:.75rem;font-weight:600;
   text-transform:uppercase;letter-spacing:.04em;padding:8px 12px;border-bottom:1.5px solid #e2e8f0;white-space:nowrap}
 .task-table td{padding:8px 12px;border-bottom:1px solid #f1f5f9;vertical-align:middle}
-.task-table tr:hover td{background:#fafbff}
-.task-table tr.overdue td{background:#fff5f5}
-.task-table tr.due-soon td{background:#fffbeb}
+.task-table thead th{position:sticky;top:0;z-index:5;background:#f8fafc}
+.task-table tr{transition:background .12s ease}
+.task-table tr:hover td{background:#f5f7ff}
 .prog-bar{width:80px;height:6px;background:#e2e8f0;border-radius:3px;overflow:hidden;display:inline-block;vertical-align:middle}
-.prog-bar-fill{height:100%;background:#10b981;border-radius:3px;transition:.3s}
+.prog-bar-fill{height:100%;border-radius:3px;transition:.3s}
 
 .badge-status{display:inline-block;padding:3px 10px;border-radius:20px;font-size:.72rem;font-weight:700;white-space:nowrap}
 .bs-pending{background:#fef3c7;color:#92400e}
@@ -36,38 +58,33 @@
 .bs-blocked{background:#fee2e2;color:#991b1b}
 
 .badge-prio{display:inline-block;padding:2px 8px;border-radius:20px;font-size:.7rem;font-weight:700}
-.bp-low{background:#f0fdf4;color:#166534;border:1px solid #bbf7d0}
-.bp-medium{background:#fff7ed;color:#9a3412;border:1px solid #fed7aa}
 .bp-high{background:#fef2f2;color:#991b1b;border:1px solid #fecaca}
 .bp-urgent{background:#7c3aed;color:#fff}
 
-.days-badge{display:inline-block;padding:2px 8px;border-radius:20px;font-size:.72rem;font-weight:700}
-.days-ok{background:#f0fdf4;color:#166534}
-.days-warn{background:#fffbeb;color:#92400e}
-.days-over{background:#fee2e2;color:#991b1b}
+/* ===== CABECERA DEL PROYECTO ABIERTO ===== */
+.proj-head{display:flex;align-items:center;gap:18px;flex-wrap:wrap;background:#fff;
+  border:1.5px solid #e2e8f0;border-radius:14px;padding:12px 18px;margin-bottom:14px;
+  box-shadow:0 1px 4px rgba(0,0,0,.06)}
+.proj-head .ph-main{flex:1;min-width:220px}
+.proj-head .ph-name{font-size:1.05rem;font-weight:700;color:#0f172a;line-height:1.2;
+  display:flex;align-items:center;gap:8px}
+.proj-head .ph-meta{display:flex;gap:16px;flex-wrap:wrap;margin-top:4px;font-size:.8rem;color:#475569}
+.proj-head .ph-prog{text-align:center;min-width:130px}
+.proj-head .ph-prog-num{font-size:1.15rem;font-weight:800;color:#4f46e5;line-height:1}
+.proj-head .ph-prog-lbl{font-size:.7rem;color:#94a3b8;margin-top:3px}
+@media(max-width:640px){.proj-head{gap:10px}.proj-head .ph-prog{text-align:left}}
 
-/* PROJECT PILLS (usadas por los chips de tiempo fusionados) */
-.project-pills{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px}
-.proj-pill{padding:4px 12px;border-radius:20px;font-size:.78rem;font-weight:600;cursor:pointer;
-  border:1.5px solid;transition:.15s}
-.proj-pill.active{color:#fff}
-.proj-pill-all{border-color:#94a3b8;color:#64748b;background:#f8fafc}
-.proj-pill-all.active{background:#64748b;color:#fff;border-color:#64748b}
-
-/* PESTAÑA PRINCIPAL: cuentas MS en /todo, proyectos en /planning.
-   Clases propias (NO .nav-link/.nav-item): esas ya las usa el sidebar global
-   (style.css) con estilo de píldora y "ganaban" el estilo aquí también. */
+/* ===== PESTAÑAS DE PROYECTO ===== */
 .entity-tabs{display:flex;gap:2px;flex-wrap:nowrap;overflow-x:auto;overflow-y:hidden;
   margin-bottom:14px;border-bottom:2px solid #e2e8f0}
-.etab{padding:9px 18px;border:1.5px solid transparent;border-bottom:none;
-  border-radius:10px 10px 0 0;background:transparent;font-size:.85rem;font-weight:600;
+.etab{display:inline-flex;align-items:center;gap:6px;padding:9px 18px;border:1.5px solid transparent;
+  border-bottom:none;border-radius:10px 10px 0 0;background:transparent;font-size:.85rem;font-weight:600;
   cursor:pointer;color:#64748b;white-space:nowrap;transition:.15s;margin-bottom:-2px}
 .etab:hover{background:#f8fafc;color:#4f46e5}
 .etab.active{background:#fff;border-color:#e2e8f0;color:#4f46e5;font-weight:700;
   box-shadow:0 -2px 6px rgba(0,0,0,.04)}
-@media(max-width:768px){.entity-tabs{flex-wrap:nowrap}}
 
-/* MODALS */
+/* ===== MODALES ===== */
 .plan-modal .modal-header{background:linear-gradient(135deg,#4f46e5,#7c3aed);color:#fff}
 .plan-modal .nav-tabs .nav-link{color:#64748b;font-size:.82rem}
 .plan-modal .nav-tabs .nav-link.active{color:#4f46e5;font-weight:600}
@@ -79,129 +96,41 @@
 .phase-sug-item:hover{background:#ede9fe;color:#4f46e5}
 input[type=range].prog-range{accent-color:#4f46e5;width:100%}
 
-/* CABECERA DEL PROYECTO ABIERTO — quién responde, para cuándo y cómo va */
-.proj-head{display:flex;align-items:center;gap:18px;flex-wrap:wrap;background:#fff;
-  border:1.5px solid #e2e8f0;border-radius:14px;padding:12px 18px;margin-bottom:14px;
-  box-shadow:0 1px 4px rgba(0,0,0,.06)}
-.proj-head .ph-main{flex:1;min-width:220px}
-.proj-head .ph-name{font-size:1.05rem;font-weight:700;color:#0f172a;line-height:1.2}
-.proj-head .ph-meta{display:flex;gap:16px;flex-wrap:wrap;margin-top:4px;
-  font-size:.8rem;color:#475569}
-.proj-head .ph-prog{text-align:center;min-width:120px}
-.proj-head .ph-prog-num{font-size:1.15rem;font-weight:800;color:#4f46e5;line-height:1}
-.proj-head .ph-prog-lbl{font-size:.7rem;color:#94a3b8;margin-top:3px}
-@media(max-width:640px){.proj-head{gap:10px}.proj-head .ph-prog{text-align:left}}
-
-/* Action buttons in table */
 .btn-xs{padding:3px 10px;font-size:.73rem;border-radius:8px;border:none;cursor:pointer;font-weight:600}
 .btn-xs-edit{background:#ede9fe;color:#5b21b6}
 .btn-xs-del{background:#fee2e2;color:#991b1b}
 .btn-xs-edit:hover{background:#ddd6fe}
 .btn-xs-del:hover{background:#fecaca}
 
-@media(max-width:768px){
-  .stats-row{grid-template-columns:1fr 1fr}
-  }
-
-/* ===== POLISH PROFESIONAL ===== */
-.task-table thead th {
-  position: sticky;
-  top: 0;
-  z-index: 5;
-  background: #f8fafc;
-  backdrop-filter: blur(8px);
-}
-.task-table tr {
-  transition: background .12s ease, transform .12s ease;
-}
-.task-table tr:hover td {
-  background: #f5f7ff !important;
-}
-.task-table tr.group-header td {
-  letter-spacing: .02em;
-  border-top: 1px solid rgba(255,255,255,.2);
-  box-shadow: 0 1px 4px rgba(67,56,202,.18);
-  transition: filter .12s ease;
-}
-.task-table tr.group-header:hover td { filter: brightness(1.05); }
-
-.proj-pill {
-  transition: all .18s ease;
-  font-weight: 600;
-  white-space: nowrap;
-}
-.proj-pill:hover { transform: translateY(-1px); box-shadow: 0 3px 8px rgba(0,0,0,.07); }
-.proj-pill.active { box-shadow: 0 4px 12px rgba(79,70,229,.25); }
-
-#bulkBar {
-  animation: slideDown .2s ease;
-  font-weight: 500;
-}
-@keyframes slideDown {
-  from { transform: translateY(-12px); opacity: 0; }
-  to   { transform: translateY(0); opacity: 1; }
-}
-
-.badge { font-weight: 600; padding: .26em .55em; letter-spacing: .01em; }
-
-.section-heading { font-size: 1.05rem; }
-.module-card { transition: transform .2s ease, box-shadow .2s ease; }
-.module-card:hover { transform: translateY(-2px); box-shadow: 0 10px 24px rgba(0,0,0,.08); }
+#bulkBar{animation:slideDown .2s ease}
+@keyframes slideDown{from{transform:translateY(-12px);opacity:0}to{transform:translateY(0);opacity:1}}
+.task-table tr.group-header td{letter-spacing:.02em;box-shadow:0 1px 4px rgba(67,56,202,.18)}
+.task-table tr.group-header:hover td{filter:brightness(1.05)}
 </style>
 {% endblock %}
 
 {% block topbar_actions %}
-{# La sincronización con Microsoft es asunto del módulo de Actividades. En
-   Proyectos sobraba: ocupaba el primer botón de la pantalla para algo que aquí
-   no se usa. #}
-{% if scope != 'planning' %}
-{% if ms_connected %}
-<button class="btn btn-outline-primary btn-sm rounded-pill" onclick="openImportTodoModal()" title="Importar desde Microsoft To-Do">
-  📋 Microsoft To-Do
-</button>
-{% else %}
-<a href="/auth/microsoft" class="btn btn-outline-secondary btn-sm rounded-pill" title="Conectar Microsoft To-Do">
-  🔗 Conectar To-Do
-</a>
-{% endif %}
-{% endif %}
-{# Los dos decían «Excel», uno al lado del otro, y sólo se distinguían por la
-   flechita del icono y por el texto emergente. Uno trae datos y el otro se los
-   lleva: la diferencia tiene que estar en el rótulo, no en un detalle de tres
-   píxeles ni en algo que hay que descubrir parándose encima. #}
-<label class="btn btn-outline-secondary btn-sm rounded-pill mb-0" title="Importar tareas desde un archivo Excel" style="cursor:pointer">
+<label class="btn btn-outline-secondary btn-sm rounded-pill mb-0" title="Importar actividades desde un archivo Excel" style="cursor:pointer">
   📥 Importar Excel
   <input type="file" id="excelInput" accept=".xlsx,.xls" style="display:none" onchange="importExcel(this)">
 </label>
-<button class="btn btn-outline-secondary btn-sm rounded-pill" onclick="exportExcel()" title="Descargar las tareas en un archivo Excel">
+<button class="btn btn-outline-secondary btn-sm rounded-pill" onclick="exportExcel()" title="Descargar las actividades en un archivo Excel">
   📤 Exportar Excel
 </button>
 {% endblock %}
 
 {% block content %}
 
-<!-- CABECERA DEL PROYECTO ABIERTO
-     Responsable, plazo y avance del proyecto que se está mirando. Es lo que
-     antes había que reconstruir mentalmente leyendo la tabla entera. -->
+<!-- CABECERA DEL PROYECTO ABIERTO -->
 <div id="projHead"></div>
 
-<!-- STATS — el mismo dato no se repite en cuatro sitios: el banner rojo de
-     "tienes N vencidas" se fue, porque este recuadro ya lo dice y además
-     filtra al pulsarlo. -->
-<div class="stats-row" id="statsRow">
-  <div class="stat-card info"    style="cursor:pointer" onclick="setTimeFilter('')"        title="Ver todo"><div class="sc-num" id="stTotal">0</div><div class="sc-lbl">Actividades</div></div>
-  <div class="stat-card danger"  style="cursor:pointer" onclick="setTimeFilter('overdue')" title="Ver solo lo incumplido"><div class="sc-num" id="stOverdue">0</div><div class="sc-lbl">Incumplidas</div></div>
-  <div class="stat-card warning" style="cursor:pointer" onclick="setTimeFilter('week')"    title="Ver lo que vence en siete días"><div class="sc-num" id="stInProg">0</div><div class="sc-lbl">Vencen esta semana</div></div>
-  <div class="stat-card success" style="cursor:pointer" onclick="verCompletadas()"         title="Ver las completadas"><div class="sc-num" id="stDone">0</div><div class="sc-lbl">Completadas</div></div>
-</div>
+<!-- SEMÁFORO: el marcador y el mando, en el mismo sitio -->
+<div class="sem-row" id="semRow"></div>
 
-<!-- TOOLBAR -->
-{# Tres grupos separados en vez de ocho botones en fila: primero se BUSCA,
-   después se decide CÓMO SE VE, y a la derecha lo que CAMBIA algo. Antes estaba
-   todo mezclado y había que leer los ocho para encontrar uno. #}
+<!-- BARRA DE HERRAMIENTAS -->
 <div class="mod-toolbar">
   <input id="searchInput" class="form-control form-control-sm" style="max-width:210px"
-    placeholder="🔍 Buscar tarea…" oninput="renderCurrentView()">
+    placeholder="🔍 Buscar actividad…" oninput="renderCurrentView()">
   <select id="filterStatus" class="form-select form-select-sm" style="max-width:155px" onchange="renderCurrentView()">
     <option value="">Todos los estados</option>
     <option value="pending">Pendiente</option>
@@ -210,91 +139,39 @@ input[type=range].prog-range{accent-color:#4f46e5;width:100%}
     <option value="done">Completado</option>
     <option value="blocked">Bloqueado</option>
   </select>
-  {# En Proyectos no hay selector de agrupación: la vista general se agrupa
-     sola por proyecto y, dentro de un proyecto, la lista va ordenada por
-     urgencia. Un desplegable de seis opciones para eso era una decisión que no
-     hacía falta pedirle a nadie. #}
-  {% if scope != 'planning' %}
-  <select id="groupBy" class="form-select form-select-sm" style="max-width:155px" onchange="setGroupBy(this.value)">
-    <option value="">Sin agrupar</option>
-    <option value="status">Por estado</option>
-    <option value="phase">Por lista / fase</option>
-    <option value="project">Por proyecto</option>
-    <option value="account">Por cuenta MS</option>
-    <option value="priority">Por prioridad</option>
-  </select>
-  {% endif %}
 
   <span class="mt-sep"></span>
 
-  <button id="btnShowDone" class="btn btn-outline-secondary btn-sm rounded-pill" onclick="toggleDone()" title="Mostrar u ocultar las tareas completadas">
-    ✅ Completadas
-  </button>
-  {% if scope != 'planning' %}
-  <button id="btnShowSubs" class="btn btn-outline-secondary btn-sm rounded-pill" onclick="toggleSubsAsItems()" title="Expandir o colapsar todas las tareas con subtareas">
-    📑 Expandir
-  </button>
-  {% endif %}
-  <button id="btnSelectMode" class="btn btn-outline-secondary btn-sm rounded-pill" onclick="toggleSelectMode()" title="Activar selección múltiple para acciones masivas">
-    ☑ Seleccionar
-  </button>
+  <button id="btnShowDone" class="btn btn-outline-secondary btn-sm rounded-pill" onclick="toggleDone()"
+          title="Mostrar u ocultar las actividades ya cerradas">✅ Cumplidas</button>
+  <button id="btnSelectMode" class="btn btn-outline-secondary btn-sm rounded-pill" onclick="toggleSelectMode()"
+          title="Activar selección múltiple para acciones masivas">☑ Seleccionar</button>
 
   <span class="mt-push"></span>
 
-  {% if scope == 'planning' %}
   <button class="btn btn-outline-primary btn-sm rounded-pill" onclick="openNewTask()"
           title="Crear una actividad con su plazo de ejecución">+ Actividad</button>
-  {% endif %}
   <button class="btn btn-primary btn-sm rounded-pill" onclick="openProjectModal(null)">+ Proyecto</button>
-  {% if scope != 'planning' and ms_connected %}
-  <button class="btn btn-sm rounded-pill fw-bold" style="background:#0078d4;color:#fff;border:0"
-          onclick="openImportTodoModal()" title="Traer ahora los cambios hechos en Microsoft To-Do">
-    📋 Sincronizar
-  </button>
-  <span id="syncStatus" class="small text-muted" style="display:inline-flex;align-items:center;gap:4px"></span>
+  {% if can_cronograma %}
+  {# Los mismos plazos, en barras. Es la otra vista de esta misma pantalla. #}
+  <button class="btn btn-outline-primary btn-sm rounded-pill" onclick="abrirCronograma()"
+          title="Ver estos plazos como diagrama de Gantt">📈 Ver en Gantt</button>
+  {% endif %}
   {% if is_admin_user %}
-  <button class="btn btn-outline-secondary btn-sm rounded-pill" onclick="openTodoTargetModal()"
-          title="Elegir a qué lista de Microsoft To-Do van las tareas creadas aquí">
-    ⚙️
-  </button>
-  {% endif %}
-  {% elif scope != 'planning' %}
-  <a href="/auth/microsoft" class="btn btn-outline-secondary btn-sm rounded-pill" title="Conectar Microsoft To-Do">
-    🔗 Conectar To-Do
-  </a>
-  {% endif %}
-  {% if scope == 'planning' and can_cronograma %}
-  {# Los mismos plazos, en barras. Es la otra vista de esta misma pantalla, no
-     otro módulo: por eso el paso de una a otra está aquí y no en el menú. #}
-  <a href="/cronograma" class="btn btn-outline-primary btn-sm rounded-pill"
-     title="Ver estos plazos como diagrama de Gantt">📈 Cronograma</a>
-  {% endif %}
-  {% if scope == 'planning' and is_admin_user %}
   <button class="btn btn-outline-secondary btn-sm rounded-pill" onclick="abrirAvisosModal()"
           title="Correo de aviso cuando un plazo se incumple">🔔 Avisos</button>
   {% endif %}
 </div>
 
-{# El banner de sincronización sólo cuenta algo en Actividades. #}
-{% if scope != 'planning' %}
-<!-- Estado de la sincronización de ida y vuelta -->
-<div id="syncBanner" class="alert alert-light border py-2 px-3 small" style="display:none">
-  <span id="syncBannerText"></span>
-</div>
-{% endif %}
-
-<!-- PESTAÑA PRINCIPAL: cuentas MS (/todo) o proyectos (/planning) -->
+<!-- PESTAÑAS DE PROYECTO -->
 <div class="entity-tabs" id="entityTabs"></div>
 
-<!-- FILTRO DE TIEMPO (fusiona los antiguos time-pills + panel de foco) -->
-<div id="timeFocusBar" style="margin:6px 0 14px"></div>
-
-<!-- BULK ACTION BAR -->
+<!-- BARRA DE ACCIONES MASIVAS -->
 <div id="bulkBar" style="display:none;position:sticky;top:0;z-index:50;background:#eef2ff;color:#3730a3;border:1px solid #c7d2fe;border-radius:14px;padding:10px 16px;margin-bottom:12px;box-shadow:0 2px 8px rgba(79,70,229,.12)">
   <div class="d-flex align-items-center gap-2 flex-wrap">
     <strong><span id="bulkCount">0</span> seleccionada(s)</strong>
     <div style="flex:1"></div>
-    <button class="btn btn-success btn-sm rounded-pill" onclick="bulkSetStatus('done')">✅ Hechas</button>
+    <button class="btn btn-success btn-sm rounded-pill" onclick="bulkSetStatus('done')">✅ Cumplidas</button>
     <button class="btn btn-warning btn-sm rounded-pill" onclick="bulkSetStatus('pending')">⏳ Pendientes</button>
     <button class="btn btn-info btn-sm rounded-pill" onclick="bulkSetStatus('in_progress')">⚙️ En progreso</button>
     <select id="bulkPriority" class="form-select form-select-sm rounded-pill" style="max-width:140px" onchange="bulkSetPriority(this.value); this.value=''">
@@ -311,16 +188,14 @@ input[type=range].prog-range{accent-color:#4f46e5;width:100%}
   </div>
 </div>
 
-<!-- QUICK ADD — con fecha de vencimiento: una actividad de un proyecto nace con
-     su plazo, no se lo ponemos después entrando a editarla. -->
+<!-- ALTA RÁPIDA: una actividad nace con su plazo, no se lo ponemos después -->
 <div class="quick-add-bar">
-  <input id="qTitle" placeholder="+ Agregar actividad — escribe y presiona Enter..."
+  <input id="qTitle" type="text" placeholder="+ Agregar actividad — escribe y presiona Enter..."
     onkeydown="if(event.key==='Enter') quickAdd()">
-  <select id="qProject" style="max-width:140px">
+  <select id="qProject" style="max-width:150px">
     <option value="">Sin proyecto</option>
   </select>
-  <input id="qDue" type="date" title="Fecha de vencimiento (si se deja vacía, hereda la del proyecto)"
-    style="border:1px solid #e2e8f0;border-radius:8px;padding:4px 8px;font-size:.8rem;color:#374151;background:#f8fafc">
+  <input id="qDue" type="date" title="Fecha de vencimiento (si se deja vacía, hereda la del proyecto)">
   <select id="qPriority">
     <option value="medium">🟡 Media</option>
     <option value="low">🟢 Baja</option>
@@ -331,10 +206,9 @@ input[type=range].prog-range{accent-color:#4f46e5;width:100%}
 </div>
 
 <!-- ===== LISTA DE ACTIVIDADES =====
-     Seis columnas en vez de once. Lo que se quitó no desapareció: proyecto y
-     fase van bajo el título, los días de retraso van pegados a la fecha que se
-     incumplió, y la prioridad sólo se ve cuando es alta o urgente —que es
-     cuando dice algo—. Se lee de una pasada: QUÉ, QUIÉN, PARA CUÁNDO, CÓMO VA. -->
+     Seis columnas: QUÉ, QUIÉN responde, PARA CUÁNDO, CÓMO VA y EN QUÉ COLOR
+     está. Proyecto y fase van bajo el título, que es donde se miran cuando ya
+     se sabe cuál es la fila que interesa. -->
 <div id="view-list">
   <div class="table-responsive">
     <table class="task-table">
@@ -342,47 +216,41 @@ input[type=range].prog-range{accent-color:#4f46e5;width:100%}
         <tr>
           <th id="headerSelectCell" style="width:34px"><span id="hashHeader">#</span></th>
           <th>Actividad</th><th>Responsable</th><th>Vence</th>
-          <th>Avance</th><th>Estado</th><th style="width:88px"></th>
+          <th>Avance</th><th>Semáforo</th><th style="width:88px"></th>
         </tr>
       </thead>
       <tbody id="taskTableBody"></tbody>
     </table>
-    <div id="listEmpty" class="text-center text-muted py-5" style="display:none">
-      <div style="font-size:2rem">📋</div>
-      No hay actividades. Agrega la primera usando la barra de arriba.
+    <div id="listEmpty" class="mod-empty" style="display:none">
+      <div class="me-ic">📋</div>
+      <p>No hay actividades que mostrar.<br>Agrega la primera con la barra de arriba.</p>
     </div>
   </div>
 </div>
 
-<!-- ========= TASK MODAL ========= -->
+<!-- ========= MODAL DE ACTIVIDAD ========= -->
 <div class="modal fade plan-modal" id="taskModal" tabindex="-1">
   <div class="modal-dialog modal-lg modal-dialog-scrollable">
     <div class="modal-content border-0 shadow">
       <div class="modal-header">
-        <h5 class="modal-title text-white" id="taskModalTitle">📝 Nueva tarea</h5>
+        <h5 class="modal-title text-white" id="taskModalTitle">📝 Nueva actividad</h5>
         <button class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
       </div>
       <div class="modal-body">
         <input type="hidden" id="mTaskId">
-
-        <!-- TABS -->
         <ul class="nav nav-tabs mb-3" id="taskTabs">
           <li class="nav-item"><a class="nav-link active" data-bs-toggle="tab" href="#tabBasic">📋 Básico</a></li>
+          <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#tabDates">📅 Plazo</a></li>
           <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#tabSubs">📑 Subtareas <span id="tabSubsBadge" class="badge bg-secondary ms-1" style="font-size:.6rem"></span></a></li>
-          <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#tabDates">📅 Fechas</a></li>
           <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#tabDeps">🔗 Dependencias</a></li>
-          {% if is_admin_user and scope != 'planning' %}
-          <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#tabMs">📋 Microsoft</a></li>
-          {% endif %}
           <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#tabExtra">📎 Adicional</a></li>
         </ul>
         <div class="tab-content">
 
-          <!-- TAB BÁSICO -->
           <div class="tab-pane fade show active" id="tabBasic">
             <div class="mb-3">
               <label class="form-label fw-semibold">TÍTULO *</label>
-              <input id="mTitle" class="form-control" placeholder="Descripción de la tarea..." required>
+              <input id="mTitle" class="form-control" placeholder="Qué hay que hacer..." required>
             </div>
             <div class="row mb-3">
               <div class="col-md-6">
@@ -421,115 +289,81 @@ input[type=range].prog-range{accent-color:#4f46e5;width:100%}
             </div>
             <div class="row mb-3">
               <div class="col-md-6">
-                <label class="form-label fw-semibold">ASIGNADO A</label>
-                <input id="mAssigned" class="form-control" placeholder="Nombre del responsable">
+                <label class="form-label fw-semibold">RESPONSABLE</label>
+                <input id="mAssigned" class="form-control" placeholder="Quién responde de esto">
               </div>
               <div class="col-md-6">
-                <label class="form-label fw-semibold">EMAIL RESPONSABLE</label>
+                <label class="form-label fw-semibold">CORREO DEL RESPONSABLE</label>
                 <input id="mEmail" type="email" class="form-control" placeholder="correo@ejemplo.com">
               </div>
             </div>
             <div class="mb-3">
               <label class="form-label fw-semibold">DESCRIPCIÓN</label>
-              <textarea id="mDesc" class="form-control" rows="3" placeholder="Detalle de la tarea..."></textarea>
+              <textarea id="mDesc" class="form-control" rows="3" placeholder="Detalle de la actividad..."></textarea>
             </div>
           </div>
 
-          <!-- TAB FECHAS -->
           <div class="tab-pane fade" id="tabDates">
-            <div class="row mb-3">
-              <div class="col-md-6">
-                <label class="form-label fw-semibold">FECHA DE INICIO</label>
-                <input id="mStartDate" type="date" class="form-control">
-              </div>
-              <div class="col-md-6">
-                <label class="form-label fw-semibold">FECHA DE VENCIMIENTO</label>
-                <input id="mDueDate" type="date" class="form-control">
+            <div class="p-3 rounded mb-3" style="background:#f8fafc;border:1px solid #e2e8f0">
+              <div class="modal-section-label" style="margin-top:0">⏱️ Tiempo de ejecución</div>
+              <div class="row">
+                <div class="col-md-6">
+                  <label class="form-label fw-semibold">FECHA DE INICIO</label>
+                  <input id="mStartDate" type="date" class="form-control">
+                </div>
+                <div class="col-md-6">
+                  <label class="form-label fw-semibold">FECHA DE VENCIMIENTO</label>
+                  <input id="mDueDate" type="date" class="form-control">
+                </div>
               </div>
             </div>
             <div class="row mb-3">
               <div class="col-md-6">
-                <label class="form-label fw-semibold">FECHA DE COMPLETADO</label>
+                <label class="form-label fw-semibold">FECHA DE CUMPLIMIENTO</label>
                 <input id="mCompDate" type="date" class="form-control">
+                <div class="form-text">La que decide si se cumplió a tiempo o con retraso.</div>
               </div>
               <div class="col-md-6">
-                <label class="form-label fw-semibold">ALERTAR (días antes del vencimiento)</label>
+                <label class="form-label fw-semibold">AVISAR (días antes del vencimiento)</label>
                 <input id="mAlertDays" type="number" class="form-control" value="3" min="0" max="60">
               </div>
             </div>
             <div class="mb-3">
-              <label class="form-label fw-semibold">PROGRESO: <span id="progLabel">0</span>%</label>
+              <label class="form-label fw-semibold">AVANCE: <span id="progLabel">0</span>%</label>
               <input id="mProgress" type="range" class="prog-range" min="0" max="100" value="0"
                 oninput="document.getElementById('progLabel').textContent=this.value">
             </div>
             <div id="plazoAviso" class="alert alert-warning py-2 small" style="display:none"></div>
-            <div id="daysInfoBox" class="p-3 rounded" style="background:#f8fafc;font-size:.83rem;display:none">
-              <div class="row text-center">
-                <div class="col"><strong id="daysElapsed">—</strong><br><small class="text-muted">Días transcurridos</small></div>
-                <div class="col"><strong id="daysRemaining">—</strong><br><small class="text-muted">Días restantes</small></div>
-                <div class="col"><strong id="daysDuration">—</strong><br><small class="text-muted">Duración total</small></div>
-              </div>
-            </div>
+            <div id="semaforoCaja" class="p-3 rounded" style="display:none"></div>
           </div>
 
-          <!-- TAB SUBTAREAS -->
           <div class="tab-pane fade" id="tabSubs">
             <div class="d-flex align-items-center justify-content-between mb-2">
-              <span class="small text-muted">Subtareas de esta tarea. Marca las completadas; el progreso se actualiza solo.</span>
+              <span class="small text-muted">Pasos dentro de esta actividad. Al marcarlos, el avance se actualiza solo.</span>
               <span id="subtaskCounter" class="badge bg-primary">0/0</span>
-            </div>
-            <div id="msSubsRefreshRow" style="display:none" class="mb-2">
-              <button id="btnRefreshSubs" class="btn btn-sm btn-outline-primary" onclick="refreshSubtasksFromMs()">
-                🔄 Sincronizar subtareas con Microsoft To-Do
-              </button>
-              <small id="refreshSubsHint" class="text-muted ms-2"></small>
             </div>
             <div id="subtasksList"></div>
             <div class="input-group input-group-sm mt-2">
-              <input id="newSubInput" class="form-control" placeholder="+ Agregar subtarea (Enter)"
+              <input id="newSubInput" class="form-control" placeholder="+ Agregar paso (Enter)"
                 onkeydown="if(event.key==='Enter') addSubtask()">
               <button class="btn btn-primary" onclick="addSubtask()">+</button>
             </div>
           </div>
 
-          <!-- TAB DEPENDENCIAS -->
           <div class="tab-pane fade" id="tabDeps">
             <div class="alert alert-info py-2 small">
-              💡 Una tarea puede esperar a que otras se completen primero. Las tareas seleccionadas aquí deben terminar antes de poder marcar esta como completada.
+              💡 Una actividad puede esperar a que otras terminen primero. Es lo que el cronograma dibuja como flechas entre barras.
             </div>
             <div class="mb-3">
               <label class="form-label fw-semibold">DEPENDE DE</label>
               <div id="depsList" class="mb-2"></div>
               <div class="input-group">
-                <input id="depSearch" class="form-control" placeholder="🔍 Buscar tarea para agregar como dependencia..." oninput="renderDepSearchResults()">
+                <input id="depSearch" class="form-control" placeholder="🔍 Buscar actividad para agregar como dependencia..." oninput="renderDepSearchResults()">
               </div>
               <div id="depSearchResults" class="mt-2" style="max-height:220px;overflow:auto"></div>
             </div>
           </div>
 
-          {% if is_admin_user and scope != 'planning' %}
-          <!-- TAB MICROSOFT -->
-          <div class="tab-pane fade" id="tabMs">
-            <div class="alert alert-info py-2 small">
-              💡 Si seleccionas una cuenta y una lista, esta tarea también se creará / actualizará en Microsoft To-Do.
-            </div>
-            <div class="mb-3">
-              <label class="form-label fw-semibold">CUENTA MICROSOFT</label>
-              <select id="mMsEmail" class="form-select" onchange="loadMsLists()">
-                <option value="">— No sincronizar —</option>
-              </select>
-            </div>
-            <div class="mb-3">
-              <label class="form-label fw-semibold">LISTA DE TO-DO</label>
-              <select id="mMsListId" class="form-select" disabled>
-                <option value="">Selecciona primero una cuenta…</option>
-              </select>
-            </div>
-            <div id="msSyncInfo" class="small text-muted" style="display:none"></div>
-          </div>
-          {% endif %}
-
-          <!-- TAB ADICIONAL -->
           <div class="tab-pane fade" id="tabExtra">
             <div class="mb-3">
               <label class="form-label fw-semibold">ETIQUETAS <small class="text-muted">(separadas por coma)</small></label>
@@ -539,26 +373,22 @@ input[type=range].prog-range{accent-color:#4f46e5;width:100%}
               <label class="form-label fw-semibold">NOTAS INTERNAS</label>
               <textarea id="mNotes" class="form-control" rows="4" placeholder="Notas, comentarios, actualizaciones..."></textarea>
             </div>
-            <div class="mb-1" id="sourceBox" style="display:none">
-              <label class="form-label fw-semibold">FUENTE</label>
-              <input id="mSource" class="form-control" readonly style="background:#f8fafc;color:#64748b">
-            </div>
           </div>
 
-        </div><!-- tab-content -->
+        </div>
       </div>
       <div class="modal-footer justify-content-between">
         <button class="btn btn-outline-danger btn-sm" id="btnDeleteTask" onclick="deleteTask()" style="display:none">🗑 Eliminar</button>
         <div class="d-flex gap-2">
           <button class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
-          <button class="btn btn-primary" onclick="saveTask()">💾 Guardar tarea</button>
+          <button class="btn btn-primary" onclick="saveTask()">💾 Guardar actividad</button>
         </div>
       </div>
     </div>
   </div>
 </div>
 
-<!-- ========= PROJECT MODAL ========= -->
+<!-- ========= MODAL DE PROYECTO ========= -->
 <div class="modal fade plan-modal" id="projectModal" tabindex="-1">
   <div class="modal-dialog">
     <div class="modal-content border-0 shadow">
@@ -591,10 +421,9 @@ input[type=range].prog-range{accent-color:#4f46e5;width:100%}
           </div>
         </div>
         {# El plazo no es un campo más: es lo que pone el proyecto en el
-           calendario de vencimientos y lo que dispara el aviso. Por eso va
-           destacado y es obligatorio. #}
+           calendario de vencimientos y lo que enciende el semáforo. #}
         <div class="p-3 rounded mb-3" style="background:#f8fafc;border:1px solid #e2e8f0">
-          <div class="modal-section-label" style="margin-top:0">📅 Calendario de vencimiento</div>
+          <div class="modal-section-label" style="margin-top:0">📅 Tiempo de ejecución</div>
           <div class="row">
             <div class="col-md-6">
               <label class="form-label fw-semibold">FECHA DE INICIO</label>
@@ -606,9 +435,9 @@ input[type=range].prog-range{accent-color:#4f46e5;width:100%}
             </div>
           </div>
           <div class="small text-muted mt-2">
-            Pasada esta fecha sin cerrar el proyecto, queda como <strong>incumplido</strong>
-            y sale un correo de aviso. Las actividades que crees dentro heredan
-            este plazo si no les pones uno propio.
+            Pasada esta fecha sin cerrar el proyecto, el semáforo se pone en
+            <strong>rojo</strong> y sale un correo de incumplimiento. Las
+            actividades que crees dentro heredan este plazo si no les pones uno propio.
           </div>
         </div>
         <div class="mb-3">
@@ -617,11 +446,8 @@ input[type=range].prog-range{accent-color:#4f46e5;width:100%}
         </div>
         <div class="mb-3">
           <label class="form-label fw-semibold">RESPONSABLE</label>
-          <input id="mProjOwner" class="form-control" readonly
-                 style="background:#f8fafc;color:#334155">
-          <div class="form-text" id="mProjOwnerHint">
-            El proyecto queda a nombre de quien lo crea.
-          </div>
+          <input id="mProjOwner" class="form-control" readonly style="background:#f8fafc;color:#334155">
+          <div class="form-text" id="mProjOwnerHint">El proyecto queda a nombre de quien lo crea.</div>
         </div>
       </div>
       <div class="modal-footer justify-content-between">
@@ -636,7 +462,7 @@ input[type=range].prog-range{accent-color:#4f46e5;width:100%}
 </div>
 
 <!-- ========= AVISOS DE INCUMPLIMIENTO ========= -->
-{% if scope == 'planning' and is_admin_user %}
+{% if is_admin_user %}
 <div class="modal fade" id="avisosModal" tabindex="-1">
   <div class="modal-dialog">
     <div class="modal-content border-0 shadow">
@@ -648,8 +474,6 @@ input[type=range].prog-range{accent-color:#4f46e5;width:100%}
         <p class="small text-muted">
           Una vez al día se revisan los plazos. Lo que pasó su fecha de vencimiento
           sin estar terminado se reúne en un solo correo, no en uno por cada cosa.
-          Se vigilan los proyectos y sus actividades; los correos marcados que bajan
-          de Outlook quedan fuera, porque nadie los pactó como compromiso.
         </p>
         <div id="avisosEstado" class="small">Consultando…</div>
         <hr>
@@ -663,118 +487,182 @@ input[type=range].prog-range{accent-color:#4f46e5;width:100%}
 </div>
 {% endif %}
 
-<!-- ========= IMPORT MICROSOFT TO-DO MODAL ========= -->
-<div class="modal fade" id="importTodoModal" tabindex="-1">
-  <div class="modal-dialog modal-sm">
-    <div class="modal-content border-0 shadow">
-      <div class="modal-header" style="background:#0078d4;color:#fff">
-        <h6 class="modal-title">📋 Importar Microsoft To-Do</h6>
-        <button class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
-      </div>
-      <div class="modal-body text-center py-4">
-        <img src="{{ url_for('static', filename='images/map_logo.png') }}" alt="MAP" style="max-width:160px;height:auto;margin-bottom:16px;display:block;margin-left:auto;margin-right:auto">
-        <p class="mb-1" style="font-size:.85rem">Importa todas tus listas y tareas de <strong>Microsoft To-Do</strong> al módulo de planificación.</p>
-        <p class="text-muted mb-3" style="font-size:.78rem">Las tareas existentes no se duplican. La lista de origen se guarda como etiqueta.</p>
-        <button class="btn w-100 fw-bold" style="background:#0078d4;color:#fff" onclick="doImportTodo()">
-          Importar ahora
-        </button>
-        <div id="importTodoResult" class="mt-3" style="display:none;font-size:.83rem"></div>
-      </div>
-    </div>
-  </div>
-</div>
-
-<!-- ========= LISTA DE TO-DO POR DEFECTO (sincronización de ida y vuelta) ========= -->
-{% if is_admin_user %}
-<div class="modal fade" id="todoTargetModal" tabindex="-1">
-  <div class="modal-dialog">
-    <div class="modal-content border-0 shadow">
-      <div class="modal-header" style="background:#0078d4;color:#fff">
-        <h6 class="modal-title">⚙️ Lista de To-Do por defecto</h6>
-        <button class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
-      </div>
-      <div class="modal-body">
-        <p class="small text-muted">
-          Lo que se crea en Microsoft To-Do baja al sistema solo. Esta opción cierra el otro
-          sentido: toda tarea creada <strong>aquí</strong> se publica también en la lista que elijas,
-          de modo que las dos caras muestren siempre lo mismo.
-        </p>
-        <label class="form-label fw-semibold small">CUENTA DE MICROSOFT</label>
-        <select id="ttAccount" class="form-select form-select-sm" onchange="loadTodoTargetLists()"></select>
-        <label class="form-label fw-semibold small mt-3">LISTA</label>
-        <select id="ttList" class="form-select form-select-sm"></select>
-        <div id="ttCurrent" class="small text-muted mt-3"></div>
-        <hr>
-        <div class="small text-muted">
-          Fijar la lista afecta a las tareas <strong>nuevas</strong>. Lo que ya existía en el
-          sistema sin subir a To-Do se arrastra una sola vez con este botón:
-        </div>
-        <button class="btn btn-outline-primary btn-sm rounded-pill mt-2" onclick="pushPendingToTodo()">
-          ⬆️ Subir a To-Do lo que falta
-        </button>
-        <div id="ttPushResult" class="small mt-2"></div>
-      </div>
-      <div class="modal-footer">
-        <button class="btn btn-outline-danger btn-sm rounded-pill me-auto" onclick="saveTodoTarget(true)">
-          Desactivar
-        </button>
-        <button class="btn btn-secondary btn-sm rounded-pill" data-bs-dismiss="modal">Cancelar</button>
-        <button class="btn btn-primary btn-sm rounded-pill" onclick="saveTodoTarget(false)">💾 Guardar</button>
-      </div>
-    </div>
-  </div>
-</div>
-{% endif %}
-
 <!-- ===== SCRIPT ===== -->
 <script>
 // ——————————————————————————————————————————
-//  STATE
+//  ESTADO
 // ——————————————————————————————————————————
 let allTasks = [], allProjects = [], curProject = null;
 let editingTaskId = null, editingProjectId = null;
 const today = new Date(); today.setHours(0,0,0,0);
 
+const IS_ADMIN = {{ 'true' if is_admin_user else 'false' }};
+// Quién está delante: los proyectos y las actividades quedan a su nombre.
+const YO = {{ (current_user.full_name or current_user.email)|tojson }};
+const MI_CORREO = {{ (current_user.email or '')|tojson }};
+
+// El semáforo no se define aquí: viene de app/semaforo.py, que es el mismo que
+// pinta el cronograma y el que escribe el correo de incumplimientos. Si cada
+// pantalla se inventara sus colores acabarían discrepando sobre si un plazo
+// está roto, y eso no es un detalle estético.
+const SEMAFORO = {{ semaforo_json|default('{"estados":{},"umbral_aviso":3}', true)|safe }};
+const SEM = SEMAFORO.estados;
+const UMBRAL = SEMAFORO.umbral_aviso;
+// Orden en que se enseñan las tarjetas: primero lo que exige actuar.
+const SEM_ORDEN = ['rojo','ambar','verde','tardio','cumplido'];
+const CERRADOS = ['done','completed','cancelled'];
+
 const STATUS_LABELS = {
   pending:'Pendiente', in_progress:'En Progreso', review:'En Revisión',
   done:'Completado', blocked:'Bloqueado'
 };
-const STATUS_COLS = {
-  pending:'#f59e0b', in_progress:'#3b82f6', review:'#8b5cf6',
-  done:'#10b981', blocked:'#ef4444'
-};
 const PRIO_LABELS = { low:'Baja', medium:'Media', high:'Alta', urgent:'Urgente' };
 const PRIO_ORDER  = { urgent:0, high:1, medium:2, low:3 };
-// Orden fijo y lógico de los cuadros al agrupar por estado / prioridad
-const STATUS_GROUP_KEYS = ['pending','in_progress','review','blocked','done'];
-const STATUS_GROUP_ORDER = STATUS_GROUP_KEYS.map(s => STATUS_LABELS[s]);
-const PRIO_GROUP_ORDER   = ['urgent','high','medium','low'].map(p => PRIO_LABELS[p]);
-const STATUS_KEY_BY_LABEL = Object.fromEntries(
-  Object.entries(STATUS_LABELS).map(([k, v]) => [v, k]));
-const STATUS_GROUP_ICON = {
-  pending:'⏳', in_progress:'🔄', review:'👀', blocked:'⛔', done:'✅'
-};
 
-// ¿Es una tarea que en realidad es un correo marcado importado de Outlook?
-function isFlaggedEmail(t) {
-  return (t.source_app === 'Outlook') || (t.phase || '').includes('Correos marcados');
+// ——————————————————————————————————————————
+//  SEMÁFORO — misma regla que el servidor
+// ——————————————————————————————————————————
+function diasEntre(a, b) {
+  return Math.round((new Date(a + 'T00:00:00') - new Date(b + 'T00:00:00')) / 86400000);
 }
 
-// Orden inteligente para que lo accionable quede arriba:
-//   1) Vencidas (sin completar)  2) Pendientes  3) Completadas (al fondo)
-// Dentro de cada bloque: por fecha de vencimiento más cercana (sin fecha al final)
-// y luego por prioridad más alta.
+function evaluarSemaforo(due, status, hecho) {
+  const hoy0 = todayStr();
+  const cerrado = CERRADOS.includes(status || '');
+  if (cerrado) {
+    if (!due || !hecho) return {id:'cumplido', dias:null};
+    const d = diasEntre(due, hecho);
+    return {id: d >= 0 ? 'cumplido' : 'tardio', dias: d};
+  }
+  if (!due) return {id:'gris', dias:null};
+  const d = diasEntre(due, hoy0);
+  if (d < 0)       return {id:'rojo',  dias:d};
+  if (d <= UMBRAL) return {id:'ambar', dias:d};
+  return {id:'verde', dias:d};
+}
+
+function semTarea(t) { return evaluarSemaforo(t.due_date, t.status, t.completed_date); }
+function semProyecto(p) {
+  // Un proyecto cerrado no incumple nada, esté como esté su fecha.
+  const st = ['completed','cancelled'].includes(p.status || 'active') ? 'done' : 'pending';
+  return evaluarSemaforo(p.due_date, st, p.due_date);
+}
+
+// El texto que acompaña al color. Decir "en 4 días" y "hace 4 días" con el
+// mismo número y distinto signo obliga a leer dos veces; se escribe entero.
+function textoSemaforo(s) {
+  switch (s.id) {
+    case 'rojo':     return `Incumplida · ${Math.abs(s.dias)} d de retraso`;
+    case 'ambar':    return s.dias === 0 ? 'Vence hoy' : `Vence en ${s.dias} d`;
+    case 'verde':    return `En plazo · ${s.dias} d`;
+    case 'cumplido': return s.dias === null ? 'Cumplida' : `Cumplida · ${s.dias} d antes`;
+    case 'tardio':   return `Cumplida ${Math.abs(s.dias)} d tarde`;
+    default:         return 'Sin plazo';
+  }
+}
+
+function chipSemaforo(s) {
+  const e = SEM[s.id];
+  return `<span class="sem-chip" style="background:${e.fondo};color:${e.color}">
+    <span class="sem-dot" style="background:${e.color}"></span>${esc(textoSemaforo(s))}</span>`;
+}
+
+// ——————————————————————————————————————————
+//  ARRANQUE
+// ——————————————————————————————————————————
+document.addEventListener('DOMContentLoaded', () => {
+  const params = new URLSearchParams(location.search);
+  const tf = params.get('tf');
+  // El menú lateral enlaza por color: /planning?tf=overdue son las rojas.
+  const porUrl = {overdue:'rojo', week:'ambar', today:'ambar'};
+  if (tf && porUrl[tf]) curSem = porUrl[tf];
+  loadData();
+
+  // Refresco silencioso cada 60 s, sólo si la pestaña está visible Y hubo
+  // actividad reciente: sin esa condición una pantalla encendida y olvidada
+  // mantendría viva la sesión ella sola (la cookie es deslizante). La marca la
+  // escribe el temporizador de base.html.
+  const ACTIVIDAD_KEY = '__idle_last_activity';
+  const MAX_SIN_ACTIVIDAD_MS = 5 * 60 * 1000;
+  function huboActividadReciente() {
+    try {
+      const t = parseInt(localStorage.getItem(ACTIVIDAD_KEY) || '0', 10);
+      return !t || (Date.now() - t) < MAX_SIN_ACTIVIDAD_MS;
+    } catch (e) { return true; }
+  }
+  setInterval(() => {
+    if (!document.hidden && huboActividadReciente()) loadData(true);
+  }, 60000);
+});
+
+// ——————————————————————————————————————————
+//  DATOS
+// ——————————————————————————————————————————
+async function loadData(silent) {
+  try {
+    const [proj, tasks] = await Promise.all([
+      fetch('/planning/api/projects').then(r => r.json()),
+      fetch('/planning/api/tasks').then(r => r.json()),
+    ]);
+    allProjects = Array.isArray(proj) ? proj : [];
+    allTasks    = Array.isArray(tasks) ? tasks : [];
+  } catch(e) {
+    if (!silent) { allProjects = []; allTasks = []; }
+  }
+  // Si el proyecto recordado ya no existe, se vuelve a "Todos" en vez de
+  // enseñar una pestaña vacía.
+  if (curProject && !allProjects.some(p => p.id === curProject)) curProject = null;
+  renderAll();
+}
+
+function renderAll() {
+  renderEntityTabs();
+  renderProjHead();
+  renderSemaforo();
+  fillProjectSelects();
+  renderCurrentView();
+}
+
+// ——————————————————————————————————————————
+//  FILTROS
+// ——————————————————————————————————————————
+let curSem = localStorage.getItem('plan_sem') || '';
+let showDone = false;
+
+function setSemFilter(id) {
+  curSem = (curSem === id) ? '' : id;
+  localStorage.setItem('plan_sem', curSem);
+  // Filtrar por cumplidas sin enseñarlas sería pedir una lista vacía.
+  if ((curSem === 'cumplido' || curSem === 'tardio') && !showDone) toggleDone(true);
+  renderAll();
+}
+
+function todayStr() { return new Date().toISOString().split('T')[0]; }
+function daysFromToday(n) {
+  const d = new Date(); d.setDate(d.getDate() + n);
+  return d.toISOString().split('T')[0];
+}
+
+function setProject(id) {
+  curProject = id;
+  localStorage.setItem('plan_proyecto', id || '');
+  renderAll();
+}
+curProject = localStorage.getItem('plan_proyecto') || null;
+
+function toggleDone(forzar) {
+  showDone = forzar === true ? true : !showDone;
+  const b = document.getElementById('btnShowDone');
+  if (b) b.textContent = showDone ? '👁 Ocultar cumplidas' : '✅ Cumplidas';
+  if (forzar !== true) renderAll();
+}
+
+// Orden inteligente: primero lo que exige actuar. Rojo, ámbar, verde, sin
+// plazo y al fondo lo ya cerrado; dentro de cada bloque, por fecha y prioridad.
 function smartSort(tasks) {
-  const today0 = todayStr();
-  const rank = t => {
-    if (t.status === 'done') return 2;
-    if (t.due_date && t.due_date < today0) return 0;   // vencida
-    return 1;
-  };
   return [...tasks].sort((a, b) => {
-    const ra = rank(a), rb = rank(b);
-    if (ra !== rb) return ra - rb;
-    if (ra === 2) return (b.completed_date || '').localeCompare(a.completed_date || '');
+    const sa = SEM[semTarea(a).id].orden, sb = SEM[semTarea(b).id].orden;
+    if (sa !== sb) return sa - sb;
     const da = a.due_date || '9999-12-31', db = b.due_date || '9999-12-31';
     if (da !== db) return da < db ? -1 : 1;
     const pa = PRIO_ORDER[a.priority || 'medium'] ?? 2;
@@ -784,262 +672,14 @@ function smartSort(tasks) {
   });
 }
 
-// ——————————————————————————————————————————
-//  BOOTSTRAP QUERY PARAM — open initial view
-// ——————————————————————————————————————————
-const IS_ADMIN = {{ 'true' if is_admin_user else 'false' }};
-const MS_CONNECTED = {{ 'true' if ms_connected else 'false' }};
-// Quién está delante: los proyectos y las actividades quedan a su nombre.
-const YO = {{ (current_user.full_name or current_user.email)|tojson }};
-const MI_CORREO = {{ (current_user.email or '')|tojson }};
-const SCOPE = "{{ scope|default('all') }}";  // 'planning' | 'todo' | 'all'
-const SYNC_INTERVAL_MIN = 5;  // minutos entre auto-pulls
-
-document.addEventListener('DOMContentLoaded', () => {
-  const params = new URLSearchParams(location.search);
-  // Filtro temporal pasado por URL desde el dashboard
-  const tf = params.get('tf');
-  if (tf && ['my-day','overdue','today','tomorrow','week','no-date'].includes(tf)) {
-    curTimeFilter = tf;
-  }
-  loadData();
-  // La sincronización con Microsoft es de Actividades; en Proyectos ni se
-  // consulta ni se enseña.
-  if (SCOPE !== 'planning') {
-    updateSyncIndicator();
-    loadTodoTarget();
-  }
-  // Polling: refrescar tareas cada 60s en silencio.
-  // El pull desde Microsoft lo hace el servidor en segundo plano cada 5 min
-  // (start_todo_autosync), así que aquí solo refrescamos la vista desde la BD.
-  //
-  // Además de estar visible, se exige que haya habido actividad real hace poco.
-  // Sin esa condición este sondeo anularía el cierre por inactividad: cada
-  // petición renueva la cookie de sesión (ventana deslizante), así que una
-  // pestaña de Planificación abierta y olvidada en una pantalla encendida
-  // mantendría la sesión viva indefinidamente sin nadie delante. La marca la
-  // escribe el temporizador de base.html.
-  const ACTIVIDAD_KEY = '__idle_last_activity';
-  const MAX_SIN_ACTIVIDAD_MS = 5 * 60 * 1000;
-  function huboActividadReciente() {
-    try {
-      const t = parseInt(localStorage.getItem(ACTIVIDAD_KEY) || '0', 10);
-      // Si nunca se escribió la marca no se bloquea el refresco: se prefiere
-      // que la pantalla siga funcionando a romperla por una clave ausente.
-      return !t || (Date.now() - t) < MAX_SIN_ACTIVIDAD_MS;
-    } catch (e) { return true; }
-  }
-  setInterval(() => {
-    if (!document.hidden && huboActividadReciente()) loadData(true);
-  }, 60000);
-  if (IS_ADMIN && MS_CONNECTED && SCOPE !== 'planning') {
-    setInterval(updateSyncIndicator, 30000);
-  }
-});
-
-function getLastSync() {
-  const v = localStorage.getItem('msTodoLastSync');
-  return v ? parseInt(v, 10) : 0;
-}
-function setLastSync(ts) { localStorage.setItem('msTodoLastSync', String(ts)); }
-
-function updateSyncIndicator() {
-  const el = document.getElementById('syncStatus');
-  if (!el) return;
-  const last = getLastSync();
-  if (!last) { el.innerHTML = '⏳ <span>nunca sincronizado</span>'; return; }
-  const sec = Math.floor((Date.now() - last) / 1000);
-  let txt;
-  if (sec < 60)      txt = 'hace un momento';
-  else if (sec < 3600)  txt = `hace ${Math.floor(sec/60)} min`;
-  else if (sec < 86400) txt = `hace ${Math.floor(sec/3600)} h`;
-  else                  txt = `hace ${Math.floor(sec/86400)} d`;
-  el.innerHTML = `🔄 <span>Sync ${txt}</span>`;
-}
-
-async function autoSyncIfNeeded() {
-  const last = getLastSync();
-  const elapsedMin = (Date.now() - last) / 60000;
-  if (elapsedMin < SYNC_INTERVAL_MIN) return;
-  try {
-    const r = await fetch('/planning/api/import-todo', { method:'POST' }).then(x => x.json());
-    if (r.success) {
-      setLastSync(Date.now());
-      updateSyncIndicator();
-      const nuevas = r.imported || 0, cambios = r.updated || 0;
-      if (nuevas > 0 || cambios > 0) {
-        let msg = '🔄 ';
-        if (nuevas)  msg += `${nuevas} nuevas`;
-        if (nuevas && cambios) msg += ' · ';
-        if (cambios) msg += `${cambios} actualizadas`;
-        showToast(msg + ' de To-Do', 'info');
-        await loadData(true);
-      }
-    }
-  } catch (e) {}
-}
-
-// ——————————————————————————————————————————
-//  DATA LOADING
-// ——————————————————————————————————————————
-async function loadData(silent) {
-  try {
-    const [proj, tasks] = await Promise.all([
-      fetch('/planning/api/projects').then(r => r.json()),
-      fetch('/planning/api/tasks?scope=' + encodeURIComponent(SCOPE)).then(r => r.json()),
-    ]);
-    allProjects = Array.isArray(proj) ? proj : [];
-    allTasks    = Array.isArray(tasks) ? tasks : [];
-  } catch(e) {
-    if (!silent) { allProjects = []; allTasks = []; }
-  }
-  // Si la pestaña restaurada de localStorage ya no existe (proyecto borrado / cuenta
-  // desconectada), volver a "Todas" en vez de mostrar una pestaña sin datos.
-  if (curProject && !allProjects.some(p => p.id === curProject)) curProject = null;
-  if (curAccount && curAccount !== '__manual__' && !allTasks.some(t => t.ms_email === curAccount)) curAccount = null;
-  renderAll();
-}
-
-// ——————————————————————————————————————————
-//  RENDER ALL
-// ——————————————————————————————————————————
-function renderAll() {
-  renderEntityTabs();
-  renderProjHead();
-  renderTimeFocusBar();
-  fillProjectSelects();
-  updateStats();
-  renderCurrentView();
-}
-
-// Pestaña principal persistida por scope (cuenta MS en /todo, proyecto en /planning).
-const _savedEntityTab = localStorage.getItem('entityTab_' + SCOPE) || null;
-let curAccount = SCOPE === 'todo' ? _savedEntityTab : null;
-if (SCOPE !== 'todo' && _savedEntityTab) curProject = _savedEntityTab;
-let showDone = false;
-// Ocultar "Correos marcados" de Outlook por defecto (son ruido); recordado por scope.
-let hideFlagged = (localStorage.getItem('hideFlagged_' + SCOPE) ?? '1') === '1';
-function toggleFlagged() {
-  hideFlagged = !hideFlagged;
-  localStorage.setItem('hideFlagged_' + SCOPE, hideFlagged ? '1' : '0');
-  renderAll();
-}
-let curTimeFilter = localStorage.getItem('timeFilter_' + SCOPE) || '';
-
-function setTimeFilter(v) {
-  curTimeFilter = (curTimeFilter === v) ? '' : v;  // clic en activo lo desactiva
-  localStorage.setItem('timeFilter_' + SCOPE, curTimeFilter);
-  renderAll();
-}
-
-function todayStr()    { return new Date().toISOString().split('T')[0]; }
-function daysFromToday(n) {
-  const d = new Date(); d.setDate(d.getDate() + n);
-  return d.toISOString().split('T')[0];
-}
-
-function inTimeFilter(t) {
-  if (!curTimeFilter) return true;
-  const d = t.due_date;
-  const today0 = todayStr();
-  switch (curTimeFilter) {
-    case 'overdue':   return d && d < today0 && t.status !== 'done';
-    case 'today':     return d === today0;
-    case 'tomorrow':  return d === daysFromToday(1);
-    case 'week':      return d && d >= today0 && d <= daysFromToday(7);
-    case 'no-date':   return !d;
-    case 'my-day':    {
-      // Mi día: vencidas + de hoy + alta/urgente sin completar
-      if (t.status === 'done') return false;
-      if (d && d <= today0) return true;
-      if (['high','urgent'].includes(t.priority || '')) return true;
-      return false;
-    }
-    default: return true;
-  }
-}
-
-// Filtro de tiempo (fusiona los antiguos time-pills + panel de foco): un solo lugar
-// con los 7 filtros de tiempo y, al final, el chip de "correos marcados" de Outlook.
-function renderTimeFocusBar() {
-  const el = document.getElementById('timeFocusBar');
-  // Conteos (sobre tareas que ya pasaron los filtros de cuenta/proyecto)
-  let base = allTasks;
-  if (curProject) base = base.filter(x => x.project_id === curProject);
-  if (curAccount === '__manual__') base = base.filter(x => !x.ms_email);
-  else if (curAccount) base = base.filter(x => (x.ms_email||'') === curAccount);
-  if (!showDone) base = base.filter(x => x.status !== 'done');
-  if (hideFlagged) base = base.filter(x => !isFlaggedEmail(x));
-  const today0 = todayStr();
-  const cnt = {
-    'my-day':   base.filter(t => (t.status !== 'done' && ((t.due_date && t.due_date <= today0) || ['high','urgent'].includes(t.priority||'')))).length,
-    'overdue':  base.filter(t => t.due_date && t.due_date < today0 && t.status !== 'done').length,
-    'today':    base.filter(t => t.due_date === today0).length,
-    'tomorrow': base.filter(t => t.due_date === daysFromToday(1)).length,
-    'week':     base.filter(t => t.due_date && t.due_date >= today0 && t.due_date <= daysFromToday(7)).length,
-    'no-date':  base.filter(t => !t.due_date).length,
-  };
-  const def = [
-    {key:'',         label:'Todas',         color:'#64748b', icon:''},
-    {key:'my-day',   label:'Mi día',        color:'#4f46e5', icon:'🎯'},
-    {key:'overdue',  label:'Incumplidas',   color:'#ef4444', icon:'⛔'},
-    {key:'today',    label:'Hoy',           color:'#10b981', icon:'📌'},
-    {key:'tomorrow', label:'Mañana',        color:'#0ea5e9', icon:'📅'},
-    {key:'week',     label:'Esta semana',   color:'#8b5cf6', icon:'🗓'},
-    {key:'no-date',  label:'Sin plazo',     color:'#94a3b8', icon:'∅'},
-  ];
-  // En Proyectos siete filtros eran demasiados para lo que se decide aquí:
-  // quedan los cuatro que se usan. "Mi día" y "Mañana" son de Actividades, la
-  // pantalla del día a día. Si se llega con uno de ellos por enlace, su pastilla
-  // se enseña igual para que se vea qué está filtrando.
-  const visibles = SCOPE === 'planning'
-    ? def.filter(d => ['', 'overdue', 'week', 'no-date'].includes(d.key) || d.key === curTimeFilter)
-    : def;
-  const pillsHtml = visibles.map(d => {
-    const active = curTimeFilter === d.key;
-    const n = d.key ? cnt[d.key] : base.length;
-    return `<span class="proj-pill ${active?'active':''}"
-      style="border-color:${d.color};${active?'background:'+d.color+';color:#fff':'color:'+d.color}"
-      onclick="setTimeFilter('${d.key}')">
-      ${d.icon} ${d.label} <span class="badge bg-light text-dark ms-1" style="font-size:.65rem;color:#333!important">${n}</span>
-    </span>`;
-  }).join('');
-
-  // Los correos marcados de Outlook son cosa de Actividades; en Proyectos no hay
-  // ninguno y el chip sólo estorbaba.
-  const hasFlagged = SCOPE !== 'planning' && allTasks.some(isFlaggedEmail);
-  const flagChip = hasFlagged ? `<span onclick="toggleFlagged()" class="proj-pill"
-      style="border-color:#94a3b8;background:${hideFlagged ? '#fff' : '#e2e8f0'};color:#475569"
-      title="Correos marcados de Outlook">📧 ${hideFlagged ? 'Ver correos marcados' : 'Ocultar correos marcados'}</span>` : '';
-
-  el.innerHTML = `<div class="project-pills" style="margin-bottom:0">${pillsHtml}${flagChip}</div>`;
-}
-
-// Paleta de colores por cuenta (determinística por email)
-const ACCOUNT_PALETTE = ['#0078d4','#d83b01','#107c10','#5c2d91','#e3008c','#b4009e','#ff8c00','#00b294'];
-function colorForAccount(email) {
-  if (!email) return '#4f46e5';
-  let h = 0;
-  for (let i = 0; i < email.length; i++) h = (h * 31 + email.charCodeAt(i)) >>> 0;
-  return ACCOUNT_PALETTE[h % ACCOUNT_PALETTE.length];
-}
-function shortAccount(email) {
-  if (!email) return 'Sistema';
-  const n = email.split('@')[0];
-  return n.length > 16 ? n.slice(0,16)+'…' : n;
+function tareasDelAmbito() {
+  return curProject ? allTasks.filter(t => t.project_id === curProject) : allTasks;
 }
 
 function filteredTasks() {
-  let t = allTasks;
-  if (curProject) t = t.filter(x => x.project_id === curProject);
-  if (curAccount === '__manual__') {
-    t = t.filter(x => !x.ms_email);
-  } else if (curAccount) {
-    t = t.filter(x => (x.ms_email || '') === curAccount);
-  }
-  if (!showDone) t = t.filter(x => x.status !== 'done');
-  if (hideFlagged) t = t.filter(x => !isFlaggedEmail(x));
-  t = t.filter(inTimeFilter);
+  let t = tareasDelAmbito();
+  if (!showDone) t = t.filter(x => !CERRADOS.includes(x.status || ''));
+  if (curSem)    t = t.filter(x => semTarea(x).id === curSem);
   const s = document.getElementById('filterStatus').value;
   if (s) t = t.filter(x => (x.status || 'pending') === s);
   const q = (document.getElementById('searchInput').value || '').toLowerCase();
@@ -1048,70 +688,137 @@ function filteredTasks() {
     (x.description||'').toLowerCase().includes(q) ||
     (x.assigned_to||'').toLowerCase().includes(q) ||
     (x.tags||'').toLowerCase().includes(q) ||
-    (x.phase||'').toLowerCase().includes(q) ||
-    (x.ms_email||'').toLowerCase().includes(q));
+    (x.phase||'').toLowerCase().includes(q));
   return smartSort(t);
 }
 
-// Pestaña principal: cuentas MS en /todo, proyectos en /planning. Misma barra visual
-// para ambos scopes; el eje que agrupa cambia según SCOPE (ver plan de reorganización).
-function renderEntityTabs() {
-  const c = document.getElementById('entityTabs');
-  if (SCOPE === 'todo') {
-    const accounts = [...new Set(allTasks.map(t => t.ms_email).filter(Boolean))].sort();
-    const hasManual = allTasks.some(t => !t.ms_email);
-    const countBy = (pred) => allTasks.filter(t => (showDone || t.status !== 'done') && pred(t)).length;
-    let html = `<button class="etab ${!curAccount?'active':''}" onclick="setAccount(null)">
-      📋 Todas <span class="badge bg-secondary ms-1" style="font-size:.65rem">${countBy(()=>true)}</span>
+// ——————————————————————————————————————————
+//  SEMÁFORO EN PANTALLA
+// ——————————————————————————————————————————
+function renderSemaforo() {
+  const el = document.getElementById('semRow');
+  if (!el) return;
+  const base = tareasDelAmbito();
+  const cuenta = {};
+  SEM_ORDEN.forEach(k => cuenta[k] = 0);
+  cuenta.gris = 0;
+  base.forEach(t => { const id = semTarea(t).id; cuenta[id] = (cuenta[id] || 0) + 1; });
+
+  // «Sin plazo» sólo aparece si hay algo sin fecha. Enseñar un cero fijo sería
+  // un recuadro que nunca dice nada; esconder las que existen, un agujero.
+  const visibles = SEM_ORDEN.concat(cuenta.gris ? ['gris'] : []);
+  el.innerHTML = visibles.map(id => {
+    const e = SEM[id];
+    const on = curSem === id;
+    return `<button class="sem-card ${on?'on':''}" style="color:${e.color};${on?'border-color:'+e.color:''}"
+      onclick="setSemFilter('${id}')" title="Ver sólo ${esc(e.etiqueta.toLowerCase())}">
+      <span style="position:absolute;left:0;top:0;bottom:0;width:5px;background:${e.color}"></span>
+      <span class="sem-num">${cuenta[id]}</span>
+      <span class="sem-lbl">${e.icono} ${esc(e.etiqueta)}</span>
     </button>`;
-    if (hasManual) {
-      const n = countBy(t => !t.ms_email);
-      html += `<button class="etab ${curAccount==='__manual__'?'active':''}"
-        onclick="setAccount('__manual__')"
-        style="${curAccount==='__manual__'?'color:#4f46e5':''}">✍️ Sistema <span class="badge bg-light text-dark ms-1" style="font-size:.65rem">${n}</span></button>`;
-    }
-    accounts.forEach(a => {
-      const col = colorForAccount(a);
-      const n = countBy(t => t.ms_email === a);
-      html += `<button class="etab ${curAccount===a?'active':''}"
-        onclick="setAccount('${a}')" title="${esc(a)}"
-        style="${curAccount===a?'color:'+col:''}">
-        📧 ${esc(shortAccount(a))} <span class="badge bg-light text-dark ms-1" style="font-size:.65rem;color:#333!important">${n}</span>
-      </button>`;
-    });
-    c.innerHTML = html;
-  } else {
-    const hoy0 = todayStr();
-    let html = `<button class="etab ${!curProject?'active':''}" onclick="setProject(null)">Todos</button>`;
-    allProjects.forEach(p => {
-      // Una marca roja en la propia pestaña: el proyecto incumplido se ve sin
-      // tener que entrar a mirarlo.
-      const vencidas = allTasks.filter(t => t.project_id === p.id && t.status !== 'done'
-                                         && t.due_date && t.due_date < hoy0).length;
-      const cerrado = ['completed','cancelled'].includes(p.status || 'active');
-      const fuera = !cerrado && p.due_date && p.due_date < hoy0;
-      const marca = (fuera || vencidas)
-        ? `<span class="badge bg-danger text-white ms-1" style="font-size:.62rem"
-             title="${fuera ? 'Proyecto fuera de plazo' : ''}${fuera && vencidas ? ' · ' : ''}${vencidas ? vencidas + ' actividad(es) incumplida(s)' : ''}">⛔${vencidas || ''}</span>`
-        : '';
-      html += `<button class="etab ${curProject===p.id?'active':''}"
-        onclick="setProject('${p.id}')"
-        ondblclick="openProjectModal('${p.id}')"
-        style="${curProject===p.id?'color:'+p.color:''}"
-        title="Doble clic para editar">
-        ${esc(p.name)}${marca}
-      </button>`;
-    });
-    c.innerHTML = html;
-  }
+  }).join('');
 }
 
-function setAccount(em) {
-  curAccount = em;
-  localStorage.setItem('entityTab_' + SCOPE, em || '');
-  renderAll();
+// Cuánto se cerró A TIEMPO, que no es lo mismo que cuánto se cerró. Es
+// justo la distinción que un porcentaje de avance normal borra.
+function cumplimiento(tareas) {
+  let aTiempo = 0, conPlazo = 0;
+  tareas.forEach(t => {
+    const s = semTarea(t);
+    if (s.id === 'gris') return;
+    conPlazo++;
+    if (s.id === 'cumplido') aTiempo++;
+  });
+  return conPlazo ? Math.round(aTiempo * 100 / conPlazo) : null;
 }
-function toggleDone() { showDone = !showDone; document.getElementById('btnShowDone').textContent = showDone ? '👁 Ocultar completadas' : '✅ Ver completadas'; renderAll(); }
+
+function barraSemaforo(tareas) {
+  const total = tareas.length;
+  if (!total) return '';
+  const c = {};
+  tareas.forEach(t => { const id = semTarea(t).id; c[id] = (c[id]||0)+1; });
+  const trozos = ['cumplido','tardio','verde','ambar','rojo','gris']
+    .filter(k => c[k])
+    .map(k => `<span style="width:${c[k]*100/total}%;background:${SEM[k].color}"
+                 title="${esc(SEM[k].etiqueta)}: ${c[k]}"></span>`).join('');
+  return `<div class="sem-bar">${trozos}</div>`;
+}
+
+// ——————————————————————————————————————————
+//  CABECERA DEL PROYECTO ABIERTO
+// ——————————————————————————————————————————
+function renderProjHead() {
+  const el = document.getElementById('projHead');
+  if (!el) return;
+  if (!curProject) { el.innerHTML = ''; return; }
+  const p = allProjects.find(x => x.id === curProject);
+  if (!p) { el.innerHTML = ''; return; }
+
+  const tareas = allTasks.filter(t => t.project_id === p.id);
+  const hechas = tareas.filter(t => CERRADOS.includes(t.status || '')).length;
+  const avance = tareas.length ? Math.round(hechas * 100 / tareas.length) : 0;
+  const cump   = cumplimiento(tareas);
+  const s = semProyecto(p);
+  const e = SEM[s.id];
+  const color = p.color || '#4f46e5';
+
+  el.innerHTML = `
+  <div class="proj-head" style="border-left:6px solid ${color}">
+    <div class="ph-main">
+      <div class="ph-name">
+        <span class="sem-dot" style="background:${e.color};width:12px;height:12px"
+              title="${esc(e.etiqueta)}"></span>
+        ${esc(p.name)}
+      </div>
+      <div class="ph-meta">
+        <span title="Responsable del proyecto">👤 <strong>${esc(p.owner || '—')}</strong></span>
+        <span title="Fecha de vencimiento">📅 Vence el <strong>${p.due_date ? fmtDate(p.due_date) : '—'}</strong></span>
+        ${chipSemaforo(s)}
+      </div>
+    </div>
+    <div class="ph-prog">
+      <div class="ph-prog-num">${avance}%</div>
+      ${barraSemaforo(tareas) || '<div class="prog-bar" style="width:120px"></div>'}
+      <div class="ph-prog-lbl">${hechas} de ${tareas.length} actividades${
+        cump === null ? '' : ` · ${cump}% a tiempo`}</div>
+    </div>
+    <button class="btn btn-outline-secondary btn-sm rounded-pill" onclick="openProjectModal('${p.id}')"
+            title="Editar el proyecto y su plazo">✏️ Editar</button>
+  </div>`;
+}
+
+// ——————————————————————————————————————————
+//  PESTAÑAS DE PROYECTO
+// ——————————————————————————————————————————
+function renderEntityTabs() {
+  const c = document.getElementById('entityTabs');
+  if (!c) return;
+  let html = `<button class="etab ${!curProject?'active':''}" onclick="setProject(null)">Todos</button>`;
+  allProjects.forEach(p => {
+    // Un punto de color por proyecto: el estado se ve sin entrar a mirarlo.
+    const e = SEM[semProyecto(p).id];
+    html += `<button class="etab ${curProject===p.id?'active':''}"
+      onclick="setProject('${p.id}')"
+      ondblclick="openProjectModal('${p.id}')"
+      style="${curProject===p.id?'color:'+p.color:''}"
+      title="${esc(p.name)} — ${esc(e.etiqueta)} · doble clic para editar">
+      <span class="sem-dot" style="background:${e.color}"></span>${esc(p.name)}
+    </button>`;
+  });
+  c.innerHTML = html;
+}
+
+function fillProjectSelects() {
+  const opts = allProjects.map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('');
+  document.querySelectorAll('#qProject,#mProject').forEach(s => {
+    const prev = s.value;
+    s.innerHTML = '<option value="">Sin proyecto</option>' + opts;
+    if (prev) s.value = prev;
+  });
+  // Estando dentro de un proyecto, lo que se agregue va a ese proyecto.
+  const q = document.getElementById('qProject');
+  if (q && curProject) q.value = curProject;
+}
 
 // ——————————————————————————————————————————
 //  SELECCIÓN MÚLTIPLE
@@ -1122,8 +829,9 @@ const selectedIds = new Set();
 function toggleSelectMode() {
   selectMode = !selectMode;
   selectedIds.clear();
-  document.getElementById('btnSelectMode').classList.toggle('btn-dark', selectMode);
-  document.getElementById('btnSelectMode').classList.toggle('btn-outline-dark', !selectMode);
+  const b = document.getElementById('btnSelectMode');
+  b.classList.toggle('btn-dark', selectMode);
+  b.classList.toggle('btn-outline-secondary', !selectMode);
   updateBulkBar();
   renderAll();
 }
@@ -1147,16 +855,12 @@ function updateBulkBar() {
   document.getElementById('bulkCount').textContent = selectedIds.size;
 }
 
-function bulkClear() {
-  selectedIds.clear();
-  updateBulkBar();
-  renderAll();
-}
+function bulkClear() { selectedIds.clear(); updateBulkBar(); renderAll(); }
 
 async function bulkPatch(patch) {
   if (!selectedIds.size) return;
   const ids = Array.from(selectedIds);
-  showToast(`⏳ Actualizando ${ids.length} tareas...`, 'info');
+  showToast(`⏳ Actualizando ${ids.length} actividades...`, 'info');
   try {
     const r = await fetch('/planning/api/tasks/bulk', {
       method:'POST', headers:{'Content-Type':'application/json'},
@@ -1164,8 +868,7 @@ async function bulkPatch(patch) {
     }).then(x => x.json());
     if (r.success) {
       let msg = `✅ ${r.updated} actualizadas`;
-      if (r.pushed_to_ms) msg += ` (${r.pushed_to_ms} sincronizadas con MS)`;
-      if (r.partial) msg += '. Algunas pendientes — reintenta para completar.';
+      if (r.partial) msg += '. Quedaron más: repite para terminar.';
       showToast(msg, 'success');
       selectedIds.clear();
       updateBulkBar();
@@ -1173,29 +876,27 @@ async function bulkPatch(patch) {
     } else {
       showToast('❌ ' + (r.error || 'Error'), 'danger');
     }
-  } catch(e) {
-    showToast('❌ Error de conexión', 'danger');
-  }
+  } catch(e) { showToast('❌ Error de conexión', 'danger'); }
 }
 
 function bulkSetStatus(s) {
-  if (!confirm(`¿Marcar ${selectedIds.size} tareas como "${s}"?`)) return;
+  if (!confirm(`¿Marcar ${selectedIds.size} actividades como "${STATUS_LABELS[s] || s}"?`)) return;
   bulkPatch({status: s});
 }
 function bulkSetPriority(p) { if (p) bulkPatch({priority: p}); }
 
 async function bulkDelete() {
   if (!selectedIds.size) return;
-  if (!confirm(`¿Eliminar ${selectedIds.size} tareas? Esta acción no se puede deshacer y también borrará en Microsoft.`)) return;
+  if (!confirm(`¿Eliminar ${selectedIds.size} actividades? Esta acción no se puede deshacer.`)) return;
   const ids = Array.from(selectedIds);
-  showToast(`⏳ Eliminando ${ids.length} tareas...`, 'info');
+  showToast(`⏳ Eliminando ${ids.length} actividades...`, 'info');
   try {
     const r = await fetch('/planning/api/tasks/bulk-delete', {
       method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({ids})
     }).then(x => x.json());
     if (r.success) {
-      showToast(`🗑 ${r.deleted} eliminadas (${r.deleted_in_ms} también en MS)${r.partial?' — reintenta para terminar':''}`, 'warning');
+      showToast(`🗑 ${r.deleted} eliminadas${r.omitidas?` · ${r.omitidas} sin permiso`:''}`, 'warning');
       selectedIds.clear();
       updateBulkBar();
       await loadData();
@@ -1203,508 +904,35 @@ async function bulkDelete() {
   } catch(e) { showToast('❌ Error', 'danger'); }
 }
 
-// Conjunto de IDs de tareas "madre" expandidas (persistente)
-const expandedSet = new Set(JSON.parse(localStorage.getItem('expandedTasks') || '[]'));
+// ——————————————————————————————————————————
+//  SUBTAREAS DESPLEGADAS EN LA LISTA
+// ——————————————————————————————————————————
+const expandedSet = new Set(JSON.parse(localStorage.getItem('plan_expandidas') || '[]'));
 function persistExpanded() {
-  localStorage.setItem('expandedTasks', JSON.stringify([...expandedSet]));
+  localStorage.setItem('plan_expandidas', JSON.stringify([...expandedSet]));
 }
 function toggleExpandRow(id) {
-  if (expandedSet.has(id)) expandedSet.delete(id);
-  else {
-    expandedSet.add(id);
-    // Si la tarea no tiene subtareas cacheadas y es ms_todo, dispara refresh en background
-    const t = allTasks.find(x => x.id === id);
-    if (t && t.source === 'ms_todo' && (!Array.isArray(t.subtasks) || t.subtasks.length === 0)) {
-      autoLoadSubtasksFor(id);
-    }
-  }
+  if (expandedSet.has(id)) expandedSet.delete(id); else expandedSet.add(id);
   persistExpanded();
   renderAll();
 }
 
-async function autoLoadSubtasksFor(id) {
-  try {
-    const r = await fetch(`/planning/api/tasks/${id}/refresh-subtasks`, {method:'POST'}).then(x=>x.json());
-    if (r.success) {
-      const idx = allTasks.findIndex(t => t.id === id);
-      if (idx >= 0) {
-        allTasks[idx].subtasks = r.subtasks || [];
-        allTasks[idx].progress_pct = r.progress;
-      }
-      renderAll();
-    }
-  } catch(e) {}
-}
-
-// Botón Expandir/Colapsar todo (sigue siendo útil con 1.000 tareas)
-let expandSubs = localStorage.getItem('expandSubs') === '1';
-function toggleSubsAsItems() {
-  expandSubs = !expandSubs;
-  localStorage.setItem('expandSubs', expandSubs ? '1' : '0');
-  // Aplica a todas las tareas con subtareas
-  if (expandSubs) {
-    allTasks.forEach(t => { if ((t.subtasks||[]).length) expandedSet.add(t.id); });
-  } else {
-    expandedSet.clear();
-  }
-  persistExpanded();
-  const btn = document.getElementById('btnShowSubs');
-  if (btn) btn.textContent = expandSubs ? '📑 Colapsar todas' : '📑 Expandir todas';
-  renderAll();
-}
-document.addEventListener('DOMContentLoaded', () => {
-  const btn = document.getElementById('btnShowSubs');
-  if (btn && expandSubs) btn.textContent = '📑 Colapsar todas';
-});
-
-// Inserta filas hijas para tareas expandidas
 function expandedTasks(tasks) {
   const out = [];
   for (const t of tasks) {
     out.push(t);
     const subs = Array.isArray(t.subtasks) ? t.subtasks : [];
-    if (!subs.length) continue;
-    if (!expandedSet.has(t.id)) continue;
+    if (!subs.length || !expandedSet.has(t.id)) continue;
     for (const s of subs) {
       if (s.done && !showDone) continue;
       out.push({
-        id: t.id + '__' + s.id,
-        title: s.name || '',
+        id: t.id + '__' + s.id, title: s.name || '',
         status: s.done ? 'done' : 'pending',
-        priority: t.priority,
-        project_id: t.project_id,
-        phase: t.phase,
-        ms_email: t.ms_email,
-        created_at: t.created_at,
-        due_date: null,
-        progress_pct: s.done ? 100 : 0,
-        _isSubtask: true,
-        _parentId: t.id,
-        _subId: s.id,
+        _isSubtask: true, _parentId: t.id, _subId: s.id,
       });
     }
   }
   return out;
-}
-
-// ——————————————————————————————————————————
-//  TIEMPO RELATIVO
-// ——————————————————————————————————————————
-function timeAgo(iso) {
-  if (!iso) return '';
-  const d = new Date(iso);
-  if (isNaN(d)) return '';
-  const sec = Math.floor((Date.now() - d.getTime()) / 1000);
-  if (sec < 60)      return 'recién';
-  if (sec < 3600)    return Math.floor(sec/60)   + ' min';
-  if (sec < 86400)   return Math.floor(sec/3600) + ' h';
-  if (sec < 2592000) return Math.floor(sec/86400)+ ' d';
-  if (sec < 31536000)return Math.floor(sec/2592000)+ ' meses';
-  return Math.floor(sec/31536000) + ' años';
-}
-
-// ——————————————————————————————————————————
-//  STATS
-// ——————————————————————————————————————————
-// Los cuatro recuadros responden a las cuatro preguntas que se hacen al abrir
-// la pantalla: cuánto hay, qué está incumplido, qué aprieta esta semana y qué
-// ya está cerrado. Cada uno filtra la lista al pulsarlo.
-function updateStats() {
-  // Sobre TODAS las tareas del ámbito (sin aplicar showDone): son totales reales.
-  let t = curProject ? allTasks.filter(x => x.project_id === curProject) : allTasks;
-  if (curAccount === '__manual__') t = t.filter(x => !x.ms_email);
-  else if (curAccount) t = t.filter(x => (x.ms_email||'') === curAccount);
-  const hoy0 = todayStr(), fin = daysFromToday(7);
-  const overdue = t.filter(x => x.due_date && x.status !== 'done' && x.due_date < hoy0).length;
-  const semana  = t.filter(x => x.due_date && x.status !== 'done' &&
-                                x.due_date >= hoy0 && x.due_date <= fin).length;
-  document.getElementById('stTotal').textContent   = t.length;
-  document.getElementById('stOverdue').textContent = overdue;
-  document.getElementById('stInProg').textContent  = semana;
-  document.getElementById('stDone').textContent    = t.filter(x => x.status === 'done').length;
-}
-
-// Las completadas están ocultas por defecto; el recuadro las enseña sin obligar
-// a buscar el botón de la barra.
-function verCompletadas() {
-  if (!showDone) toggleDone();
-  document.getElementById('filterStatus').value = 'done';
-  curTimeFilter = '';
-  localStorage.setItem('timeFilter_' + SCOPE, '');
-  renderAll();
-}
-
-// ——————————————————————————————————————————
-//  CABECERA DEL PROYECTO ABIERTO
-//  Responsable, plazo y avance del proyecto, en una línea. Antes esto no
-//  estaba en ninguna parte: el proyecto era sólo el nombre de una pestaña.
-// ——————————————————————————————————————————
-function renderProjHead() {
-  const el = document.getElementById('projHead');
-  if (!el) return;
-  if (SCOPE !== 'planning' || !curProject) { el.innerHTML = ''; return; }
-  const p = allProjects.find(x => x.id === curProject);
-  if (!p) { el.innerHTML = ''; return; }
-
-  const tareas = allTasks.filter(t => t.project_id === p.id);
-  const hechas = tareas.filter(t => t.status === 'done').length;
-  const avance = tareas.length ? Math.round(hechas * 100 / tareas.length) : 0;
-  const dl = p.due_date ? Math.ceil((new Date(p.due_date + 'T00:00:00') - today) / 86400000) : null;
-  const cerrado = ['completed', 'cancelled'].includes(p.status || 'active');
-
-  let plazo, plazoColor;
-  if (!p.due_date)      { plazo = 'Sin fecha de vencimiento'; plazoColor = '#64748b'; }
-  else if (cerrado)     { plazo = 'Proyecto cerrado';         plazoColor = '#10b981'; }
-  else if (dl < 0)      { plazo = `⛔ INCUMPLIDO · ${Math.abs(dl)} día(s) de retraso`; plazoColor = '#dc2626'; }
-  else if (dl === 0)    { plazo = '⚠️ Vence hoy';             plazoColor = '#d97706'; }
-  else                  { plazo = `Faltan ${dl} día(s)`;      plazoColor = dl <= 7 ? '#d97706' : '#16a34a'; }
-
-  const color = p.color || '#4f46e5';
-  el.innerHTML = `
-  <div class="proj-head" style="border-left:6px solid ${color}">
-    <div class="ph-main">
-      <div class="ph-name">${esc(p.name)}</div>
-      <div class="ph-meta">
-        <span title="Responsable del proyecto">👤 <strong>${esc(p.owner || '—')}</strong></span>
-        <span title="Fecha de vencimiento">📅 Vence el <strong>${p.due_date ? fmtDate(p.due_date) : '—'}</strong></span>
-        <span style="color:${plazoColor};font-weight:700">${plazo}</span>
-      </div>
-    </div>
-    <div class="ph-prog">
-      <div class="ph-prog-num">${avance}%</div>
-      <div class="prog-bar" style="width:120px"><div class="prog-bar-fill" style="width:${avance}%"></div></div>
-      <div class="ph-prog-lbl">${hechas} de ${tareas.length} actividades</div>
-    </div>
-    <button class="btn btn-outline-secondary btn-sm rounded-pill" onclick="openProjectModal('${p.id}')"
-            title="Editar el proyecto y su plazo">✏️ Editar</button>
-  </div>`;
-}
-
-function setProject(id) {
-  curProject = id;
-  localStorage.setItem('entityTab_' + SCOPE, id || '');
-  renderAll();
-}
-
-function fillProjectSelects() {
-  const opts = allProjects.map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('');
-  document.querySelectorAll('#qProject,#mProject').forEach(s => {
-    const prev = s.value;
-    s.innerHTML = '<option value="">Sin proyecto</option>' + opts;
-    if (prev) s.value = prev;
-  });
-  // Estando dentro de un proyecto, lo que se agregue va a ese proyecto sin
-  // tener que volver a elegirlo en el desplegable.
-  const q = document.getElementById('qProject');
-  if (q && curProject) q.value = curProject;
-}
-
-// La única vista del módulo es la lista de actividades. El tablero Kanban, el
-// Gantt y el mapa de procesos se retiraron de aquí: el Gantt vive ahora en su
-// propio módulo (/cronograma), con planificación asistida.
-function renderCurrentView() { renderList(); }
-
-// ——————————————————————————————————————————
-//  LIST VIEW
-// ——————————————————————————————————————————
-// groupBy se guarda por scope (planning/todo) para que cada vista recuerde su preferencia
-let groupBy = localStorage.getItem('groupBy_' + SCOPE);
-// El To-Do ahora se agrupa POR ESTADO por defecto (antes era 'phase').
-// Migración única: a quien tenía el default viejo ('phase' o nada) lo pasamos a
-// 'status'; si eligió otra cosa a propósito, se respeta.
-if (SCOPE === 'todo' && localStorage.getItem('todoGroupDefault_v2') !== '1') {
-  localStorage.setItem('todoGroupDefault_v2', '1');
-  if (groupBy === null || groupBy === 'phase') {
-    groupBy = 'status';
-    localStorage.setItem('groupBy_' + SCOPE, groupBy);
-  }
-}
-if (groupBy === null) groupBy = (SCOPE === 'todo') ? 'status' : '';
-function setGroupBy(v) { groupBy = v; localStorage.setItem('groupBy_' + SCOPE, v); renderCurrentView(); }
-document.addEventListener('DOMContentLoaded', () => {
-  const sel = document.getElementById('groupBy');
-  if (sel) sel.value = groupBy;
-});
-
-// En Proyectos la agrupación no se elige: la vista general se parte por
-// proyecto (que es la estructura real del trabajo) y dentro de un proyecto se
-// muestra la lista seguida, ordenada por urgencia. Un desplegable menos.
-function grupoActivo() {
-  if (SCOPE === 'planning') return curProject ? '' : 'project';
-  return groupBy;
-}
-
-function groupKey(t, modo) {
-  switch (modo) {
-    case 'status':   return STATUS_LABELS[t.status || 'pending'] || 'Pendiente';
-    case 'phase':    return t.phase || 'Sin lista';
-    case 'project':  {
-      const p = allProjects.find(x => x.id === t.project_id);
-      return p ? p.name : 'Sin proyecto';
-    }
-    case 'account':  return t.ms_email || '✍️ Sistema';
-    case 'priority': return PRIO_LABELS[t.priority || 'medium'] || 'Media';
-    default: return '';
-  }
-}
-
-function renderList() {
-  const tasks = expandedTasks(filteredTasks());
-  const tbody = document.getElementById('taskTableBody');
-  const empty = document.getElementById('listEmpty');
-  // Header en modo selección: checkbox maestro
-  const hh = document.getElementById('hashHeader');
-  if (hh) {
-    if (selectMode) {
-      const allSel = tasks.length && tasks.every(t => selectedIds.has(t.id));
-      hh.outerHTML = `<input type="checkbox" id="hashHeader" ${allSel?'checked':''} onchange="toggleAllVisible(this.checked)" title="Seleccionar todo lo visible">`;
-    } else {
-      hh.outerHTML = '<span id="hashHeader">#</span>';
-    }
-  }
-  if (!tasks.length) { tbody.innerHTML=''; empty.style.display=''; return; }
-  empty.style.display = 'none';
-  // Agrupación
-  const modo = grupoActivo();
-  if (modo) {
-    const groups = {};
-    tasks.forEach(t => {
-      const k = groupKey(t, modo);
-      (groups[k] = groups[k] || []).push(t);
-    });
-    const today0 = todayStr();
-    // Ordenar los grupos por urgencia: primero los que tienen tareas vencidas,
-    // luego los que tienen más pendientes; alfabético como desempate.
-    const grpOverdue = k => groups[k].filter(t => t.due_date && t.due_date < today0 && t.status !== 'done').length;
-    const grpPending = k => groups[k].filter(t => t.status !== 'done').length;
-    // Estado y prioridad usan un orden lógico fijo; el resto, por urgencia.
-    const fixedOrder = modo === 'status' ? STATUS_GROUP_ORDER
-                     : modo === 'priority' ? PRIO_GROUP_ORDER : null;
-    const keys = Object.keys(groups).sort((a, b) => {
-      if (fixedOrder) {
-        const ia = fixedOrder.indexOf(a), ib = fixedOrder.indexOf(b);
-        const ra = ia < 0 ? 99 : ia, rb = ib < 0 ? 99 : ib;
-        if (ra !== rb) return ra - rb;
-        return a.localeCompare(b);
-      }
-      const oa = grpOverdue(a), ob = grpOverdue(b);
-      if (oa !== ob) return ob - oa;
-      const pa = grpPending(a), pb = grpPending(b);
-      if (pa !== pb) return pb - pa;
-      return a.localeCompare(b);
-    });
-    const groupIcon = {
-      status:   '🗂',
-      phase:    '📁',
-      project:  '📂',
-      account:  '📧',
-      priority: '🎯',
-    }[modo] || '📋';
-    tbody.innerHTML = keys.map(k => {
-      const groupTasks = groups[k];
-      const safeId = k.replace(/[^a-z0-9]/gi, '_');
-      const groupId = 'grp_' + safeId;
-      const collapsed = localStorage.getItem('groupCollapsed_'+safeId) === '1';
-      const totalN  = groupTasks.length;
-      const pendN   = groupTasks.filter(t => t.status !== 'done').length;
-      const overdueN= groupTasks.filter(t => t.due_date && t.due_date < today0 && t.status !== 'done').length;
-      const rows = collapsed ? '' : groupTasks.map((t,i) => taskRowHtml(t, i)).join('');
-      const caret = collapsed ? '▸' : '▾';
-      // Al agrupar por estado, cada cuadro toma el color e ícono de su estado.
-      let hdrBg = 'linear-gradient(to right,#4338ca,#6366f1)';
-      let hdrIcon = groupIcon;
-      if (modo === 'status') {
-        const sk = STATUS_KEY_BY_LABEL[k];
-        if (sk) {
-          const c = STATUS_COLS[sk] || '#6366f1';
-          hdrBg = `linear-gradient(to right,${c},${c}cc)`;
-          hdrIcon = STATUS_GROUP_ICON[sk] || groupIcon;
-        }
-      }
-      // Agrupando por proyecto, la cabecera dice también de quién es y para
-      // cuándo: sin eso, la vista general de Proyectos no contaba lo único que
-      // hay que saber de un proyecto sin abrirlo.
-      let extra = '';
-      if (modo === 'project') {
-        const p = allProjects.find(x => x.name === k);
-        if (p) {
-          const dl = p.due_date ? Math.ceil((new Date(p.due_date + 'T00:00:00') - today) / 86400000) : null;
-          const cerrado = ['completed','cancelled'].includes(p.status || 'active');
-          const plazo = !p.due_date ? '' :
-            (cerrado ? '' :
-             dl < 0 ? `<span class="badge bg-danger text-white ms-1" style="font-size:.7rem">⛔ Proyecto incumplido · ${Math.abs(dl)} d</span>`
-                     : `<span class="badge bg-light text-dark ms-1" style="font-size:.7rem">📅 ${fmtDate(p.due_date)}</span>`);
-          extra = `<span style="font-weight:500;font-size:.78rem;opacity:.92;margin-left:8px">👤 ${esc(p.owner || '—')}</span>${plazo}`;
-        }
-      }
-      return `<tr class="group-header" style="background:${hdrBg};color:#fff;cursor:pointer" onclick="toggleGroup('${safeId}')">
-        <td colspan="7" style="padding:10px 14px;font-weight:700;font-size:.92rem">
-          <span id="${groupId}_caret" style="display:inline-block;width:20px">${caret}</span>
-          ${hdrIcon} <strong>${esc(k)}</strong>
-          <span class="badge bg-light text-dark ms-2" title="Total" style="font-size:.7rem">${totalN}</span>
-          ${pendN ? `<span class="badge bg-warning text-dark ms-1" title="Pendientes" style="font-size:.7rem">⏳ ${pendN}</span>` : ''}
-          ${overdueN ? `<span class="badge bg-danger text-white ms-1" title="Incumplidas" style="font-size:.7rem">⛔ ${overdueN}</span>` : ''}
-          ${extra}
-        </td>
-      </tr>` + (collapsed ? '' : `<tbody id="${groupId}_body">${rows}</tbody>`);
-    }).join('');
-  } else {
-    tbody.innerHTML = tasks.map((t,i) => taskRowHtml(t, i)).join('');
-  }
-}
-
-function toggleGroup(safeId) {
-  const key = 'groupCollapsed_' + safeId;
-  const collapsed = localStorage.getItem(key) === '1';
-  localStorage.setItem(key, collapsed ? '0' : '1');
-  renderCurrentView();
-}
-
-// Una fila = QUÉ, QUIÉN responde, PARA CUÁNDO, CÓMO VA. Lo demás (proyecto,
-// fase, origen, subtareas) va en letra pequeña bajo el título, que es donde se
-// mira cuando ya se sabe cuál es la fila que interesa.
-function taskRowHtml(t, i) {
-    const proj = allProjects.find(p => p.id === t.project_id);
-    const dl = daysLeft(t.due_date, t.status);
-    const rowCls = dl !== null && dl < 0 && t.status !== 'done' ? 'overdue' :
-                   dl !== null && dl <= 3 && t.status !== 'done' ? 'due-soon' : '';
-    // Subtarea virtual: fila hija con sangría
-    if (t._isSubtask) {
-      return `<tr onclick="openTask('${t._parentId}')" style="cursor:pointer;background:#fffbeb;border-left:4px solid #fbbf24">
-        <td></td>
-        <td colspan="4" style="padding-left:52px">
-          <span style="color:#92400e;font-weight:500;${t.status==='done'?'text-decoration:line-through;color:#94a3b8':''}">↳ ${esc(t.title)}</span>
-        </td>
-        <td><span class="badge-status bs-${t.status}">${STATUS_LABELS[t.status]||''}</span></td>
-        <td onclick="event.stopPropagation()">
-          <button class="btn-xs btn-xs-edit" title="${t.status==='done'?'Marcar pendiente':'Marcar hecha'}" onclick="toggleSubFromList('${t._parentId}','${t._subId}', ${t.status!=='done'})">${t.status==='done' ? '↺' : '✓'}</button>
-        </td>
-      </tr>`;
-    }
-    const prog = t.progress_pct || 0;
-    const accColor = colorForAccount(t.ms_email);
-    const subs = Array.isArray(t.subtasks) ? t.subtasks : [];
-    const subsDone = subs.filter(s => s.done).length;
-    const isExpanded = expandedSet.has(t.id);
-    const hasSubs = subs.length > 0;
-    const isMs = t.source === 'ms_todo';
-    const chevron = (hasSubs || isMs)
-      ? `<span onclick="event.stopPropagation(); toggleExpandRow('${t.id}')" style="cursor:pointer;display:inline-block;width:18px;color:#64748b;font-size:.9rem" title="Tarea madre: clic para desplegar/colapsar">${isExpanded ? '▾' : '▸'}</span>`
-      : `<span style="display:inline-block;width:18px"></span>`;
-
-    // ——— La línea pequeña bajo el título ———
-    const ctx = [];
-    // El nombre del proyecto sobra cuando ya estás dentro de ese proyecto.
-    if (proj && proj.id !== curProject)
-      ctx.push(`<span style="color:${proj.color};font-weight:600">📂 ${esc(proj.name)}</span>`);
-    if (t.phase && t.phase !== 'General')
-      ctx.push(`<span class="text-muted">${esc(t.phase)}</span>`);
-    // La prioridad sólo se enseña cuando dice algo: "media" en todas las filas
-    // era una columna entera para no informar de nada.
-    if (t.priority === 'high' || t.priority === 'urgent')
-      ctx.push(`<span class="badge-prio bp-${t.priority}">${PRIO_LABELS[t.priority]}</span>`);
-    if (hasSubs)
-      ctx.push(`<span class="badge" style="background:#fde68a;color:#92400e;font-size:.65rem" title="Subtareas">📑 ${subsDone}/${subs.length}</span>`);
-    else if (isMs && isExpanded)
-      ctx.push(`<span class="badge bg-info text-white" style="font-size:.65rem">⏳ cargando...</span>`);
-    if (SCOPE !== 'planning') {
-      // El origen sólo hace falta donde conviven varias cuentas de Microsoft.
-      ctx.push(t.ms_email
-        ? `<span class="badge" style="background:${accColor};color:#fff;font-size:.65rem" title="Microsoft To-Do · ${esc(t.ms_email)}">📋 ${esc(shortAccount(t.ms_email))}</span>`
-        : `<span class="badge" style="background:#4f46e5;color:#fff;font-size:.65rem">✍️ Sistema</span>`);
-    }
-    if (t.source_url)
-      ctx.push(`<a href="${esc(t.source_url)}" target="_blank" onclick="event.stopPropagation()" class="badge text-decoration-none" style="background:#0078d4;color:#fff;font-size:.65rem" title="Abrir en ${esc(t.source_app||'Outlook')}">📧 ${esc(t.source_app||'Email')}</a>`);
-    else if (t.source_app === 'Outlook')
-      ctx.push(`<span class="badge" style="background:#0078d4;color:#fff;font-size:.65rem" title="Correo marcado">📧 Correo</span>`);
-    const ctxHtml = ctx.length
-      ? `<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:2px;margin-left:22px;font-size:.72rem">${ctx.join('')}</div>`
-      : '';
-
-    const checkbox = selectMode
-      ? `<input type="checkbox" onclick="event.stopPropagation()" onchange="toggleRowSelect('${t.id}', this.checked)" ${selectedIds.has(t.id)?'checked':''}>`
-      : `<span class="text-muted">${i+1}</span>`;
-    return `<tr class="${rowCls}" onclick="${selectMode?`toggleRowSelect('${t.id}', !this.querySelector('input').checked); this.querySelector('input').checked = !this.querySelector('input').checked; renderAll()`:`openTask('${t.id}')`}" style="cursor:pointer;border-left:4px solid ${accColor};${selectedIds.has(t.id)?'background:#dbeafe':''}">
-      <td>${checkbox}</td>
-      <td>
-        ${chevron} <strong>${esc(t.title)}</strong>
-        ${ctxHtml}
-      </td>
-      <td style="font-size:.8rem;color:#374151">${esc(t.assigned_to || '—')}</td>
-      <td style="white-space:nowrap">
-        <div style="font-size:.8rem">${t.due_date ? fmtDate(t.due_date) : '<span class="text-muted">Sin plazo</span>'}</div>
-        ${plazoBadgeHtml(dl, t.status)}
-      </td>
-      <td>
-        <div class="prog-bar" title="${prog}% completado"><div class="prog-bar-fill" style="width:${prog}%"></div></div>
-        <small class="text-muted ms-1">${prog}%</small>
-      </td>
-      <td><span class="badge-status bs-${t.status||'pending'}">${STATUS_LABELS[t.status||'pending']}</span></td>
-      <td onclick="event.stopPropagation()">
-        <button class="btn-xs btn-xs-edit" onclick="openTask('${t.id}')">✏️</button>
-        <button class="btn-xs btn-xs-del" onclick="confirmDelete('${t.id}','${esc(String(t.title||'').replace(/\\/g,'\\\\').replace(/'/g,"\\'"))}')">🗑</button>
-      </td>
-    </tr>`;
-}
-
-// El dato importante no es "faltan 4 días", es si el plazo se INCUMPLIÓ. Por eso
-// va pegado a la fecha y con esa palabra: es la que usa el correo de aviso.
-function plazoBadgeHtml(dl, status) {
-  if (status === 'done') return '<span class="days-badge days-ok">✅ Cumplida</span>';
-  if (dl === null) return '';
-  if (dl < 0)   return `<span class="days-badge days-over">⛔ Incumplida · ${Math.abs(dl)} d</span>`;
-  if (dl === 0) return '<span class="days-badge days-warn">⚠️ Vence hoy</span>';
-  if (dl <= 3)  return `<span class="days-badge days-warn">⚠️ En ${dl} d</span>`;
-  return `<span class="days-badge days-ok">En ${dl} d</span>`;
-}
-
-// ——————————————————————————————————————————
-//  QUICK ADD
-// ——————————————————————————————————————————
-async function quickAdd() {
-  const title = document.getElementById('qTitle').value.trim();
-  if (!title) { document.getElementById('qTitle').focus(); return; }
-  const pid = document.getElementById('qProject').value;
-  const prio = document.getElementById('qPriority').value;
-  const due = document.getElementById('qDue').value;
-  const payload = { title, priority: prio, status: 'pending', phase: 'General' };
-  if (pid) payload.project_id = pid;
-  if (due) payload.due_date = due;   // sin fecha, el servidor hereda la del proyecto
-  const r = await fetch('/planning/api/tasks', {
-    method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)
-  }).then(x => x.json());
-  if (r.success) {
-    allTasks.push(r.task);
-    document.getElementById('qTitle').value = '';
-    renderAll();
-    showToast('✅ Tarea agregada', 'success');
-  } else {
-    showToast('❌ ' + (r.error||'Error al agregar'), 'danger');
-  }
-}
-
-// ——————————————————————————————————————————
-//  TASK MODAL
-// ——————————————————————————————————————————
-// ——————————————————————————————————————————
-//  SUBTAREAS
-// ——————————————————————————————————————————
-let currentSubs = [];
-
-function renderSubtasks() {
-  const el = document.getElementById('subtasksList');
-  const total = currentSubs.length;
-  const done  = currentSubs.filter(s => s.done).length;
-  document.getElementById('subtaskCounter').textContent = `${done}/${total}`;
-  document.getElementById('tabSubsBadge').textContent = total ? `${done}/${total}` : '';
-  if (!total) { el.innerHTML = '<div class="text-muted small fst-italic py-2">Sin subtareas. Agrega una abajo.</div>'; return; }
-  el.innerHTML = currentSubs.map((s, idx) => `
-    <div class="d-flex align-items-center gap-2 py-1 border-bottom">
-      <input type="checkbox" ${s.done?'checked':''} onchange="toggleSubtask(${idx})">
-      <span style="flex:1;${s.done?'text-decoration:line-through;color:#94a3b8':''}">${esc(s.name || '(sin título)')}</span>
-      <button class="btn-xs btn-xs-del" onclick="removeSubtask(${idx})">✕</button>
-    </div>
-  `).join('');
 }
 
 async function toggleSubFromList(parentId, subId, newDone) {
@@ -1725,6 +953,193 @@ async function toggleSubFromList(parentId, subId, newDone) {
   } catch(e) {}
 }
 
+// ——————————————————————————————————————————
+//  LISTA
+// ——————————————————————————————————————————
+function renderCurrentView() { renderList(); renderSemaforo(); }
+
+// Sin proyecto abierto la lista se parte por proyecto, que es la estructura
+// real del trabajo. Dentro de uno va seguida y ordenada por urgencia.
+function grupoActivo() { return curProject ? '' : 'project'; }
+
+function renderList() {
+  const tasks = expandedTasks(filteredTasks());
+  const tbody = document.getElementById('taskTableBody');
+  const empty = document.getElementById('listEmpty');
+  const hh = document.getElementById('hashHeader');
+  if (hh) {
+    if (selectMode) {
+      const allSel = tasks.length && tasks.every(t => selectedIds.has(t.id));
+      hh.outerHTML = `<input type="checkbox" id="hashHeader" ${allSel?'checked':''} onchange="toggleAllVisible(this.checked)" title="Seleccionar todo lo visible">`;
+    } else {
+      hh.outerHTML = '<span id="hashHeader">#</span>';
+    }
+  }
+  if (!tasks.length) { tbody.innerHTML=''; empty.style.display=''; return; }
+  empty.style.display = 'none';
+
+  if (grupoActivo()) {
+    const groups = {};
+    tasks.forEach(t => {
+      const p = allProjects.find(x => x.id === t.project_id);
+      const k = p ? p.name : 'Sin proyecto';
+      (groups[k] = groups[k] || []).push(t);
+    });
+    // Los grupos se ordenan por urgencia: primero el que tiene más rojas.
+    const rojas = k => groups[k].filter(t => semTarea(t).id === 'rojo').length;
+    const pend  = k => groups[k].filter(t => !CERRADOS.includes(t.status||'')).length;
+    const keys = Object.keys(groups).sort((a,b) => {
+      const ra = rojas(a), rb = rojas(b);
+      if (ra !== rb) return rb - ra;
+      const pa = pend(a), pb = pend(b);
+      if (pa !== pb) return pb - pa;
+      return a.localeCompare(b);
+    });
+    tbody.innerHTML = keys.map(k => {
+      const gt = groups[k];
+      const safeId = k.replace(/[^a-z0-9]/gi, '_');
+      const collapsed = localStorage.getItem('plan_grp_'+safeId) === '1';
+      const rows = collapsed ? '' : gt.map((t,i) => taskRowHtml(t, i)).join('');
+      const caret = collapsed ? '▸' : '▾';
+      const p = allProjects.find(x => x.name === k);
+      const e = p ? SEM[semProyecto(p).id] : SEM.gris;
+      const nRojas = rojas(k);
+      // La cabecera dice de quién es el proyecto y para cuándo: sin eso la
+      // vista general no contaba lo único que hay que saber sin abrirlo.
+      const extra = p ? `<span style="font-weight:500;font-size:.78rem;opacity:.92;margin-left:8px">👤 ${esc(p.owner || '—')}</span>` +
+        (p.due_date ? `<span class="badge bg-light text-dark ms-1" style="font-size:.7rem">📅 ${fmtDate(p.due_date)}</span>` : '') : '';
+      return `<tr class="group-header" style="background:linear-gradient(to right,${e.color},${e.color}bb);color:#fff;cursor:pointer" onclick="toggleGroup('${safeId}')">
+        <td colspan="7" style="padding:10px 14px;font-weight:700;font-size:.92rem">
+          <span style="display:inline-block;width:20px">${caret}</span>
+          ${e.icono} <strong>${esc(k)}</strong>
+          <span class="badge bg-light text-dark ms-2" title="Total" style="font-size:.7rem">${gt.length}</span>
+          ${nRojas ? `<span class="badge bg-dark text-white ms-1" title="Incumplidas" style="font-size:.7rem">⛔ ${nRojas}</span>` : ''}
+          ${extra}
+        </td>
+      </tr>` + rows;
+    }).join('');
+  } else {
+    tbody.innerHTML = tasks.map((t,i) => taskRowHtml(t, i)).join('');
+  }
+}
+
+function toggleGroup(safeId) {
+  const key = 'plan_grp_' + safeId;
+  localStorage.setItem(key, localStorage.getItem(key) === '1' ? '0' : '1');
+  renderCurrentView();
+}
+
+function taskRowHtml(t, i) {
+  if (t._isSubtask) {
+    return `<tr onclick="openTask('${t._parentId}')" style="cursor:pointer;background:#fffbeb;border-left:4px solid #fbbf24">
+      <td></td>
+      <td colspan="4" style="padding-left:52px">
+        <span style="color:#92400e;font-weight:500;${t.status==='done'?'text-decoration:line-through;color:#94a3b8':''}">↳ ${esc(t.title)}</span>
+      </td>
+      <td><span class="badge-status bs-${t.status}">${STATUS_LABELS[t.status]||''}</span></td>
+      <td onclick="event.stopPropagation()">
+        <button class="btn-xs btn-xs-edit" title="${t.status==='done'?'Marcar pendiente':'Marcar hecho'}" onclick="toggleSubFromList('${t._parentId}','${t._subId}', ${t.status!=='done'})">${t.status==='done' ? '↺' : '✓'}</button>
+      </td>
+    </tr>`;
+  }
+  const proj = allProjects.find(p => p.id === t.project_id);
+  const s = semTarea(t);
+  const e = SEM[s.id];
+  const prog = t.progress_pct || 0;
+  const subs = Array.isArray(t.subtasks) ? t.subtasks : [];
+  const isExpanded = expandedSet.has(t.id);
+  const chevron = subs.length
+    ? `<span onclick="event.stopPropagation(); toggleExpandRow('${t.id}')" style="cursor:pointer;display:inline-block;width:18px;color:#64748b;font-size:.9rem" title="Desplegar los pasos">${isExpanded ? '▾' : '▸'}</span>`
+    : `<span style="display:inline-block;width:18px"></span>`;
+
+  const ctx = [];
+  if (proj && proj.id !== curProject)
+    ctx.push(`<span style="color:${proj.color};font-weight:600">📂 ${esc(proj.name)}</span>`);
+  if (t.phase && t.phase !== 'General')
+    ctx.push(`<span class="text-muted">${esc(t.phase)}</span>`);
+  // La prioridad sólo se enseña cuando dice algo: "media" en todas las filas
+  // era una columna entera para no informar de nada.
+  if (t.priority === 'high' || t.priority === 'urgent')
+    ctx.push(`<span class="badge-prio bp-${t.priority}">${PRIO_LABELS[t.priority]}</span>`);
+  if (subs.length)
+    ctx.push(`<span class="badge" style="background:#fde68a;color:#92400e;font-size:.65rem">📑 ${subs.filter(x=>x.done).length}/${subs.length}</span>`);
+  const ctxHtml = ctx.length
+    ? `<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:2px;margin-left:22px;font-size:.72rem">${ctx.join('')}</div>`
+    : '';
+
+  const checkbox = selectMode
+    ? `<input type="checkbox" onclick="event.stopPropagation()" onchange="toggleRowSelect('${t.id}', this.checked)" ${selectedIds.has(t.id)?'checked':''}>`
+    : `<span class="text-muted">${i+1}</span>`;
+  const clic = selectMode
+    ? `toggleRowSelect('${t.id}', !this.querySelector('input').checked); this.querySelector('input').checked = !this.querySelector('input').checked; renderAll()`
+    : `openTask('${t.id}')`;
+
+  return `<tr onclick="${clic}" style="cursor:pointer;border-left:4px solid ${e.color};background:${selectedIds.has(t.id)?'#dbeafe':(s.id==='rojo'?'#fff7f7':(s.id==='ambar'?'#fffdf5':''))}">
+    <td>${checkbox}</td>
+    <td>
+      ${chevron} <strong>${esc(t.title)}</strong>
+      ${ctxHtml}
+    </td>
+    <td style="font-size:.8rem;color:#374151">${esc(t.assigned_to || '—')}</td>
+    <td style="white-space:nowrap;font-size:.8rem">${t.due_date ? fmtDate(t.due_date) : '<span class="text-muted">Sin plazo</span>'}</td>
+    <td>
+      <div class="prog-bar" title="${prog}% de avance"><div class="prog-bar-fill" style="width:${prog}%;background:${e.color}"></div></div>
+      <small class="text-muted ms-1">${prog}%</small>
+    </td>
+    <td>${chipSemaforo(s)}</td>
+    <td onclick="event.stopPropagation()">
+      <button class="btn-xs btn-xs-edit" onclick="openTask('${t.id}')">✏️</button>
+      <button class="btn-xs btn-xs-del" onclick="confirmDelete('${t.id}','${esc(String(t.title||'').replace(/\\/g,'\\\\').replace(/'/g,"\\'"))}')">🗑</button>
+    </td>
+  </tr>`;
+}
+
+// ——————————————————————————————————————————
+//  ALTA RÁPIDA
+// ——————————————————————————————————————————
+async function quickAdd() {
+  const title = document.getElementById('qTitle').value.trim();
+  if (!title) { document.getElementById('qTitle').focus(); return; }
+  const pid  = document.getElementById('qProject').value;
+  const prio = document.getElementById('qPriority').value;
+  const due  = document.getElementById('qDue').value;
+  const payload = { title, priority: prio, status: 'pending', phase: 'General' };
+  if (pid) payload.project_id = pid;
+  if (due) payload.due_date = due;   // sin fecha, el servidor hereda la del proyecto
+  const r = await fetch('/planning/api/tasks', {
+    method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)
+  }).then(x => x.json());
+  if (r.success) {
+    allTasks.push(r.task);
+    document.getElementById('qTitle').value = '';
+    renderAll();
+    showToast('✅ Actividad agregada', 'success');
+  } else {
+    showToast('❌ ' + (r.error||'Error al agregar'), 'danger');
+  }
+}
+
+// ——————————————————————————————————————————
+//  SUBTAREAS EN EL MODAL
+// ——————————————————————————————————————————
+let currentSubs = [];
+
+function renderSubtasks() {
+  const el = document.getElementById('subtasksList');
+  const total = currentSubs.length;
+  const done  = currentSubs.filter(s => s.done).length;
+  document.getElementById('subtaskCounter').textContent = `${done}/${total}`;
+  document.getElementById('tabSubsBadge').textContent = total ? `${done}/${total}` : '';
+  if (!total) { el.innerHTML = '<div class="text-muted small fst-italic py-2">Sin pasos. Agrega uno abajo.</div>'; return; }
+  el.innerHTML = currentSubs.map((s, idx) => `
+    <div class="d-flex align-items-center gap-2 py-1 border-bottom">
+      <input type="checkbox" ${s.done?'checked':''} onchange="toggleSubtask(${idx})">
+      <span style="flex:1;${s.done?'text-decoration:line-through;color:#94a3b8':''}">${esc(s.name || '(sin título)')}</span>
+      <button class="btn-xs btn-xs-del" onclick="removeSubtask(${idx})">✕</button>
+    </div>
+  `).join('');
+}
+
 async function toggleSubtask(idx) {
   const s = currentSubs[idx];
   if (!s) return;
@@ -1732,8 +1147,7 @@ async function toggleSubtask(idx) {
   s.done = newDone;
   s.checked_at = newDone ? new Date().toISOString() : null;
   renderSubtasks();
-  // Persistir si tiene id (viene de MS) y la tarea existe
-  if (editingTaskId && s.id) {
+  if (editingTaskId && s.id && !String(s.id).startsWith('_local_')) {
     try {
       const r = await fetch(`/planning/api/tasks/${editingTaskId}/subtask/${s.id}`, {
         method:'PATCH', headers:{'Content-Type':'application/json'},
@@ -1741,39 +1155,11 @@ async function toggleSubtask(idx) {
       }).then(x => x.json());
       if (r.success) {
         const i = allTasks.findIndex(t => t.id === editingTaskId);
-        if (i >= 0) {
-          allTasks[i].subtasks = currentSubs;
-          allTasks[i].progress_pct = r.progress;
-          renderAll();
-        }
+        if (i >= 0) { allTasks[i].subtasks = currentSubs; allTasks[i].progress_pct = r.progress; }
+        renderAll();
       }
     } catch(e) {}
   }
-}
-
-async function refreshSubtasksFromMs(silent) {
-  if (!editingTaskId) return;
-  const btn = document.getElementById('btnRefreshSubs');
-  if (btn) { btn.disabled = true; btn.textContent = silent ? '⏳ Cargando subtareas...' : '⏳ Sincronizando...'; }
-  try {
-    const r = await fetch(`/planning/api/tasks/${editingTaskId}/refresh-subtasks`, {method:'POST'}).then(x=>x.json());
-    if (r.success) {
-      currentSubs = r.subtasks || [];
-      renderSubtasks();
-      const idx = allTasks.findIndex(t => t.id === editingTaskId);
-      if (idx >= 0) {
-        allTasks[idx].subtasks = currentSubs;
-        allTasks[idx].progress_pct = r.progress;
-      }
-      renderAll();
-      if (!silent) showToast(`🔄 ${r.count} subtareas sincronizadas`, 'success');
-    } else if (!silent) {
-      showToast('❌ ' + (r.error || 'Error al sincronizar'), 'danger');
-    }
-  } catch(e) {
-    if (!silent) showToast('❌ Error de conexión', 'danger');
-  }
-  if (btn) { btn.disabled = false; btn.textContent = '🔄 Sincronizar subtareas con Microsoft To-Do'; }
 }
 
 function addSubtask() {
@@ -1786,7 +1172,7 @@ function addSubtask() {
 }
 
 function removeSubtask(idx) {
-  if (!confirm('¿Eliminar esta subtarea?')) return;
+  if (!confirm('¿Eliminar este paso?')) return;
   currentSubs.splice(idx, 1);
   renderSubtasks();
 }
@@ -1794,8 +1180,8 @@ function removeSubtask(idx) {
 // ——————————————————————————————————————————
 //  DEPENDENCIAS
 // ——————————————————————————————————————————
-let currentDeps = [];   // [{id: dep_row_id, depends_on: task_id}]
-let removedDepIds = []; // ids de task_deps quitados en el modal, pendientes de borrar al guardar
+let currentDeps = [];
+let removedDepIds = [];
 
 async function loadDeps(taskId) {
   removedDepIds = [];
@@ -1815,10 +1201,11 @@ function renderDepsList() {
   }
   el.innerHTML = currentDeps.map(d => {
     const t = allTasks.find(x => x.id === d.depends_on);
-    const title = t ? t.title : '(tarea desconocida)';
-    const done = t && t.status === 'done';
-    return `<div class="d-flex align-items-center gap-2 p-2 mb-1 rounded" style="background:${done?'#d1fae5':'#fef3c7'}">
-      <span style="flex:1">${done ? '✅' : '⏳'} ${esc(title)}</span>
+    const title = t ? t.title : '(actividad desconocida)';
+    const e = t ? SEM[semTarea(t).id] : SEM.gris;
+    return `<div class="d-flex align-items-center gap-2 p-2 mb-1 rounded" style="background:${e.fondo}">
+      <span class="sem-dot" style="background:${e.color}"></span>
+      <span style="flex:1">${esc(title)}</span>
       <button class="btn-xs btn-xs-del" onclick="removeDep('${d.depends_on}')">✕</button>
     </div>`;
   }).join('');
@@ -1830,10 +1217,8 @@ function renderDepSearchResults() {
   if (!q) { box.innerHTML = ''; return; }
   const taken = new Set(currentDeps.map(d => d.depends_on));
   const matches = allTasks.filter(t =>
-    t.id !== editingTaskId &&
-    !taken.has(t.id) &&
-    (t.title||'').toLowerCase().includes(q)
-  ).slice(0,8);
+    t.id !== editingTaskId && !taken.has(t.id) &&
+    (t.title||'').toLowerCase().includes(q)).slice(0,8);
   if (!matches.length) { box.innerHTML = '<div class="text-muted small">Sin resultados</div>'; return; }
   box.innerHTML = matches.map(t => `<div class="phase-sug-item" style="position:relative" onclick="addDep('${t.id}')">${esc(t.title)} <small class="text-muted">· ${esc(t.phase||'')}</small></div>`).join('');
 }
@@ -1859,7 +1244,7 @@ async function saveDeps(taskId) {
       await fetch(`/planning/api/deps/${depId}`, { method: 'DELETE' });
     }
     for (const d of currentDeps) {
-      if (d.id) continue; // ya existía en el backend, no hay que recrearla
+      if (d.id) continue;
       await fetch('/planning/api/deps', {
         method:'POST', headers:{'Content-Type':'application/json'},
         body: JSON.stringify({task_id: taskId, depends_on: d.depends_on})
@@ -1869,61 +1254,13 @@ async function saveDeps(taskId) {
   } catch(e) {}
 }
 
-// Bloqueo: una tarea está "bloqueada" si tiene deps sin completar
-function isTaskBlocked(t) {
-  // Revisamos en memoria si alguna tarea referencia esta como depends_on
-  return false; // simplificado por ahora; el badge se muestra desde el modal
-}
-
 // ——————————————————————————————————————————
-//  MICROSOFT TO-DO (push manual)
+//  MODAL DE ACTIVIDAD
 // ——————————————————————————————————————————
-let msAccountsCache = null;
-let msListsCache = {};
-
-async function loadMsAccounts() {
-  if (msAccountsCache) return msAccountsCache;
-  try {
-    msAccountsCache = await fetch('/planning/api/ms-accounts').then(r=>r.json());
-  } catch(e) { msAccountsCache = []; }
-  return msAccountsCache;
-}
-
-async function populateMsAccountSelect(selectedEmail) {
-  const sel = document.getElementById('mMsEmail');
-  if (!sel) return;
-  const accs = await loadMsAccounts();
-  sel.innerHTML = '<option value="">— No sincronizar —</option>' +
-    accs.map(e => `<option value="${e}" ${e===selectedEmail?'selected':''}>${esc(e)}</option>`).join('');
-  if (selectedEmail) await loadMsLists(selectedEmail);
-}
-
-async function loadMsLists(emailParam) {
-  const email = emailParam || document.getElementById('mMsEmail').value;
-  const sel = document.getElementById('mMsListId');
-  if (!email) {
-    sel.innerHTML = '<option value="">Selecciona primero una cuenta…</option>';
-    sel.disabled = true;
-    return;
-  }
-  sel.disabled = true;
-  sel.innerHTML = '<option>Cargando listas…</option>';
-  let lists = msListsCache[email];
-  if (!lists) {
-    try {
-      lists = await fetch(`/planning/api/ms-lists?email=${encodeURIComponent(email)}`).then(r=>r.json());
-      msListsCache[email] = lists;
-    } catch(e) { lists = []; }
-  }
-  sel.disabled = false;
-  sel.innerHTML = '<option value="">— Selecciona lista —</option>' +
-    lists.map(l => `<option value="${l.id}">${esc(l.name)}</option>`).join('');
-}
-
 function openTask(id) {
   editingTaskId = id;
   const t = allTasks.find(x => x.id === id);
-  document.getElementById('taskModalTitle').textContent = t ? '✏️ Editar tarea' : '📝 Nueva tarea';
+  document.getElementById('taskModalTitle').textContent = t ? '✏️ Editar actividad' : '📝 Nueva actividad';
   document.getElementById('mTaskId').value = id || '';
   document.getElementById('btnDeleteTask').style.display = t ? '' : 'none';
   document.getElementById('mTitle').value    = t ? t.title : '';
@@ -1932,15 +1269,14 @@ function openTask(id) {
   document.getElementById('mPriority').value = t ? (t.priority||'medium') : 'medium';
   document.getElementById('mStatus').value   = t ? (t.status||'pending') : 'pending';
   // Una actividad nueva sale a nombre de quien la crea y con el plazo del
-  // proyecto en el que está: los dos datos se pueden cambiar, pero nunca se
-  // quedan en blanco por olvido.
-  const proyDeLaTarea = allProjects.find(x => x.id === (t ? t.project_id : curProject));
+  // proyecto en el que está: los dos se pueden cambiar, pero nunca se quedan
+  // en blanco por olvido.
+  const proy = allProjects.find(x => x.id === (t ? t.project_id : curProject));
   document.getElementById('mAssigned').value = t ? (t.assigned_to||'') : YO;
   document.getElementById('mEmail').value    = t ? (t.assigned_email||'') : MI_CORREO;
   document.getElementById('mDesc').value     = t ? (t.description||'') : '';
   document.getElementById('mStartDate').value= t ? (t.start_date||'') : todayStr();
-  document.getElementById('mDueDate').value  = t ? (t.due_date||'')
-                                                : (proyDeLaTarea ? (proyDeLaTarea.due_date||'') : '');
+  document.getElementById('mDueDate').value  = t ? (t.due_date||'') : (proy ? (proy.due_date||'') : '');
   document.getElementById('mCompDate').value = t ? (t.completed_date||'') : '';
   document.getElementById('mAlertDays').value= t ? (t.alert_days||3) : 3;
   const prog = t ? (t.progress_pct||0) : 0;
@@ -1948,92 +1284,56 @@ function openTask(id) {
   document.getElementById('progLabel').textContent = prog;
   document.getElementById('mTags').value     = t ? (t.tags||'') : '';
   document.getElementById('mNotes').value    = t ? (t.notes||'') : '';
-  const srcBox = document.getElementById('sourceBox');
-  if (t && t.source && t.source !== 'manual') {
-    srcBox.style.display = '';
-    document.getElementById('mSource').value = t.source === 'google_todo' ? 'Google Tasks' : t.source;
-  } else { srcBox.style.display = 'none'; }
   updateDaysInfo();
-  // Activate first tab
   document.querySelector('#taskTabs .nav-link').click();
-  // Cargar subtareas
   currentSubs = t && Array.isArray(t.subtasks) ? JSON.parse(JSON.stringify(t.subtasks)) : [];
   renderSubtasks();
   document.getElementById('newSubInput').value = '';
-  // Botón de refresh: solo si la tarea viene de MS y soy admin
-  const refreshRow = document.getElementById('msSubsRefreshRow');
-  const canRefreshSubs = IS_ADMIN && t && t.source === 'ms_todo' && t.source_id && t.ms_email && t.ms_list_id;
-  if (refreshRow) {
-    refreshRow.style.display = canRefreshSubs ? '' : 'none';
-    document.getElementById('refreshSubsHint').textContent = canRefreshSubs
-      ? 'Trae todas las subtareas (incl. más de 20) desde Microsoft.' : '';
-  }
-  // Auto-cargar subtareas en segundo plano si tarea MS y no las tenemos cacheadas
-  if (canRefreshSubs && currentSubs.length === 0 && id) {
-    setTimeout(() => refreshSubtasksFromMs(true), 200);
-  }
-  // Cargar dependencias
   loadDeps(id);
   document.getElementById('depSearch').value = '';
   document.getElementById('depSearchResults').innerHTML = '';
-  // Cargar cuentas MS (solo admins)
-  const msSel = document.getElementById('mMsEmail');
-  if (msSel) {
-    populateMsAccountSelect(t ? t.ms_email : null);
-    const lstSel = document.getElementById('mMsListId');
-    if (t && t.ms_list_id) {
-      // Pre-cargar lista cuando termine la carga
-      setTimeout(() => {
-        const opt = [...lstSel.options].find(o => o.value === t.ms_list_id);
-        if (opt) lstSel.value = t.ms_list_id;
-      }, 800);
-    }
-    const info = document.getElementById('msSyncInfo');
-    if (t && t.last_synced_at) {
-      info.style.display = '';
-      info.textContent = `🔄 Última sincronización: ${timeAgo(t.last_synced_at)}`;
-    } else { info.style.display = 'none'; }
-  }
   new bootstrap.Modal(document.getElementById('taskModal')).show();
 }
 
 function openNewTask() { editingTaskId = null; openTask(null); }
 
+// En el modal el semáforo se ve ANTES de guardar: cambiar una fecha y ver el
+// color moverse es lo que convierte el plazo en una decisión y no en un dato.
 function updateDaysInfo() {
   const sd = document.getElementById('mStartDate').value;
   const dd = document.getElementById('mDueDate').value;
-  const box = document.getElementById('daysInfoBox');
-  // Una actividad que vence después que su proyecto es una contradicción: el
-  // proyecto estaría incumplido con trabajo todavía en plazo. Se avisa, no se
-  // bloquea: a veces lo que se mueve es la fecha del proyecto.
+  const cd = document.getElementById('mCompDate').value;
+  const st = document.getElementById('mStatus').value;
+
   const aviso = document.getElementById('plazoAviso');
-  if (aviso) {
-    const proy = allProjects.find(x => x.id === document.getElementById('mProject').value);
-    if (proy && proy.due_date && dd && dd > proy.due_date) {
-      aviso.style.display = '';
-      aviso.innerHTML = `⚠️ Esta actividad vence <strong>después</strong> que el proyecto ` +
-        `«${esc(proy.name)}», que cierra el <strong>${fmtDate(proy.due_date)}</strong>.`;
-    } else if (sd && dd && sd > dd) {
-      aviso.style.display = '';
-      aviso.innerHTML = '⚠️ La fecha de vencimiento es anterior a la de inicio.';
-    } else {
-      aviso.style.display = 'none';
-    }
+  const proy = allProjects.find(x => x.id === document.getElementById('mProject').value);
+  if (proy && proy.due_date && dd && dd > proy.due_date) {
+    aviso.style.display = '';
+    aviso.innerHTML = `⚠️ Esta actividad vence <strong>después</strong> que el proyecto ` +
+      `«${esc(proy.name)}», que cierra el <strong>${fmtDate(proy.due_date)}</strong>.`;
+  } else if (sd && dd && sd > dd) {
+    aviso.style.display = '';
+    aviso.innerHTML = '⚠️ La fecha de vencimiento es anterior a la de inicio.';
+  } else {
+    aviso.style.display = 'none';
   }
-  if (!sd && !dd) { box.style.display = 'none'; return; }
-  box.style.display = '';
-  const start = sd ? new Date(sd) : null;
-  const due   = dd ? new Date(dd) : null;
-  const now = today;
-  document.getElementById('daysElapsed').textContent =
-    start ? Math.max(0, Math.floor((now - start) / 86400000)) + ' días' : '—';
-  document.getElementById('daysRemaining').textContent =
-    due   ? Math.ceil((due - now) / 86400000) + ' días' : '—';
-  document.getElementById('daysDuration').textContent =
-    (start && due) ? Math.ceil((due - start) / 86400000) + ' días' : '—';
+
+  const caja = document.getElementById('semaforoCaja');
+  if (!dd) { caja.style.display = 'none'; return; }
+  const s = evaluarSemaforo(dd, st, cd);
+  const e = SEM[s.id];
+  const duracion = (sd && dd) ? diasEntre(dd, sd) : null;
+  caja.style.display = '';
+  caja.style.background = e.fondo;
+  caja.innerHTML = `<div class="d-flex align-items-center gap-2 flex-wrap">
+    <span style="font-size:1.3rem">${e.icono}</span>
+    <strong style="color:${e.color}">${esc(e.etiqueta)}</strong>
+    <span class="text-muted small">· ${esc(textoSemaforo(s))}</span>
+    ${duracion !== null ? `<span class="text-muted small">· duración ${duracion} día(s)</span>` : ''}
+  </div>`;
 }
 document.addEventListener('change', e => {
-  if (['mStartDate','mDueDate','mProject'].includes(e.target.id)) updateDaysInfo();
+  if (['mStartDate','mDueDate','mCompDate','mProject','mStatus'].includes(e.target.id)) updateDaysInfo();
 });
 
 function onStatusChange() {
@@ -2042,8 +1342,9 @@ function onStatusChange() {
     document.getElementById('mProgress').value = 100;
     document.getElementById('progLabel').textContent = '100';
     if (!document.getElementById('mCompDate').value)
-      document.getElementById('mCompDate').value = new Date().toISOString().split('T')[0];
+      document.getElementById('mCompDate').value = todayStr();
   }
+  updateDaysInfo();
 }
 
 function showPhaseSuggestions(v) {
@@ -2057,13 +1358,15 @@ function showPhaseSuggestions(v) {
   sug.style.display = '';
 }
 document.addEventListener('click', e => {
-  if (!e.target.closest('#mPhase') && !e.target.closest('#phaseSug'))
-    document.getElementById('phaseSug').style.display = 'none';
+  if (!e.target.closest('#mPhase') && !e.target.closest('#phaseSug')) {
+    const s = document.getElementById('phaseSug');
+    if (s) s.style.display = 'none';
+  }
 });
 
 async function saveTask() {
   const title = document.getElementById('mTitle').value.trim();
-  if (!title) { alert('El título es requerido'); return; }
+  if (!title) { showToast('❌ El título es obligatorio', 'danger'); return; }
   const payload = {
     title,
     project_id: document.getElementById('mProject').value || null,
@@ -2082,67 +1385,54 @@ async function saveTask() {
     notes: document.getElementById('mNotes').value.trim(),
     subtasks: currentSubs,
   };
-  // Microsoft sync (solo admin tiene este select)
-  const msEmailEl = document.getElementById('mMsEmail');
-  const msListEl  = document.getElementById('mMsListId');
-  if (msEmailEl) {
-    const e = msEmailEl.value;
-    const l = msListEl.value;
-    if (e && l) {
-      payload.ms_email = e;
-      payload.ms_list_id = l;
-    }
-  }
   let r;
   if (editingTaskId) {
     r = await fetch(`/planning/api/tasks/${editingTaskId}`,
       { method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) }
     ).then(x => x.json());
-    if (r.success) {
-      const i = allTasks.findIndex(t => t.id === editingTaskId);
-      if (i >= 0) allTasks[i] = { ...allTasks[i], ...payload };
-    }
   } else {
     r = await fetch('/planning/api/tasks',
       { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) }
     ).then(x => x.json());
-    if (r.success) allTasks.push(r.task);
   }
   if (r.success) {
-    // Guardar dependencias (solo añade nuevas; el endpoint usa insert_ignore)
     const tidToSave = editingTaskId || (r.task && r.task.id);
     if (tidToSave) await saveDeps(tidToSave);
     bootstrap.Modal.getInstance(document.getElementById('taskModal')).hide();
     await loadData();
-    showToast(editingTaskId ? '✅ Tarea actualizada' : '✅ Tarea creada', 'success');
+    showToast(editingTaskId ? '✅ Actividad actualizada' : '✅ Actividad creada', 'success');
   } else {
     showToast('❌ ' + (r.error||'Error al guardar'), 'danger');
   }
 }
 
 async function deleteTask() {
-  if (!editingTaskId || !confirm('¿Eliminar esta tarea?')) return;
+  if (!editingTaskId || !confirm('¿Eliminar esta actividad?')) return;
   const r = await fetch(`/planning/api/tasks/${editingTaskId}`, { method:'DELETE' }).then(x => x.json());
   if (r.success) {
     allTasks = allTasks.filter(t => t.id !== editingTaskId);
     bootstrap.Modal.getInstance(document.getElementById('taskModal')).hide();
     renderAll();
-    showToast('🗑 Tarea eliminada', 'warning');
+    showToast('🗑 Actividad eliminada', 'warning');
+  } else {
+    showToast('❌ ' + (r.error||'No se pudo eliminar'), 'danger');
   }
 }
 
 async function confirmDelete(id, title) {
-  if (!confirm(`¿Eliminar la tarea "${title}"?`)) return;
+  if (!confirm(`¿Eliminar la actividad "${title}"?`)) return;
   const r = await fetch(`/planning/api/tasks/${id}`, { method:'DELETE' }).then(x => x.json());
   if (r.success) {
     allTasks = allTasks.filter(t => t.id !== id);
     renderAll();
-    showToast('🗑 Tarea eliminada', 'warning');
+    showToast('🗑 Actividad eliminada', 'warning');
+  } else {
+    showToast('❌ ' + (r.error||'No se pudo eliminar'), 'danger');
   }
 }
 
 // ——————————————————————————————————————————
-//  PROJECT MODAL
+//  MODAL DE PROYECTO
 // ——————————————————————————————————————————
 function openProjectModal(id) {
   editingProjectId = id || null;
@@ -2156,8 +1446,7 @@ function openProjectModal(id) {
   document.getElementById('mProjDue').value   = p ? (p.due_date||'') : '';
   document.getElementById('mProjDesc').value  = p ? (p.description||'') : '';
   // El responsable no se teclea: es quien crea el proyecto. Sólo un
-  // administrador puede pasárselo a otra persona, y por eso a él —y sólo a
-  // él— se le deja el campo abierto al editar.
+  // administrador puede pasárselo a otra persona.
   const owner = document.getElementById('mProjOwner');
   owner.value = p ? (p.owner || '') : YO;
   const puedeReasignar = IS_ADMIN && !!p;
@@ -2180,7 +1469,7 @@ async function saveProject() {
   if (!name) { showToast('❌ El nombre es obligatorio', 'danger'); return; }
   const due = document.getElementById('mProjDue').value;
   if (!due) {
-    showToast('❌ Pon la fecha de vencimiento: sin plazo no hay nada que vigilar', 'danger');
+    showToast('❌ Pon la fecha de vencimiento: sin plazo no hay semáforo que encender', 'danger');
     document.getElementById('mProjDue').focus();
     return;
   }
@@ -2200,30 +1489,26 @@ async function saveProject() {
   // El responsable sólo viaja cuando de verdad se puede cambiar; al crear lo
   // pone el servidor con el nombre de quien firma la petición.
   if (IS_ADMIN && editingProjectId) payload.owner = document.getElementById('mProjOwner').value.trim();
+
   let r;
   if (editingProjectId) {
     r = await fetch(`/planning/api/projects/${editingProjectId}`,
       { method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) }
     ).then(x => x.json());
-    if (r.success) {
-      const i = allProjects.findIndex(p => p.id === editingProjectId);
-      if (i >= 0) allProjects[i] = { ...allProjects[i], ...payload };
-    }
   } else {
     r = await fetch('/planning/api/projects',
       { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) }
     ).then(x => x.json());
     if (r.success && r.project) {
-      allProjects.push(r.project);
       // Recién creado se abre solo: lo siguiente que se hace es meterle
       // actividades, y así ya se está dentro.
       curProject = r.project.id;
-      localStorage.setItem('entityTab_' + SCOPE, curProject);
+      localStorage.setItem('plan_proyecto', curProject);
     }
   }
   if (r.success) {
     bootstrap.Modal.getInstance(document.getElementById('projectModal')).hide();
-    renderAll();
+    await loadData();
     showToast(editingProjectId ? '✅ Proyecto actualizado' : '✅ Proyecto creado', 'success');
   } else {
     showToast('❌ ' + (r.error || 'Error al guardar el proyecto'), 'danger');
@@ -2231,142 +1516,42 @@ async function saveProject() {
 }
 
 async function deleteProject() {
-  if (!editingProjectId || !confirm('¿Eliminar este proyecto? Las tareas quedarán sin proyecto.')) return;
+  if (!editingProjectId || !confirm('¿Eliminar este proyecto? Las actividades quedarán sin proyecto.')) return;
   const r = await fetch(`/planning/api/projects/${editingProjectId}`, { method:'DELETE' }).then(x => x.json());
   if (r.success) {
     allProjects = allProjects.filter(p => p.id !== editingProjectId);
     if (curProject === editingProjectId) curProject = null;
     bootstrap.Modal.getInstance(document.getElementById('projectModal')).hide();
-    renderAll();
-    showToast('🗑 Proyecto eliminado', 'warning');
-  }
-}
-
-// ——————————————————————————————————————————
-//  MICROSOFT TO-DO IMPORT
-// ——————————————————————————————————————————
-function openImportTodoModal() {
-  document.getElementById('importTodoResult').style.display = 'none';
-  new bootstrap.Modal(document.getElementById('importTodoModal')).show();
-}
-
-async function doImportTodo() {
-  const btn = document.querySelector('#importTodoModal button[onclick="doImportTodo()"]');
-  btn.disabled = true; btn.textContent = '⏳ Trayendo de Microsoft... (puede tardar 30-60s)';
-  const res = document.getElementById('importTodoResult');
-  res.style.display = '';
-  res.innerHTML = '<div class="alert alert-info py-2 small">⏳ Consultando listas y tareas en Microsoft 365…</div>';
-  let r;
-  try {
-    const resp = await fetch('/planning/api/import-todo', { method:'POST' });
-    const txt = await resp.text();
-    try { r = JSON.parse(txt); }
-    catch (jsonErr) {
-      r = { success: false, error: 'El servidor tardó demasiado o cortó la respuesta. Reintenta en un momento.' };
-    }
-  } catch (e) {
-    r = { success: false, error: 'Sin conexión: ' + e.message };
-  }
-  btn.disabled = false; btn.textContent = 'Importar ahora';
-  if (r.success) {
-    setLastSync(Date.now());
-    updateSyncIndicator();
-    const detailHtml = (r.detail && r.detail.length)
-      ? '<div class="small text-muted mt-2">' + r.detail.map(d => '• ' + d).join('<br>') + '</div>'
-      : '';
-    res.innerHTML = `<div class="alert alert-success py-2">✅ <strong>${r.imported}</strong> tareas importadas. ${r.skipped||0} ya existían.${r.errors ? ' | '+r.errors+' con error' : ''}${detailHtml}</div>`;
     await loadData();
-  } else if (r.needs_auth) {
-    res.innerHTML = `<div class="alert alert-warning py-2">🔗 <a href="/auth/microsoft" class="alert-link">Conecta Microsoft To-Do</a> primero desde Integraciones en el menú lateral.</div>`;
+    showToast('🗑 Proyecto eliminado', 'warning');
   } else {
-    res.innerHTML = `<div class="alert alert-danger py-2">❌ ${r.error}</div>`;
+    showToast('❌ ' + (r.error || 'No se pudo eliminar'), 'danger');
   }
 }
 
 // ——————————————————————————————————————————
-//  SINCRONIZACIÓN DE IDA Y VUELTA
-//  El sistema ya baja de To-Do lo que se crea allá. Estas funciones configuran
-//  el otro sentido: la lista a la que suben las tareas creadas aquí.
+//  VER EN GANTT
+//  Con un proyecto abierto se va directo a SU cronograma: el servidor lo crea
+//  si no existía y le vuelca las actividades del proyecto. Antes eran cuatro
+//  pasos —crear el plan, nombrarlo, abrir «traer», marcar las actividades— y
+//  por cuatro pasos nadie lo hacía: el Gantt se quedaba vacío mientras la
+//  planificación estaba llena.
 // ——————————————————————————————————————————
-let todoTarget = null;
-
-async function loadTodoTarget() {
+async function abrirCronograma() {
+  if (!curProject) { location.href = '/cronograma'; return; }
+  showToast('⏳ Preparando el cronograma del proyecto…', 'info');
   try {
-    const r = await fetch('/planning/api/todo-target').then(x => x.json());
-    todoTarget = r.target || null;
-  } catch (e) { todoTarget = null; }
-  const banner = document.getElementById('syncBanner');
-  const texto  = document.getElementById('syncBannerText');
-  if (!banner || !MS_CONNECTED) return;
-  banner.style.display = '';
-  if (todoTarget && todoTarget.list_id) {
-    texto.innerHTML = `🔄 <strong>Sincronización de ida y vuelta activa.</strong> ` +
-      `Lo que crees aquí aparece en <strong>${esc(todoTarget.list_name || 'To-Do')}</strong> ` +
-      `de ${esc(todoTarget.email)}, y lo que crees en To-Do baja al sistema.`;
-  } else {
-    texto.innerHTML = `↙️ Ahora mismo la sincronización va en un solo sentido: lo de To-Do baja al sistema, ` +
-      `pero lo que se crea aquí no sube.` +
-      (IS_ADMIN ? ` <a href="#" onclick="openTodoTargetModal(); return false">Elegir una lista por defecto</a>.` : '');
+    const r = await fetch(`/cronograma/api/proyecto/${curProject}`, {method: 'POST'})
+                      .then(x => x.json());
+    if (!r.success) { showToast('❌ ' + (r.error || 'No se pudo abrir'), 'danger'); return; }
+    location.href = '/cronograma?plan=' + encodeURIComponent(r.plan_id);
+  } catch (e) {
+    showToast('❌ Sin conexión', 'danger');
   }
-}
-
-async function openTodoTargetModal() {
-  const cuentas = await fetch('/planning/api/ms-accounts').then(r => r.json());
-  const selCuenta = document.getElementById('ttAccount');
-  selCuenta.innerHTML = cuentas.map(e =>
-    `<option value="${esc(e)}" ${todoTarget && todoTarget.email === e ? 'selected' : ''}>${esc(e)}</option>`).join('');
-  document.getElementById('ttCurrent').textContent = todoTarget && todoTarget.list_id
-    ? `Actualmente: ${todoTarget.list_name || todoTarget.list_id} (${todoTarget.email})`
-    : 'Actualmente no hay ninguna lista por defecto.';
-  await loadTodoTargetLists();
-  new bootstrap.Modal(document.getElementById('todoTargetModal')).show();
-}
-
-async function loadTodoTargetLists() {
-  const email = document.getElementById('ttAccount').value;
-  const selLista = document.getElementById('ttList');
-  selLista.innerHTML = '<option>Cargando…</option>';
-  const listas = await fetch('/planning/api/ms-lists?email=' + encodeURIComponent(email)).then(r => r.json());
-  selLista.innerHTML = listas.map(l =>
-    `<option value="${esc(l.id)}" ${todoTarget && todoTarget.list_id === l.id ? 'selected' : ''}>${esc(l.name)}</option>`).join('')
-    || '<option value="">— sin listas —</option>';
-}
-
-async function pushPendingToTodo() {
-  const caja = document.getElementById('ttPushResult');
-  caja.innerHTML = '<span class="text-muted">⏳ Subiendo… puede tardar según cuántas falten.</span>';
-  const r = await fetch('/planning/api/push-pending-to-todo', {
-    method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}',
-  }).then(x => x.json());
-  if (!r.success) { caja.innerHTML = `<span class="text-danger">❌ ${esc(r.error)}</span>`; return; }
-  caja.innerHTML = `<span class="text-success">✅ ${r.subidas} de ${r.pendientes} subida(s)` +
-    (r.errores ? `, ${r.errores} con error` : '') +
-    (r.parcial ? '. Quedaron más: vuelve a pulsar para continuar.' : '') + '</span>';
-  await loadData();
-}
-
-async function saveTodoTarget(desactivar) {
-  const email = desactivar ? '' : document.getElementById('ttAccount').value;
-  const sel   = document.getElementById('ttList');
-  const r = await fetch('/planning/api/todo-target', {
-    method: 'POST', headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({
-      email,
-      list_id:   desactivar ? '' : sel.value,
-      list_name: desactivar ? '' : (sel.selectedOptions[0] ? sel.selectedOptions[0].textContent : ''),
-    }),
-  }).then(x => x.json());
-  if (!r.success) { showToast('❌ ' + (r.error || 'No se pudo guardar'), 'danger'); return; }
-  bootstrap.Modal.getInstance(document.getElementById('todoTargetModal')).hide();
-  showToast(desactivar ? '✅ Sincronización hacia To-Do desactivada'
-                       : '✅ Lista por defecto guardada', 'success');
-  await loadTodoTarget();
 }
 
 // ——————————————————————————————————————————
 //  AVISOS DE INCUMPLIMIENTO
-//  El correo sale solo una vez al día. Esto sirve para ver si está bien
-//  configurado y para comprobarlo sin esperar a mañana.
 // ——————————————————————————————————————————
 async function abrirAvisosModal() {
   const caja = document.getElementById('avisosEstado');
@@ -2382,7 +1567,6 @@ async function abrirAvisosModal() {
     caja.innerHTML = `<div class="alert alert-danger py-2 mb-0">❌ ${esc(r.error || 'Error')}</div>`;
     return;
   }
-  const hora = String(r.hora_revision).padStart(2, '0') + ':00';
   // Si la base no contestó, lo que NO se puede hacer es enseñar dos ceros: se
   // leerían como "no hay nada incumplido" cuando la verdad es que no se pudo
   // mirar. Son cosas distintas y aquí se dicen distintas.
@@ -2394,6 +1578,7 @@ async function abrirAvisosModal() {
     </div>`;
     return;
   }
+  const hora = String(r.hora_revision).padStart(2, '0') + ':00';
   caja.innerHTML = `
     <div class="${r.correo_configurado ? 'alert alert-success' : 'alert alert-warning'} py-2">
       ${r.correo_configurado
@@ -2423,7 +1608,7 @@ async function probarAviso() {
 }
 
 // ——————————————————————————————————————————
-//  EXCEL IMPORT / EXPORT
+//  EXCEL
 // ——————————————————————————————————————————
 async function importExcel(input) {
   const file = input.files[0];
@@ -2433,7 +1618,7 @@ async function importExcel(input) {
   const r = await fetch('/planning/api/import-excel', { method:'POST', body: fd }).then(x => x.json());
   input.value = '';
   if (r.success) {
-    showToast(`✅ ${r.imported} tareas importadas${r.errors ? ' | '+r.errors+' errores' : ''}`, 'success');
+    showToast(`✅ ${r.imported} actividades importadas${r.errors ? ' | '+r.errors+' errores' : ''}`, 'success');
     await loadData();
   } else {
     showToast('❌ ' + (r.error||'Error al importar'), 'danger');
@@ -2446,13 +1631,8 @@ function exportExcel() {
 }
 
 // ——————————————————————————————————————————
-//  HELPERS
+//  AYUDANTES
 // ——————————————————————————————————————————
-function daysLeft(due_date, status) {
-  if (!due_date) return null;
-  return Math.ceil((new Date(due_date) - today) / 86400000);
-}
-
 function fmtDate(d) {
   if (!d) return '';
   const dt = new Date(d + 'T00:00:00');

@@ -172,11 +172,11 @@ def _consultar(app, tabla, filtros, select, intentos=3):
 def _es_compromiso(t):
     """¿Es esto un compromiso del despacho o ruido del buzón?
 
-    El módulo de Actividades baja del To-Do de Microsoft los correos marcados de
-    Outlook y los pendientes personales de cada cuenta. Reclamarlos como
+    En la base quedan las filas que en su día bajaron del To-Do de Microsoft:
+    correos marcados de Outlook y pendientes personales. Reclamarlos como
     incumplimiento llenaría el correo diario de decenas de líneas que nadie
     pactó con nadie. Se vigila lo que sí es un compromiso: lo que cuelga de un
-    proyecto, y lo que se creó aquí a mano."""
+    proyecto, y lo que se creó a mano en la planificación."""
     if t.get('project_id'):
         return True
     return t.get('source') != 'ms_todo' and t.get('source_app') != 'Outlook'

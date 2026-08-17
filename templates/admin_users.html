@@ -136,14 +136,13 @@
       <div class="modal-body">
         <p class="text-muted small">
           Aquí se decide, <strong>persona a persona</strong>, a qué módulos entra, qué puede
-          hacer dentro y a qué calendarios, proyectos y cuentas de Microsoft alcanza.
+          hacer dentro y a qué calendarios y proyectos alcanza.
           Es el único sitio donde se conceden accesos.
         </p>
         <ul class="nav nav-pills nav-fill mb-3" role="tablist">
           <li class="nav-item"><button class="nav-link active" data-bs-toggle="pill" data-bs-target="#tabModulos" type="button">🧩 Módulos y acciones</button></li>
           <li class="nav-item"><button class="nav-link" data-bs-toggle="pill" data-bs-target="#tabCalendarios" type="button">📅 Calendarios</button></li>
           <li class="nav-item"><button class="nav-link" data-bs-toggle="pill" data-bs-target="#tabProyectos" type="button">📋 Proyectos</button></li>
-          <li class="nav-item"><button class="nav-link" data-bs-toggle="pill" data-bs-target="#tabCuentasMs" type="button">✅ To-Do</button></li>
         </ul>
         <div class="tab-content">
           <div class="tab-pane fade show active" id="tabModulos">
@@ -158,12 +157,8 @@
             <div id="permCalendarios">Cargando…</div>
           </div>
           <div class="tab-pane fade" id="tabProyectos">
-            <p class="text-muted small">Qué <strong>proyectos</strong> ve, con sus tareas. Un proyecto concedido aquí se ve entero: el recorte por actividades pertenece al rol.</p>
+            <p class="text-muted small">Qué <strong>proyectos</strong> ve, con sus actividades. Un proyecto concedido aquí se ve entero: el recorte por actividades pertenece al rol.</p>
             <div id="permProyectos">Cargando…</div>
-          </div>
-          <div class="tab-pane fade" id="tabCuentasMs">
-            <p class="text-muted small">Qué <strong>cuentas de Microsoft</strong> puede ver y sincronizar. Son las que deciden qué listas de To-Do le aparecen.</p>
-            <div id="permCuentasMs">Cargando…</div>
           </div>
         </div>
       </div>
@@ -236,7 +231,7 @@ async function abrirPermisos(uid, nombre) {
   permUsuario = uid;
   permModal = permModal || new bootstrap.Modal(document.getElementById('modalPermisos'));
   document.getElementById('permTitulo').textContent = '🔐 Permisos de ' + nombre;
-  ['permCuerpo', 'permCalendarios', 'permProyectos', 'permCuentasMs']
+  ['permCuerpo', 'permCalendarios', 'permProyectos']
     .forEach(id => document.getElementById(id).innerHTML = 'Cargando…');
   document.getElementById('permEstado').textContent = '';
   permModal.show();
@@ -286,13 +281,11 @@ async function abrirPermisos(uid, nombre) {
                  'No hay calendarios configurados todavía.');
   pintarRecursos('permProyectos',   rec.proyectos,   'proy',
                  'No hay proyectos creados todavía.');
-  pintarRecursos('permCuentasMs',   rec.cuentas_ms,  'ms',
-                 'No hay ninguna cuenta de Microsoft conectada todavía.');
 }
 
-// Los tres recursos —calendarios, proyectos y cuentas de Microsoft— se pintan
-// igual porque se gobiernan igual: lo que da el rol sale marcado y bloqueado, y
-// lo que se marca aquí es de esta persona.
+// Los dos recursos —calendarios y proyectos— se pintan igual porque se
+// gobiernan igual: lo que da el rol sale marcado y bloqueado, y lo que se marca
+// aquí es de esta persona.
 function pintarRecursos(destino, lista, clase, vacio) {
   const caja = document.getElementById(destino);
   if (!lista || !lista.length) {
@@ -346,7 +339,6 @@ async function guardarPermisos() {
       modulos:     marcados('.mod-chk'),
       calendarios: marcados('.rec-cal'),
       proyectos:   marcados('.rec-proy'),
-      cuentas_ms:  marcados('.rec-ms'),
     }),
   }).then(x => x.json());
   estado.textContent = r.success

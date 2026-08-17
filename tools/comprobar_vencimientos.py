@@ -16,6 +16,9 @@
 # Esto lo saca a la luz antes. Comprueba, por orden:
 #   1. La tabla `vencimiento_avisos` (migración 030). Sin ella no hay memoria
 #      de qué se avisó y el aviso se puede repetir o perderse.
+#      (La 031 es aparte: añade `completed_date` al cronograma, que es lo que
+#       separa «cumplida» de «cumplida con retraso». No la mira esto porque el
+#       correo no depende de ella.)
 #   2. Que la consulta de vencimientos responda rápido. Si tarda, es que los
 #      índices de la 030 no se aplicaron: en frío PostgreSQL cancela la
 #      consulta y el sistema recibe una lista vacía, o sea «no se incumple
