@@ -53,7 +53,12 @@
     --fs-2xl:  1.25rem;    /* encabezados de sección                  */
     --fs-3xl:  1.5rem;     /* cifras grandes                          */
     --fs-4xl:  2.5rem;     /* ilustración de estado vacío             */
-    --rail-w: 88px;
+    /* El riel estuvo en 88 px y ahí no cabía nada: los rótulos de sección se
+       partían a media palabra, «Planificación» no entraba en una línea y hubo
+       que ir recortando los textos para que la columna no reventara. Se estaba
+       ajustando el ajuste en vez de arreglar la causa, que era el ancho. Con
+       112 px entra un rótulo normal y sobra sitio para la insignia. */
+    --rail-w: 112px;
     --panel-w: 236px;
     --sidebar-w: calc(var(--rail-w) + var(--panel-w));
 
@@ -188,7 +193,7 @@ body {
    y las dos anteriores las traté ajustando el ajuste. El adorno cede TODO antes
    que el texto; si no cabe, que no se vea la rayita. */
 .rail-section::before, .rail-section::after {
-    content: ''; flex: 0 1 10px; min-width: 0; height: 1px; background: var(--side-line);
+    content: ''; flex: 0 1 14px; min-width: 0; height: 1px; background: var(--side-line);
 }
 /* Los rótulos van en dos líneas si hace falta, y una palabra que no quepa se
    parte antes que desbordar. Red de seguridad: los textos ya se acortaron para
@@ -227,10 +232,13 @@ body {
     transition: all .15s ease;
     flex-shrink: 0;
 }
-.rail-btn .rail-ic { font-size: 1.125rem; line-height: 1; }
+.rail-btn .rail-ic { font-size: 1.25rem; line-height: 1; }
+/* Con el riel en 112 px el rótulo cabe entero y ya no hace falta apretarlo a
+   10 px ni partir palabras: `break-word` se queda sólo como red de seguridad
+   para un nombre nuevo y largo. */
 .rail-btn .rail-label {
-    font-size: .625rem; font-weight: 600; line-height: 1.2;
-    letter-spacing: .1px; word-break: break-word; hyphens: auto;
+    font-size: .6875rem; font-weight: 600; line-height: 1.2;
+    letter-spacing: .1px; word-break: break-word;
 }
 .rail-btn:hover { background: var(--side-hover); color: var(--side-strong); }
 .rail-btn.active {
@@ -908,7 +916,7 @@ textarea.form-control { resize: vertical; min-height: 70px; }
    RESPONSIVE — Mobile
    ============================================ */
 @media (max-width: 768px) {
-    :root { --rail-w: 82px; --panel-w: 214px; }
+    :root { --rail-w: 100px; --panel-w: 214px; }
 
     .modal-dialog { margin: 8px; }
     .modal-body { max-height: 60vh; padding: 16px; }

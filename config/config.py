@@ -45,6 +45,20 @@ class Config:
     MS_REDIRECT_URI  = os.getenv('MS_REDIRECT_URI', '')
     # Secreto para disparar la sincronización automática To-Do ⇄ Sistema desde un cron externo
     CRON_SECRET = os.getenv('CRON_SECRET', '')
+
+    # ── Correo saliente: avisos de incumplimiento del calendario de vencimientos ──
+    # Sin SMTP_HOST la aplicación funciona igual y el aviso queda desactivado (se
+    # ve en la pantalla de Proyectos, no falla en silencio). Con Gmail hace falta
+    # una "contraseña de aplicación", no la clave normal de la cuenta.
+    SMTP_HOST     = os.getenv('SMTP_HOST', '')
+    SMTP_PORT     = int(os.getenv('SMTP_PORT', '587'))
+    SMTP_USER     = os.getenv('SMTP_USER', '')
+    SMTP_PASSWORD = os.getenv('SMTP_PASSWORD', '')
+    SMTP_FROM     = os.getenv('SMTP_FROM', '') or os.getenv('SMTP_USER', '')
+    SMTP_SSL      = os.getenv('SMTP_SSL', '0') == '1'   # 1 = puerto 465 directo
+    # A quién se le reclama el incumplimiento y a qué hora se revisa (local).
+    AVISO_EMAIL   = os.getenv('AVISO_EMAIL', 'jomapconsultores@gmail.com')
+    AVISO_HORA    = int(os.getenv('AVISO_HORA', '8'))
     TIMEZONE = 'America/Guayaquil'
     # Sincronización de navegadores (Avast ⇄ Brave). ACTIVA por defecto: el acceso
     # ya está blindado a un único administrador dueño (OWNER_EMAIL) + rol admin.

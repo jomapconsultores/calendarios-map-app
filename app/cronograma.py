@@ -154,8 +154,9 @@ def registrar_cronograma(app, ctx):
         return render_template('cronograma.html',
                                is_admin_user=is_admin(),
                                ia=ia_mod.estado(),
-                               page_title='Cronograma',
-                               page_sub='Diagrama de Gantt por actividad, con planificación asistida')
+                               can_planning=user_can('planning'),
+                               page_title='Planificación · Cronograma',
+                               page_sub='Los plazos del plan en barras, con planificación asistida')
 
     # ============================================================
     #  PLANES

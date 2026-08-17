@@ -163,13 +163,24 @@
     </a>
   </div>
   {% endif %}
-  {% if can_planning %}
+  {# Una sola tarjeta para toda la planificación: la lista de proyectos con sus
+     plazos y el cronograma de barras son la misma cosa vista de dos maneras, y
+     en dos tarjetas seguidas parecían dos sistemas para planificar lo mismo. #}
+  {% if can_planning or can_cronograma %}
   <div class="col-md-6 col-xl-4">
-    <a href="/planning" class="module-card">
+    <a href="{{ '/planning' if can_planning else '/cronograma' }}" class="module-card">
       <div class="m-icon" style="background:#eef2ff">📋</div>
-      <h6>Proyectos</h6>
-      <p class="m-sub mb-2">{{widgets.manual_pending}} tarea(s) interna(s) pendiente(s)</p>
+      <h6>Planificación</h6>
+      <p class="m-sub mb-2">
+        {{widgets.manual_pending}} actividad(es) pendiente(s)
+        {%- if can_cronograma and widgets.planes %} · {{widgets.planes}} cronograma(s)
+          {%- if widgets.gantt_vencidas %} · {{widgets.gantt_vencidas}} vencida(s){% endif %}
+        {%- endif %}
+      </p>
       <span class="btn btn-primary btn-sm rounded-pill">Abrir →</span>
+      {% if can_planning and can_cronograma %}
+      <span class="m-sub d-block mt-2" style="font-size:.72rem">Proyectos, plazos y cronograma (Gantt)</span>
+      {% endif %}
     </a>
   </div>
   {% endif %}
@@ -180,19 +191,6 @@
       <h6>Mis calendarios</h6>
       <p class="m-sub mb-2">{{calendarios|length}} calendario(s) activo(s)</p>
       <span class="btn btn-primary btn-sm rounded-pill">Ir al calendario →</span>
-    </a>
-  </div>
-  {% endif %}
-  {% if can_cronograma %}
-  <div class="col-md-6 col-xl-4">
-    <a href="/cronograma" class="module-card">
-      <div class="m-icon" style="background:#f5f3ff">📊</div>
-      <h6>Cronograma</h6>
-      <p class="m-sub mb-2">
-        {% if widgets.planes %}{{widgets.planes}} cronograma(s){% if widgets.gantt_vencidas %} · {{widgets.gantt_vencidas}} actividad(es) vencida(s){% endif %}
-        {% else %}Gantt por actividad, con planificación asistida{% endif %}
-      </p>
-      <span class="btn btn-primary btn-sm rounded-pill">Planificar →</span>
     </a>
   </div>
   {% endif %}

@@ -71,6 +71,7 @@ from . import browser_sync as _browser_sync
 from .directorio import registrar_directorio
 from .cronograma import registrar_cronograma
 from . import atlas_sync as _atlas
+from . import avisos as _avisos
 
 load_dotenv()
 os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
@@ -162,9 +163,12 @@ class User(UserMixin):
 # pantalla de roles, para que el usuario encuentre lo mismo en los dos sitios.
 ALL_MODULES = [
     ('todo',        '✅ Actividades (To-Do)'),
-    ('planning',    '📋 Proyectos y tareas'),
+    # Planificación y Cronograma son la misma cosa vista de dos maneras: la
+    # lista de proyectos con sus plazos y esos mismos plazos en barras. Van
+    # seguidos y así se conceden juntos; en el menú comparten un solo botón.
+    ('planning',    '📋 Planificación — proyectos y actividades'),
+    ('cronograma',  '📈 Planificación — cronograma (Gantt)'),
     ('calendar',    '📅 Calendario de citas'),
-    ('cronograma',  '📊 Cronograma (Gantt)'),
     ('directorio',  '🗂️ Directorio de clientes'),
 ]
 
@@ -494,15 +498,26 @@ class SupabaseAPI:
         q = f'{self.url}/rest/v1/{table}?select={select}'
         for k, v in (query_params or {}).items():
             q += f'&{k}={v}'
-        try:
-            r = self._session.get(q, timeout=self._timeout)
-            if r.status_code == 200:
-                return r.json()
-            print(f'[supabase.get_q] {table}: HTTP {r.status_code} {r.text[:120]}')
-            return []
-        except Exception as e:
-            print(f'[supabase.get_q] {table}: {e}')
-            return []
+        # Un reintento ante fallo pasajero, por lo mismo que en get(): la
+        # primera consulta después de un rato sin uso se pasa del tiempo límite
+        # de PostgreSQL («canceling statement due to statement timeout») y en
+        # caliente la misma tarda dos décimas. Sin reintento, la revisión de
+        # vencimientos daba por bueno un [] y no reclamaba nada.
+        for intento in (1, 2):
+            try:
+                r = self._session.get(q, timeout=self._timeout)
+                if r.status_code == 200:
+                    return r.json()
+                if intento == 1 and r.status_code >= 500:
+                    continue
+                print(f'[supabase.get_q] {table}: HTTP {r.status_code} {r.text[:120]}')
+                return []
+            except Exception as e:
+                if intento == 1:
+                    continue
+                print(f'[supabase.get_q] {table}: {e}')
+                return []
+        return []
 
 
 # ============================================================
@@ -4250,7 +4265,9 @@ def create_app():
         ms_connected = bool(get_ms_token(app))
         return render_template('planning.html', ms_connected=ms_connected,
                                is_admin_user=is_admin(), scope='planning',
-                               page_title='Proyectos', page_sub='Tareas internas del equipo')
+                               can_cronograma=user_can('cronograma'),
+                               page_title='Planificación',
+                               page_sub='Cada proyecto con su responsable, su plazo y sus actividades')
 
     @app.route('/todo')
     @login_required
@@ -4261,6 +4278,7 @@ def create_app():
         ms_connected = bool(get_ms_token(app))
         return render_template('planning.html', ms_connected=ms_connected,
                                is_admin_user=is_admin(), scope='todo',
+                               can_cronograma=False,
                                page_title='Actividades',
                                page_sub='Pendientes sincronizados en ambos sentidos con Microsoft To-Do')
 
@@ -4281,6 +4299,16 @@ def create_app():
         d['created_by'] = current_user.id
         d['name'] = _sanitize(d.get('name', ''), 200)
         if not d['name']: return jsonify({'success': False, 'error': 'Nombre requerido'})
+        # El proyecto queda a nombre de quien lo abre, se escriba lo que se
+        # escriba en el formulario. Un compromiso sin dueño no se puede
+        # reclamar cuando vence, y dejar el campo libre acababa en proyectos
+        # con el responsable en blanco o con un nombre que no era de nadie.
+        d['owner'] = _sanitize(current_user.full_name or current_user.email, 200)
+        # Y sin fecha de vencimiento no hay nada que vigilar: es lo que
+        # convierte el proyecto en un plazo y no en una lista de deseos.
+        if not d.get('due_date'):
+            return jsonify({'success': False,
+                            'error': 'Hace falta la fecha de vencimiento del proyecto.'})
         if 'color' in d: d['color'] = _sanitize_hex_color(d.get('color'))
         r = app.supabase.insert('projects', d)
         if r and not is_admin():
@@ -4309,6 +4337,15 @@ def create_app():
             d['name'] = _sanitize(d.get('name', ''), 200)
             if not d['name']:
                 return jsonify({'success': False, 'error': 'Nombre requerido'})
+        # El responsable es quien lo creó; sólo un administrador puede pasarle
+        # el proyecto a otra persona.
+        if 'owner' in d and not is_admin():
+            d.pop('owner')
+        # La fecha de vencimiento se puede mover, pero no borrar: sin ella el
+        # proyecto se saldría del calendario de vencimientos sin que se note.
+        if 'due_date' in d and not d['due_date']:
+            return jsonify({'success': False,
+                            'error': 'El proyecto no puede quedarse sin fecha de vencimiento.'})
         if 'color' in d:
             d['color'] = _sanitize_hex_color(d.get('color'))
         if not d:
@@ -4322,6 +4359,52 @@ def create_app():
         if not is_admin(): return jsonify({'success': False, 'error': 'Solo admin'})
         ok = app.supabase.delete('projects', pid)
         return jsonify({'success': ok})
+
+    # ============================================================
+    #  CALENDARIO DE VENCIMIENTOS — el aviso de incumplimiento
+    #
+    #  Todo proyecto nace con fecha de vencimiento y sus actividades con la
+    #  suya. Cuando el plazo pasa sin que el trabajo esté cerrado, sale un
+    #  correo diario con la lista de incumplidos. Ver app/avisos.py.
+    # ============================================================
+    @app.route('/planning/api/vencimientos/estado', methods=['GET'])
+    @login_required
+    def vencimientos_estado():
+        if not is_admin():
+            return jsonify({'success': False, 'error': 'Solo admin'}), 403
+        try:
+            return jsonify({'success': True, **_avisos.estado(app)})
+        except Exception as e:
+            return jsonify({'success': False, 'error': str(e)[:300]})
+
+    @app.route('/planning/api/vencimientos/revisar', methods=['POST'])
+    @login_required
+    def vencimientos_revisar():
+        """Dispara la revisión a mano. Con ?forzar=1 reenvía aunque ya se
+        hubiera avisado hoy, que es la única forma de comprobar que el correo
+        sale de verdad sin esperar a mañana."""
+        if not is_admin():
+            return jsonify({'success': False, 'error': 'Solo admin'}), 403
+        forzar = request.args.get('forzar') == '1'
+        try:
+            return jsonify(_avisos.revisar_vencimientos(app, forzar=forzar))
+        except Exception as e:
+            return jsonify({'success': False, 'error': str(e)[:300]})
+
+    @app.route('/planning/api/vencimientos-cron', methods=['POST', 'GET'])
+    def vencimientos_cron():
+        """La misma revisión, disparada por un cron externo (sin sesión).
+
+        El hilo de fondo ya la corre a diario, pero no arranca en Windows ni en
+        un plan que apague el proceso por inactividad; ahí este es el camino."""
+        secreto = app.config.get('CRON_SECRET') or ''
+        recibido = request.headers.get('X-Cron-Secret') or request.args.get('secret') or ''
+        if not secreto or recibido != secreto:
+            return jsonify({'success': False, 'error': 'No autorizado'}), 401
+        try:
+            return jsonify(_avisos.revisar_vencimientos(app))
+        except Exception as e:
+            return jsonify({'success': False, 'error': str(e)[:300]})
 
     @app.route('/planning/api/tasks', methods=['GET'])
     @login_required
@@ -4664,6 +4747,27 @@ def create_app():
         d.setdefault('phase', 'General')
         d.setdefault('progress_pct', 0)
         d.setdefault('alert_days', 3)
+        # La actividad queda a nombre de quien la crea, salvo que se indique
+        # otro responsable. Igual que con el proyecto: lo que no tiene dueño no
+        # se puede reclamar el día que vence.
+        if not d.get('assigned_to'):
+            d['assigned_to'] = _sanitize(current_user.full_name or current_user.email, 200)
+        if not d.get('assigned_email'):
+            d['assigned_email'] = current_user.email
+        # Una actividad dentro de un proyecto lleva plazo propio. Si no se
+        # indica, hereda el del proyecto —nunca puede terminar después que él—
+        # y su tiempo de ejecución arranca hoy.
+        if d.get('project_id'):
+            if not d.get('due_date'):
+                proy = app.supabase.get('projects', {'id': d['project_id']}, select='due_date')
+                heredada = proy[0].get('due_date') if proy else None
+                if not heredada:
+                    return jsonify({'success': False,
+                                    'error': 'Indica la fecha de vencimiento de la actividad: '
+                                             'el proyecto tampoco tiene una de la que heredarla.'})
+                d['due_date'] = heredada
+            if not d.get('start_date'):
+                d['start_date'] = date.today().isoformat()
         # Sin destino explícito se usa la lista por defecto, de modo que toda
         # tarea creada aquí aparezca también en Microsoft To-Do. Es lo que cierra
         # el círculo de la sincronización: antes sólo bajaba, ahora también sube.
@@ -5226,5 +5330,8 @@ def create_app():
         # enterarse es preguntando. Dos minutos es lo más cerca de «inmediato»
         # que se puede estar sin que ATLAS llame a esta puerta.
         _atlas.arrancar_autosync_personas(app, interval_min=2)
+        # Calendario de vencimientos: una revisión al día y, si hay algo fuera
+        # de plazo, el correo de incumplimiento.
+        _avisos.start_avisos_vencimiento(app)
 
     return app

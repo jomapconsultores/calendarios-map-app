@@ -100,6 +100,13 @@
 {% endblock %}
 
 {% block topbar_actions %}
+{# La vuelta a la lista de proyectos. Cronograma y Planificación son la misma
+   pantalla vista de dos maneras, y se tiene que poder ir y volver sin pasar
+   por el menú. #}
+{% if can_planning %}
+<a href="/planning" class="btn btn-outline-primary btn-sm rounded-pill"
+   title="Volver a la lista de proyectos y sus plazos">📋 Planificación</a>
+{% endif %}
 <button class="btn btn-primary btn-sm rounded-pill" onclick="abrirPlan(null)">+ Cronograma</button>
 {% endblock %}
 
