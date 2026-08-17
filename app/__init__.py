@@ -68,6 +68,7 @@ from .cronograma import registrar_cronograma
 from . import atlas_sync as _atlas
 from . import avisos as _avisos
 from . import semaforo as _semaforo
+from . import bitacora as _bitacora
 
 load_dotenv()
 os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
@@ -1281,6 +1282,15 @@ def _project_allowed(app, task, uid):
 # lista no enseñaba ninguna.
 CAMPOS_VISIBILIDAD = ('source', 'created_by', 'assigned_to', 'assigned_email',
                       'project_id')
+
+
+def nombre_de_proyecto(app, pid):
+    """Para que el apunte de la bitácora diga de qué proyecto era, aunque el
+    proyecto se borre después."""
+    if not pid:
+        return None
+    filas = app.supabase.get('projects', {'id': pid}, select='name')
+    return filas[0].get('name') if filas else None
 
 
 def leer_tareas(app, uid, filtros=None, campos='*'):
@@ -3762,6 +3772,45 @@ def create_app():
         except Exception as e:
             return jsonify({'success': False, 'error': str(e)[:300]})
 
+    @app.route('/planning/api/bitacora', methods=['GET'])
+    @login_required
+    def planning_bitacora():
+        """El reporte de lo realizado: qué se hizo con cada actividad, quién lo
+        hizo, cuándo y —cuando se borró o se movió una fecha— por qué.
+
+        Se filtra por proyecto y por actividad. Un usuario normal ve lo de los
+        proyectos que puede ver; el resto no le incumbe."""
+        if not user_can('planning'):
+            return jsonify({'success': False, 'error': 'Sin acceso'}), 403
+        # Lo que llega por la URL se acota antes de entrar en la consulta: estos
+        # valores se pegan tal cual en los parámetros de PostgREST, y un «&» en
+        # medio colaría un filtro que nadie pidió.
+        filtros = {}
+        for clave in ('project_id', 'task_id'):
+            valor = (request.args.get(clave) or '').strip()
+            if valor and re.match(r'^[0-9a-fA-F-]{36}$', valor):
+                filtros[clave] = f'eq.{valor}'
+        accion = (request.args.get('accion') or '').strip()
+        if accion in _bitacora.ACCIONES:
+            filtros['accion'] = f'eq.{accion}'
+        try:
+            limite = min(1000, max(1, int(request.args.get('limite', 300))))
+        except ValueError:
+            limite = 300
+        apuntes = _bitacora.leer(app, filtros, limite)
+        if not is_admin():
+            # Un apunte de un proyecto ajeno no se enseña. Los que no cuelgan de
+            # ningún proyecto sólo los ve quien los hizo.
+            permitidos = grants_efectivos(app, current_user.id)['project_ids']
+            suyo = str(current_user.id)
+            apuntes = [a for a in apuntes
+                       if (a.get('project_id') in permitidos
+                           or (not a.get('project_id') and a.get('usuario_id') == suyo))]
+        for a in apuntes:
+            a['resumen'] = _bitacora.describir(a)
+        return jsonify({'success': True, 'apuntes': apuntes,
+                        'minimo_justificacion': _bitacora.MINIMO_JUSTIFICACION})
+
     @app.route('/planning/api/tasks', methods=['GET'])
     @login_required
     def planning_tasks():
@@ -3950,28 +3999,64 @@ def create_app():
                 d['due_date'] = heredada
             if not d.get('start_date'):
                 d['start_date'] = date.today().isoformat()
+        d.pop('justificacion', None)      # el alta no necesita justificar nada
         r = app.supabase.insert('tasks', d)
+        if r:
+            _bitacora.apuntar(app, 'creado', r[0], current_user,
+                              nombre_proyecto=nombre_de_proyecto(app, d.get('project_id')))
         return jsonify({'success': bool(r), 'task': r[0] if r else None})
 
     @app.route('/planning/api/tasks/<tid>', methods=['PATCH'])
     @login_required
     def planning_update_task(tid):
-        if not is_admin():
-            rows = app.supabase.get('tasks', {'id': tid},
-                select='id,created_by,assigned_to,assigned_email,project_id')
-            task = rows[0] if rows else None
-            if not task or not _user_owns_task(app, task, current_user.id):
-                return jsonify({'success': False, 'error': 'Sin permisos'}), 403
+        rows = app.supabase.get('tasks', {'id': tid}, select='*')
+        task = rows[0] if rows else None
+        if not task:
+            return jsonify({'success': False, 'error': 'No encontrada'}), 404
+        if not is_admin() and not _user_owns_task(app, task, current_user.id):
+            return jsonify({'success': False, 'error': 'Sin permisos'}), 403
         d = request.get_json() or {}
         # No basta con validar el estado PREVIO de la actividad: si el body
         # intenta reasignarla a un proyecto fuera del rol activo, se rechaza.
         if not is_admin():
             if d.get('project_id') and not user_has_project_access(app, current_user.id, d['project_id']):
                 return jsonify({'success': False, 'error': 'No tienes acceso a ese proyecto'}), 403
+
+        # Un plazo que se puede correr sin dar explicaciones no es un plazo.
+        justificacion = d.pop('justificacion', None)
+        movidas = _bitacora.fechas_que_cambian(task, d)
+        if movidas:
+            try:
+                justificacion = _bitacora.validar_justificacion(justificacion)
+            except _bitacora.FaltaJustificacion as e:
+                return jsonify({'success': False, 'requiere_justificacion': True,
+                                'fechas': list(movidas), 'error': str(e)}), 400
+
+        # El responsable no se puede dejar en blanco: una actividad sin dueño no
+        # se le puede reclamar a nadie el día que vence.
+        if 'assigned_to' in d and not (d.get('assigned_to') or '').strip():
+            return jsonify({'success': False,
+                            'error': 'La actividad tiene que tener un responsable.'}), 400
+
         d['updated_at'] = datetime.now(timezone.utc).isoformat()
-        if d.get('status') == 'done' and not d.get('completed_date'):
+        cerrando = d.get('status') == 'done' and task.get('status') != 'done'
+        reabriendo = ('status' in d and d['status'] != 'done'
+                      and task.get('status') == 'done')
+        if cerrando and not d.get('completed_date'):
             d['completed_date'] = date.today().isoformat()
         ok = app.supabase.update('tasks', tid, d)
+        if ok:
+            proyecto = nombre_de_proyecto(app, task.get('project_id'))
+            despues = {**task, **d}
+            if movidas:
+                _bitacora.apuntar_reprogramacion(app, despues, current_user,
+                                                 movidas, justificacion, proyecto)
+            if cerrando:
+                _bitacora.apuntar(app, 'cumplido', despues, current_user,
+                                  nombre_proyecto=proyecto)
+            elif reabriendo:
+                _bitacora.apuntar(app, 'reabierto', despues, current_user,
+                                  nombre_proyecto=proyecto)
         return jsonify({'success': ok})
 
     @app.route('/planning/api/tasks/bulk', methods=['POST'])
@@ -3983,8 +4068,21 @@ def create_app():
         patch = body.get('patch') or {}
         if not ids or not patch:
             return jsonify({'success': False, 'error': 'ids y patch son obligatorios'})
+        # Cambiar veinte fechas de golpe sigue siendo cambiar fechas: la
+        # justificación se pide igual, una para el lote. Si esta puerta quedara
+        # abierta, la de una en una no serviría de nada.
+        justificacion = body.get('justificacion')
+        toca_fechas = any(c in patch for c in _bitacora.FECHAS_VIGILADAS)
+        if toca_fechas:
+            try:
+                justificacion = _bitacora.validar_justificacion(justificacion)
+            except _bitacora.FaltaJustificacion as e:
+                return jsonify({'success': False, 'requiere_justificacion': True,
+                                'fechas': [c for c in _bitacora.FECHAS_VIGILADAS if c in patch],
+                                'error': str(e)}), 400
         patch['updated_at'] = datetime.now(timezone.utc).isoformat()
-        if patch.get('status') == 'done' and not patch.get('completed_date'):
+        cerrando_lote = patch.get('status') == 'done'
+        if cerrando_lote and not patch.get('completed_date'):
             patch['completed_date'] = date.today().isoformat()
             patch['progress_pct']   = 100
         # Permisos: si no es admin, valida que todas le pertenezcan (dueño o
@@ -4000,10 +4098,26 @@ def create_app():
         import time as _time
         DEADLINE = _time.monotonic() + 90
         updated = 0; errors = 0; partial = False
+        # Se leen antes para poder apuntar el «de dónde a dónde» de cada una:
+        # después del UPDATE ya no hay forma de saber qué fecha tenían.
+        previas = {t['id']: t for t in
+                   (app.supabase.get_in('tasks', 'id', ids, select='*') or [])}
         for tid in ids:
             if _time.monotonic() > DEADLINE: partial = True; break
             if app.supabase.update('tasks', tid, patch):
                 updated += 1
+                antes = previas.get(tid)
+                if not antes:
+                    continue
+                proyecto = nombre_de_proyecto(app, antes.get('project_id'))
+                despues = {**antes, **patch}
+                movidas = _bitacora.fechas_que_cambian(antes, patch)
+                if movidas:
+                    _bitacora.apuntar_reprogramacion(app, despues, current_user,
+                                                     movidas, justificacion, proyecto)
+                if cerrando_lote and antes.get('status') != 'done':
+                    _bitacora.apuntar(app, 'cumplido', despues, current_user,
+                                      nombre_proyecto=proyecto)
             else:
                 errors += 1
         return jsonify({'success': True, 'updated': updated,
@@ -4021,6 +4135,11 @@ def create_app():
         if not (is_admin() or user_can('planning.eliminar')):
             return jsonify({'success': False,
                             'error': 'No tienes permiso para eliminar actividades.'}), 403
+        try:
+            justificacion = _bitacora.validar_justificacion(body.get('justificacion'))
+        except _bitacora.FaltaJustificacion as e:
+            return jsonify({'success': False, 'requiere_justificacion': True,
+                            'error': str(e)}), 400
         import time as _time
         DEADLINE = _time.monotonic() + 90
         deleted = 0; partial = False; omitidas = 0
@@ -4038,6 +4157,9 @@ def create_app():
                         and user_can('planning.eliminar')):
                     omitidas += 1
                     continue
+            if task:
+                _bitacora.apuntar(app, 'borrado', task, current_user, justificacion,
+                                  nombre_proyecto=nombre_de_proyecto(app, task.get('project_id')))
             if app.supabase.delete('tasks', tid):
                 deleted += 1
         return jsonify({'success': True, 'deleted': deleted,
@@ -4046,6 +4168,12 @@ def create_app():
     @app.route('/planning/api/tasks/<tid>', methods=['DELETE'])
     @login_required
     def planning_delete_task(tid):
+        """Eliminar exige justificación, y deja constancia de lo que se llevó.
+
+        Sin esto, un incumplimiento se arregla con la tecla de suprimir: si el
+        viernes no llegó, el lunes ya no existía. El apunte guarda el título, el
+        responsable, el plazo, el avance y en qué color estaba, así que la
+        actividad desaparece de la lista pero no de la historia."""
         rows = app.supabase.get('tasks', {'id': tid}, select='*')
         task = rows[0] if rows else None
         if not task:
@@ -4055,6 +4183,17 @@ def create_app():
         if not user_can('planning.eliminar'):
             return jsonify({'success': False,
                             'error': 'No tienes permiso para eliminar actividades.'}), 403
+        cuerpo = request.get_json(silent=True) or {}
+        try:
+            justificacion = _bitacora.validar_justificacion(cuerpo.get('justificacion'))
+        except _bitacora.FaltaJustificacion as e:
+            return jsonify({'success': False, 'requiere_justificacion': True,
+                            'error': str(e)}), 400
+        # Se apunta ANTES de borrar: si el borrado sale bien y el apunte no,
+        # queda una actividad desaparecida sin rastro, que es justo lo que esto
+        # viene a evitar.
+        _bitacora.apuntar(app, 'borrado', task, current_user, justificacion,
+                          nombre_proyecto=nombre_de_proyecto(app, task.get('project_id')))
         return jsonify({'success': app.supabase.delete('tasks', tid)})
 
     @app.route('/planning/api/deps/<tid>', methods=['GET'])
@@ -4234,6 +4373,8 @@ def create_app():
         'leer_tareas':           leer_tareas,
         'get_user_projects':     get_user_projects,
         'user_has_project_access': user_has_project_access,
+        '_bitacora':             _bitacora,
+        'nombre_de_proyecto':    nombre_de_proyecto,
         # El puente con ATLAS, para que el Directorio pueda traerse de allá a los
         # representantes, docentes y estudiantes.
         '_atlas':                _atlas,

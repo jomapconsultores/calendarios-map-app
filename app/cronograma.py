@@ -93,6 +93,8 @@ def registrar_cronograma(app, ctx):
     leer_tareas           = ctx['leer_tareas']
     user_has_project_access = ctx['user_has_project_access']
     get_user_projects     = ctx['get_user_projects']
+    _bitacora             = ctx['_bitacora']
+    nombre_de_proyecto    = ctx['nombre_de_proyecto']
     db = lambda: app.supabase
 
     def _sin_acceso():
@@ -234,6 +236,42 @@ def registrar_cronograma(app, ctx):
             if _guardar_actividad(barra['id'], distinto):
                 cambiadas += 1
         return cambiadas
+
+    # En el cronograma la fecha de fin se llama `end_date`; en la planificación,
+    # `due_date`. Es el mismo compromiso, así que se vigila igual.
+    FECHAS_BARRA = {'start_date': 'start_date', 'end_date': 'due_date'}
+
+    def _fechas_movidas(barra, cambios):
+        """Qué fechas mueve este cambio, con los nombres de la planificación."""
+        movidas = {}
+        for campo, equivalente in FECHAS_BARRA.items():
+            if campo not in cambios:
+                continue
+            antes = str(barra.get(campo))[:10] if barra.get(campo) else None
+            despues = str(cambios.get(campo))[:10] if cambios.get(campo) else None
+            if antes != despues:
+                movidas[equivalente] = (antes, despues)
+        return movidas
+
+    def _apuntar_movimiento(barra, cambios, movidas, justificacion):
+        """Deja el movimiento en la bitácora, con la ficha de la actividad de la
+        planificación para que el reporte lo cuente igual venga de donde venga."""
+        if not movidas:
+            return
+        tid = barra.get('task_id')
+        tarea = None
+        if tid:
+            filas = db().get('tasks', {'id': tid}, select='*')
+            tarea = filas[0] if filas else None
+        if not tarea:
+            # Barra suelta (cronograma sin proyecto): se apunta con lo que hay.
+            tarea = {'id': tid, 'title': cambios.get('name') or barra.get('name'),
+                     'assigned_to': barra.get('responsible'),
+                     'due_date': cambios.get('end_date') or barra.get('end_date'),
+                     'status': barra.get('status'), 'progress_pct': barra.get('progress_pct')}
+        _bitacora.apuntar_reprogramacion(
+            app, tarea, current_user, movidas, justificacion,
+            nombre_de_proyecto(app, tarea.get('project_id')))
 
     def _volcar_tareas(pid, tareas):
         """Convierte actividades de la planificación en barras de este plan.
@@ -432,30 +470,70 @@ def registrar_cronograma(app, ctx):
             return jsonify({'success': False, 'error': 'Actividad no encontrada'}), 404
         if not _plan_visible(_cargar_plan(filas[0]['plan_id'])):
             return jsonify({'success': False, 'error': 'Sin permisos'}), 403
-        cambios = _normalizar_actividad(request.get_json() or {})
+        cuerpo = request.get_json() or {}
+        justificacion = cuerpo.pop('justificacion', None)
+        cambios = _normalizar_actividad(cuerpo)
         if 'name' in cambios and not cambios['name']:
             return jsonify({'success': False, 'error': 'El nombre de la actividad es obligatorio'})
         if not cambios:
             return jsonify({'success': False, 'error': 'Nada que actualizar'})
+
+        # Arrastrar una barra es mover una fecha, y aquí se pide lo mismo que en
+        # la lista. Si el Gantt no lo pidiera, sería la puerta de atrás: bastaría
+        # con abrir la otra pantalla para saltarse la regla.
+        movidas = _fechas_movidas(filas[0], cambios)
+        if movidas:
+            try:
+                justificacion = _bitacora.validar_justificacion(justificacion)
+            except _bitacora.FaltaJustificacion as e:
+                return jsonify({'success': False, 'requiere_justificacion': True,
+                                'fechas': list(movidas), 'error': str(e)}), 400
+
         cambios['updated_at'] = datetime.now(timezone.utc).isoformat()
         ok = _guardar_actividad(aid, cambios)
         if ok:
             _escribir_en_la_planificacion(filas[0], cambios)
+            _apuntar_movimiento(filas[0], cambios, movidas, justificacion)
         return jsonify({'success': ok})
 
     @app.route('/cronograma/api/actividades/<aid>', methods=['DELETE'])
     @login_required
     def cronograma_borrar_actividad(aid):
+        """Borrar la barra borra la actividad, y exige justificación.
+
+        Quitar sólo la barra no serviría de nada —al abrir el proyecto volvería
+        a entrar— y además abriría la puerta de atrás: eliminar aquí sin dar
+        explicaciones lo que en la lista sí hay que justificar."""
         if not user_can('cronograma'):
             return _sin_acceso()
         if not user_can('cronograma.eliminar'):
             return _sin_permiso('eliminar actividades')
-        filas = db().get('gantt_activities', {'id': aid}, select='plan_id')
+        filas = db().get('gantt_activities', {'id': aid}, select='*')
         if not filas:
             return jsonify({'success': False, 'error': 'Actividad no encontrada'}), 404
-        if not _plan_visible(_cargar_plan(filas[0]['plan_id'])):
+        barra = filas[0]
+        if not _plan_visible(_cargar_plan(barra['plan_id'])):
             return jsonify({'success': False, 'error': 'Sin permisos'}), 403
-        return jsonify({'success': db().delete('gantt_activities', aid)})
+
+        tarea = None
+        if barra.get('task_id'):
+            encontradas = db().get('tasks', {'id': barra['task_id']}, select='*')
+            tarea = encontradas[0] if encontradas else None
+
+        cuerpo = request.get_json(silent=True) or {}
+        if tarea:
+            try:
+                justificacion = _bitacora.validar_justificacion(cuerpo.get('justificacion'))
+            except _bitacora.FaltaJustificacion as e:
+                return jsonify({'success': False, 'requiere_justificacion': True,
+                                'error': str(e)}), 400
+            _bitacora.apuntar(app, 'borrado', tarea, current_user, justificacion,
+                              nombre_proyecto=nombre_de_proyecto(app, tarea.get('project_id')))
+
+        ok = db().delete('gantt_activities', aid)
+        if ok and tarea:
+            db().delete('tasks', tarea['id'])
+        return jsonify({'success': ok})
 
 
     @app.route('/cronograma/api/proyecto/<pid>', methods=['POST'])
@@ -633,7 +711,24 @@ def registrar_cronograma(app, ctx):
         # cuerpo de la petición no debe poder tocar el cronograma de otro.
         del_plan = {a['id']: a for a in
                     (db().get('gantt_activities', {'plan_id': pid},
-                              select='id,task_id') or [])}
+                              select='*') or [])}
+
+        # Aplicar una propuesta de la IA mueve fechas —a veces todas— y eso se
+        # justifica igual que moverlas a mano. Si no, sería la forma más cómoda
+        # de saltarse la regla: pedir un plan y aprobarlo. Basta una
+        # justificación para toda la aplicación, porque es una sola decisión.
+        mueve_fechas = any(
+            _fechas_movidas(del_plan[p['actividad_id']],
+                            _normalizar_actividad(p.get('cambios') or {}))
+            for p in propuestas
+            if p.get('actividad_id') and p.get('actividad_id') in del_plan)
+        justificacion = cuerpo.get('justificacion')
+        if mueve_fechas:
+            try:
+                justificacion = _bitacora.validar_justificacion(justificacion)
+            except _bitacora.FaltaJustificacion as e:
+                return jsonify({'success': False, 'requiere_justificacion': True,
+                                'error': str(e)}), 400
         orden = len(del_plan)
         aplicadas, creadas = 0, 0
 
@@ -643,12 +738,14 @@ def registrar_cronograma(app, ctx):
             aid = propuesta.get('actividad_id')
             if aid and aid in del_plan:
                 cambios['updated_at'] = datetime.now(timezone.utc).isoformat()
+                movidas = _fechas_movidas(del_plan[aid], cambios)
                 if _guardar_actividad(aid, cambios):
                     aplicadas += 1
                     # Las fechas que aprueba la IA son fechas del compromiso, no
                     # del dibujo: bajan a la planificación como cualquier otra
                     # edición. Si no, la lista seguiría con las de antes.
                     _escribir_en_la_planificacion(del_plan[aid], cambios)
+                    _apuntar_movimiento(del_plan[aid], cambios, movidas, justificacion)
             elif propuesta.get('nueva') and propuesta.get('nombre'):
                 orden += 1
                 cambios.update({'name': _sanitize(propuesta['nombre'], 300),

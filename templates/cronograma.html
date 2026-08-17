@@ -269,6 +269,37 @@
   </div>
 </div>
 
+<!-- ============ JUSTIFICACIÓN ============
+     Arrastrar una barra es mover una fecha, y aquí se pide lo mismo que en la
+     lista. Si el Gantt no lo pidiera, sería la puerta de atrás. -->
+<div class="modal fade cro-modal" id="modalJusti" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content border-0 shadow">
+      <div class="modal-header" style="background:#b45309">
+        <h5 class="modal-title text-white" id="justiTitulo">✍️ Justificación</h5>
+        <button class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div id="justiDetalle" class="alert alert-warning py-2 small"></div>
+        <label class="form-label fw-semibold">MOTIVO *</label>
+        <textarea id="justiTexto" class="form-control" rows="4"
+          placeholder="Por qué se hace este cambio. Quien lea esto dentro de seis meses tiene que entenderlo."
+          oninput="contarJustificacion()"></textarea>
+        <div class="form-text" id="justiContador"></div>
+        <div class="small text-muted mt-2">
+          Queda registrado con tu nombre y la fecha. Se consulta en
+          <strong>Planificación → 📋 Reporte</strong>.
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary btn-sm rounded-pill" data-bs-dismiss="modal">Cancelar</button>
+        <button class="btn btn-warning btn-sm rounded-pill fw-bold" id="justiOk"
+                onclick="confirmarJustificacion()" disabled>Confirmar</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- ============ PLANIFICACIÓN CON IA ============ -->
 <div class="modal fade cro-modal" id="modalIa" tabindex="-1">
   <div class="modal-dialog modal-xl modal-dialog-scrollable">
@@ -353,7 +384,7 @@ const IA = {{ ia|tojson }};
 
 let proyectos = [], proyectoActivo = null, planActivo = null, actividades = [], propuestas = [];
 let analisisIa = {};   // resumen, riesgos y ruta crítica de la última propuesta
-let modalActividad, modalIa;
+let modalActividad, modalIa, modalJusti;
 
 const ESTADOS = {pending:'Pendiente', in_progress:'En progreso', review:'En revisión',
                  done:'Completada', blocked:'Bloqueada'};
@@ -407,6 +438,7 @@ function textoSemaforo(s) {
 document.addEventListener('DOMContentLoaded', () => {
   modalActividad = new bootstrap.Modal(document.getElementById('modalActividad'));
   modalIa        = new bootstrap.Modal(document.getElementById('modalIa'));
+  modalJusti     = new bootstrap.Modal(document.getElementById('modalJusti'));
 
   if (!IA.disponible) {
     const boton = document.getElementById('btnIa');
@@ -733,9 +765,12 @@ function pintarGantt() {
          </div>`;
 
     return `<div class="g-row" onclick="abrirActividad('${a.id}')">
-      <div class="g-label" title="${esc(a.name)} — ${esc(textoSemaforo(s))}">
+      <div class="g-label" title="${esc(a.name)} — ${esc(textoSemaforo(s))}${a.responsible ? ' — responsable: ' + esc(a.responsible) : ''}">
         <span class="sem-dot" style="background:${e.color}"></span>
-        <span class="gl-text">${a.is_milestone ? '◆ ' : ''}${esc(a.name)}</span>
+        <span class="gl-text">${a.is_milestone ? '◆ ' : ''}${esc(a.name)}
+          ${/* De quién es, en la propia barra: un plazo sin dueño no se le
+                puede reclamar a nadie, y en el Gantt es donde se mira. */''}
+          ${a.responsible ? `<span style="color:#94a3b8;font-weight:400"> · ${esc(a.responsible)}</span>` : ''}</span>
         ${s.id === 'rojo' ? '<span class="text-danger">⛔</span>' : ''}
         ${s.id === 'tardio' ? '<span style="color:#c2410c">🟠</span>' : ''}
       </div>
@@ -841,6 +876,47 @@ function recalcularDias() {
   caja.value = dias;
 }
 
+// ——————————————————————————————————————————
+//  JUSTIFICACIÓN
+// ——————————————————————————————————————————
+const MIN_JUSTIFICACION = 12;
+let _justiResolver = null;
+
+function pedirJustificacion(titulo, detalle) {
+  return new Promise(resolve => {
+    _justiResolver = resolve;
+    document.getElementById('justiTitulo').textContent = titulo;
+    document.getElementById('justiDetalle').innerHTML = detalle;
+    document.getElementById('justiTexto').value = '';
+    contarJustificacion();
+    // Cerrar sin confirmar es cancelar: si no se resolviera la promesa, la
+    // acción se quedaría colgada para siempre.
+    document.getElementById('modalJusti').addEventListener('hidden.bs.modal', () => {
+      if (_justiResolver) { _justiResolver(null); _justiResolver = null; }
+    }, {once: true});
+    modalJusti.show();
+    setTimeout(() => document.getElementById('justiTexto').focus(), 250);
+  });
+}
+
+function contarJustificacion() {
+  const t = document.getElementById('justiTexto').value.trim();
+  const faltan = MIN_JUSTIFICACION - t.length;
+  document.getElementById('justiOk').disabled = faltan > 0;
+  document.getElementById('justiContador').textContent = faltan > 0
+    ? `Faltan ${faltan} caracteres (mínimo ${MIN_JUSTIFICACION}).`
+    : `${t.length} caracteres.`;
+}
+
+function confirmarJustificacion() {
+  const texto = document.getElementById('justiTexto').value.trim();
+  if (texto.length < MIN_JUSTIFICACION) return;
+  const resolver = _justiResolver;
+  _justiResolver = null;
+  modalJusti.hide();
+  if (resolver) resolver(texto);
+}
+
 async function guardarActividad() {
   const id = document.getElementById('aId').value;
   const cuerpo = {
@@ -856,6 +932,32 @@ async function guardarActividad() {
     depends_on: [...document.getElementById('aDependencias').selectedOptions].map(o => o.value),
   };
   if (!cuerpo.name) { aviso('El nombre es obligatorio', 'warning'); return; }
+  if (!cuerpo.responsible) {
+    aviso('Pon el responsable: una actividad sin dueño no se le puede reclamar a nadie', 'warning');
+    return;
+  }
+
+  // Mover una fecha se justifica. Se compara con la barra que había antes de
+  // abrir la ventana: reenviar la misma fecha no pregunta nada.
+  if (id) {
+    const previa = actividades.find(a => a.id === id) || {};
+    const movidas = [];
+    if ((previa.end_date || null) !== (cuerpo.end_date || null))
+      movidas.push(['fin', previa.end_date, cuerpo.end_date]);
+    if ((previa.start_date || null) !== (cuerpo.start_date || null))
+      movidas.push(['inicio', previa.start_date, cuerpo.start_date]);
+    if (movidas.length) {
+      const detalle = '📅 Estás moviendo ' + (movidas.length > 1 ? 'las fechas' : 'la fecha') +
+        ' de <strong>' + esc(cuerpo.name) + '</strong>:<ul class="mb-0 mt-1">' +
+        movidas.map(([q, a, b]) =>
+          `<li>${q}: <strong>${a || 'sin fecha'}</strong> → <strong>${b || 'sin fecha'}</strong></li>`
+        ).join('') + '</ul>';
+      const motivo = await pedirJustificacion('✍️ Justifica el cambio de plazo', detalle);
+      if (!motivo) { aviso('Cambio cancelado: sin justificación no se mueve el plazo', 'warning'); return; }
+      cuerpo.justificacion = motivo;
+    }
+  }
+
   const r = await pedir(id ? `/cronograma/api/actividades/${id}`
                            : `/cronograma/api/planes/${planActivo.id}/actividades`,
     {method: id ? 'PATCH' : 'POST', body: JSON.stringify(cuerpo)});
@@ -867,8 +969,16 @@ async function guardarActividad() {
 
 async function borrarActividad() {
   const id = document.getElementById('aId').value;
-  if (!confirm('¿Eliminar esta actividad del cronograma?')) return;
-  const r = await pedir(`/cronograma/api/actividades/${id}`, {method: 'DELETE'});
+  const a = actividades.find(x => x.id === id) || {};
+  const motivo = await pedirJustificacion('🗑 Justifica la eliminación',
+    `🗑 Vas a eliminar <strong>${esc(a.name || '')}</strong>, aquí y en la ` +
+    `planificación.<div class="mt-1">Plazo: <strong>${a.end_date || 'sin plazo'}</strong>` +
+    ` · Avance: <strong>${a.progress_pct || 0}%</strong>` +
+    ` · Responsable: <strong>${esc(a.responsible || '—')}</strong></div>` +
+    `<div class="mt-1">Queda constancia en el reporte, con lo que había y con tu nombre.</div>`);
+  if (!motivo) return;
+  const r = await pedir(`/cronograma/api/actividades/${id}`,
+    {method: 'DELETE', body: JSON.stringify({justificacion: motivo})});
   if (!r.success) { aviso(r.error || 'No se pudo eliminar', 'danger'); return; }
   modalActividad.hide();
   await abrirProyecto(proyectoActivo);
@@ -959,11 +1069,27 @@ async function aplicarPropuesta() {
   const indices = [...document.querySelectorAll('.chk-prop:checked')]
     .map(c => parseInt(c.dataset.indice, 10));
   if (!indices.length) { aviso('No aprobaste ninguna propuesta', 'warning'); return; }
+
+  // Aplicar una propuesta mueve fechas, a veces todas. Se justifica igual que
+  // moverlas a mano: pedir un plan y aprobarlo no puede ser el atajo para
+  // saltarse la regla. Una justificación para toda la aplicación, porque es
+  // una sola decisión.
+  const aprobadas = indices.map(i => propuestas[i]);
+  const mueveFechas = aprobadas.some(p => !p.nueva);
+  let motivo = null;
+  if (mueveFechas) {
+    motivo = await pedirJustificacion('✍️ Justifica la replanificación',
+      `📅 Vas a mover los plazos de <strong>${aprobadas.filter(p => !p.nueva).length}</strong> ` +
+      `actividad(es) con la propuesta de la IA.` +
+      `<div class="mt-1">La aprobación es tuya, así que el motivo también.</div>`);
+    if (!motivo) { aviso('Aplicación cancelada: sin justificación no se mueven los plazos', 'warning'); return; }
+  }
+
   const boton = document.getElementById('btnIaAplicar');
   boton.disabled = true; boton.textContent = 'Aplicando…';
   const r = await pedir(`/cronograma/api/planes/${planActivo.id}/aplicar-plan`,
     {method: 'POST', body: JSON.stringify(Object.assign(
-       {propuestas: indices.map(i => propuestas[i])}, analisisIa))});
+       {propuestas: aprobadas, justificacion: motivo}, analisisIa))});
   boton.disabled = false; boton.textContent = '✅ Aplicar lo aprobado';
   if (!r.success) { aviso(r.error || 'No se pudo aplicar', 'danger'); return; }
   modalIa.hide();

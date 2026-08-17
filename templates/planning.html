@@ -159,6 +159,8 @@ input[type=range].prog-range{accent-color:#4f46e5;width:100%}
   <button class="btn btn-outline-primary btn-sm rounded-pill" onclick="abrirCronograma()"
           title="Ver estos plazos como diagrama de Gantt">📈 Ver en Gantt</button>
   {% endif %}
+  <button class="btn btn-outline-secondary btn-sm rounded-pill" onclick="abrirReporte()"
+          title="Qué se hizo con cada actividad, quién y por qué">📋 Reporte</button>
   {% if is_admin_user %}
   <button class="btn btn-outline-secondary btn-sm rounded-pill" onclick="abrirAvisosModal()"
           title="Correo de aviso cuando un plazo se incumple">🔔 Avisos</button>
@@ -458,6 +460,68 @@ input[type=range].prog-range{accent-color:#4f46e5;width:100%}
           <button class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
           <button class="btn btn-primary" onclick="saveProject()">💾 Guardar</button>
         </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ========= JUSTIFICACIÓN =========
+     Una sola ventana para las dos cosas que no se pueden hacer en silencio:
+     borrar una actividad y mover una fecha. Se escribe el porqué o no se
+     hace. -->
+<div class="modal fade plan-modal" id="justiModal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content border-0 shadow">
+      <div class="modal-header" style="background:#b45309">
+        <h5 class="modal-title text-white" id="justiTitulo">✍️ Justificación</h5>
+        <button class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div id="justiDetalle" class="alert alert-warning py-2 small"></div>
+        <label class="form-label fw-semibold">MOTIVO *</label>
+        <textarea id="justiTexto" class="form-control" rows="4"
+          placeholder="Por qué se hace este cambio. Quien lea esto dentro de seis meses tiene que entenderlo."
+          oninput="contarJustificacion()"></textarea>
+        <div class="form-text" id="justiContador"></div>
+        <div class="small text-muted mt-2">
+          Queda registrado con tu nombre y la fecha, y se puede consultar en
+          <strong>📋 Reporte</strong>. No se puede editar después.
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary btn-sm rounded-pill" data-bs-dismiss="modal">Cancelar</button>
+        <button class="btn btn-warning btn-sm rounded-pill fw-bold" id="justiOk"
+                onclick="confirmarJustificacion()" disabled>Confirmar</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ========= REPORTE DE LO REALIZADO ========= -->
+<div class="modal fade plan-modal" id="reporteModal" tabindex="-1">
+  <div class="modal-dialog modal-xl modal-dialog-scrollable">
+    <div class="modal-content border-0 shadow">
+      <div class="modal-header">
+        <h5 class="modal-title text-white">📋 Reporte de lo realizado</h5>
+        <button class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="d-flex gap-2 flex-wrap align-items-center mb-3">
+          <select id="repAccion" class="form-select form-select-sm" style="max-width:190px"
+                  onchange="cargarReporte()">
+            <option value="">Todo lo ocurrido</option>
+            <option value="reprogramado">Sólo reprogramaciones</option>
+            <option value="borrado">Sólo eliminaciones</option>
+            <option value="cumplido">Sólo cumplidas</option>
+            <option value="creado">Sólo altas</option>
+          </select>
+          <span id="repAmbito" class="small text-muted"></span>
+          <div style="flex:1"></div>
+          <button class="btn btn-outline-secondary btn-sm rounded-pill" onclick="exportarReporte()">
+            📤 Exportar
+          </button>
+        </div>
+        <div id="repCuerpo">Cargando…</div>
       </div>
     </div>
   </div>
@@ -896,13 +960,21 @@ function bulkSetPriority(p) { if (p) bulkPatch({priority: p}); }
 
 async function bulkDelete() {
   if (!selectedIds.size) return;
-  if (!confirm(`¿Eliminar ${selectedIds.size} actividades? Esta acción no se puede deshacer.`)) return;
   const ids = Array.from(selectedIds);
+  const nombres = ids.slice(0, 5).map(id => {
+    const t = allTasks.find(x => x.id === id);
+    return '<li>' + esc(t ? t.title : id) + '</li>';
+  }).join('');
+  const motivo = await pedirJustificacion('🗑 Justifica la eliminación',
+    `🗑 Vas a eliminar <strong>${ids.length}</strong> actividad(es):<ul class="mb-0 mt-1">${nombres}` +
+    (ids.length > 5 ? `<li>…y ${ids.length - 5} más</li>` : '') + '</ul>' +
+    '<div class="mt-1">El mismo motivo queda apuntado en todas.</div>');
+  if (!motivo) return;
   showToast(`⏳ Eliminando ${ids.length} actividades...`, 'info');
   try {
     const r = await fetch('/planning/api/tasks/bulk-delete', {
       method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ids})
+      body: JSON.stringify({ids, justificacion: motivo})
     }).then(x => x.json());
     if (r.success) {
       showToast(`🗑 ${r.deleted} eliminadas${r.omitidas?` · ${r.omitidas} sin permiso`:''}`, 'warning');
@@ -1376,13 +1448,19 @@ document.addEventListener('click', e => {
 async function saveTask() {
   const title = document.getElementById('mTitle').value.trim();
   if (!title) { showToast('❌ El título es obligatorio', 'danger'); return; }
+  const responsable = document.getElementById('mAssigned').value.trim();
+  if (!responsable) {
+    showToast('❌ Pon el responsable: una actividad sin dueño no se le puede reclamar a nadie', 'danger');
+    document.getElementById('mAssigned').focus();
+    return;
+  }
   const payload = {
     title,
     project_id: document.getElementById('mProject').value || null,
     phase: document.getElementById('mPhase').value.trim() || 'General',
     priority: document.getElementById('mPriority').value,
     status: document.getElementById('mStatus').value,
-    assigned_to: document.getElementById('mAssigned').value.trim(),
+    assigned_to: responsable,
     assigned_email: document.getElementById('mEmail').value.trim(),
     description: document.getElementById('mDesc').value.trim(),
     start_date: document.getElementById('mStartDate').value || null,
@@ -1394,6 +1472,27 @@ async function saveTask() {
     notes: document.getElementById('mNotes').value.trim(),
     subtasks: currentSubs,
   };
+  // Mover un plazo se justifica. Se compara con lo que había ANTES de abrir
+  // el modal: reenviar la misma fecha no es mover nada y no pregunta nada.
+  if (editingTaskId) {
+    const previa = allTasks.find(t => t.id === editingTaskId) || {};
+    const movidas = [];
+    if ((previa.due_date || null) !== (payload.due_date || null))
+      movidas.push(['vencimiento', previa.due_date, payload.due_date]);
+    if ((previa.start_date || null) !== (payload.start_date || null))
+      movidas.push(['inicio', previa.start_date, payload.start_date]);
+    if (movidas.length) {
+      const detalle = '📅 Estás moviendo ' + (movidas.length > 1 ? 'las fechas' : 'la fecha') +
+        ' de <strong>' + esc(title) + '</strong>:<ul class="mb-0 mt-1">' +
+        movidas.map(([q, a, b]) =>
+          `<li>${q}: <strong>${a ? fmtDate(a) : 'sin fecha'}</strong> → <strong>${b ? fmtDate(b) : 'sin fecha'}</strong></li>`
+        ).join('') + '</ul>';
+      const motivo = await pedirJustificacion('✍️ Justifica el cambio de plazo', detalle);
+      if (!motivo) { showToast('Cambio cancelado: sin justificación no se mueve el plazo', 'warning'); return; }
+      payload.justificacion = motivo;
+    }
+  }
+
   let r;
   if (editingTaskId) {
     r = await fetch(`/planning/api/tasks/${editingTaskId}`,
@@ -1416,8 +1515,15 @@ async function saveTask() {
 }
 
 async function deleteTask() {
-  if (!editingTaskId || !confirm('¿Eliminar esta actividad?')) return;
-  const r = await fetch(`/planning/api/tasks/${editingTaskId}`, { method:'DELETE' }).then(x => x.json());
+  if (!editingTaskId) return;
+  const t = allTasks.find(x => x.id === editingTaskId) || {};
+  const motivo = await pedirJustificacion('🗑 Justifica la eliminación',
+    motivoBorrado(t));
+  if (!motivo) return;
+  const r = await fetch(`/planning/api/tasks/${editingTaskId}`, {
+    method:'DELETE', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({justificacion: motivo})
+  }).then(x => x.json());
   if (r.success) {
     allTasks = allTasks.filter(t => t.id !== editingTaskId);
     bootstrap.Modal.getInstance(document.getElementById('taskModal')).hide();
@@ -1428,9 +1534,26 @@ async function deleteTask() {
   }
 }
 
+// Lo que se va a perder, dicho antes de perderlo: sin esto la justificación
+// se escribe a ciegas y acaba siendo un trámite.
+function motivoBorrado(t) {
+  const s = semTarea(t);
+  return `🗑 Vas a eliminar <strong>${esc(t.title || '')}</strong>.` +
+    `<div class="mt-1">Plazo: <strong>${t.due_date ? fmtDate(t.due_date) : 'sin plazo'}</strong>` +
+    ` · Avance: <strong>${t.progress_pct || 0}%</strong>` +
+    ` · Estado: <strong>${esc(SEM[s.id].etiqueta)}</strong>` +
+    ` · Responsable: <strong>${esc(t.assigned_to || '—')}</strong></div>` +
+    `<div class="mt-1">Queda constancia en el reporte, con lo que había y con tu nombre.</div>`;
+}
+
 async function confirmDelete(id, title) {
-  if (!confirm(`¿Eliminar la actividad "${title}"?`)) return;
-  const r = await fetch(`/planning/api/tasks/${id}`, { method:'DELETE' }).then(x => x.json());
+  const t = allTasks.find(x => x.id === id) || {title};
+  const motivo = await pedirJustificacion('🗑 Justifica la eliminación', motivoBorrado(t));
+  if (!motivo) return;
+  const r = await fetch(`/planning/api/tasks/${id}`, {
+    method:'DELETE', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({justificacion: motivo})
+  }).then(x => x.json());
   if (r.success) {
     allTasks = allTasks.filter(t => t.id !== id);
     renderAll();
@@ -1536,6 +1659,150 @@ async function deleteProject() {
   } else {
     showToast('❌ ' + (r.error || 'No se pudo eliminar'), 'danger');
   }
+}
+
+// ——————————————————————————————————————————
+//  JUSTIFICACIÓN
+//  Borrar una actividad y mover una fecha son las dos cosas que no se pueden
+//  hacer en silencio. El servidor las rechaza sin motivo escrito; esto es lo
+//  que lo pide, para que el rechazo no llegue como un error seco.
+// ——————————————————————————————————————————
+const MIN_JUSTIFICACION = 12;
+let _justiResolver = null;
+
+function pedirJustificacion(titulo, detalle) {
+  return new Promise(resolve => {
+    _justiResolver = resolve;
+    document.getElementById('justiTitulo').textContent = titulo;
+    document.getElementById('justiDetalle').innerHTML = detalle;
+    const t = document.getElementById('justiTexto');
+    t.value = '';
+    contarJustificacion();
+    const m = new bootstrap.Modal(document.getElementById('justiModal'));
+    // Cerrar con la X, con Escape o pulsando fuera es cancelar: si no se
+    // resolviera la promesa, la acción se quedaría colgada para siempre.
+    document.getElementById('justiModal').addEventListener('hidden.bs.modal', () => {
+      if (_justiResolver) { _justiResolver(null); _justiResolver = null; }
+    }, {once: true});
+    m.show();
+    setTimeout(() => t.focus(), 250);
+  });
+}
+
+function contarJustificacion() {
+  const t = document.getElementById('justiTexto').value.trim();
+  const faltan = MIN_JUSTIFICACION - t.length;
+  const ok = faltan <= 0;
+  document.getElementById('justiOk').disabled = !ok;
+  document.getElementById('justiContador').textContent = ok
+    ? `${t.length} caracteres.`
+    : `Faltan ${faltan} caracteres (mínimo ${MIN_JUSTIFICACION}).`;
+}
+
+function confirmarJustificacion() {
+  const texto = document.getElementById('justiTexto').value.trim();
+  if (texto.length < MIN_JUSTIFICACION) return;
+  const resolver = _justiResolver;
+  _justiResolver = null;
+  bootstrap.Modal.getInstance(document.getElementById('justiModal')).hide();
+  if (resolver) resolver(texto);
+}
+
+// ——————————————————————————————————————————
+//  REPORTE DE LO REALIZADO
+// ——————————————————————————————————————————
+let _reporte = [];
+
+const ACC_ETIQUETA = {
+  creado:       {t:'Creada',        c:'#0369a1', f:'#e0f2fe'},
+  reprogramado: {t:'Reprogramada',  c:'#b45309', f:'#fef3c7'},
+  cumplido:     {t:'Cumplida',      c:'#16a34a', f:'#dcfce7'},
+  reabierto:    {t:'Reabierta',     c:'#7c3aed', f:'#ede9fe'},
+  borrado:      {t:'Eliminada',     c:'#dc2626', f:'#fee2e2'},
+};
+
+async function abrirReporte() {
+  document.getElementById('repCuerpo').innerHTML = 'Cargando…';
+  const p = curProject ? allProjects.find(x => x.id === curProject) : null;
+  document.getElementById('repAmbito').textContent = p
+    ? `Proyecto: ${p.name}` : 'Todos los proyectos que puedes ver';
+  new bootstrap.Modal(document.getElementById('reporteModal')).show();
+  await cargarReporte();
+}
+
+async function cargarReporte() {
+  const caja = document.getElementById('repCuerpo');
+  const params = new URLSearchParams();
+  if (curProject) params.set('project_id', curProject);
+  const acc = document.getElementById('repAccion').value;
+  if (acc) params.set('accion', acc);
+  let r;
+  try { r = await fetch('/planning/api/bitacora?' + params).then(x => x.json()); }
+  catch (e) { r = {success: false, error: 'Sin conexión'}; }
+  if (!r.success) {
+    caja.innerHTML = `<div class="alert alert-danger py-2 mb-0">❌ ${esc(r.error || 'Error')}</div>`;
+    return;
+  }
+  _reporte = r.apuntes || [];
+  if (!_reporte.length) {
+    caja.innerHTML = `<div class="mod-empty"><div class="me-ic">📋</div>
+      <p>Todavía no hay nada apuntado.<br>
+      Aquí se irá guardando qué se hizo con cada actividad, quién lo hizo y,
+      cuando se borra o se mueve una fecha, por qué.</p></div>`;
+    return;
+  }
+  caja.innerHTML = `<table class="task-table"><thead><tr>
+      <th>Cuándo</th><th>Actividad</th><th>Qué pasó</th>
+      <th>Justificación</th><th>Quién</th></tr></thead><tbody>` +
+    _reporte.map(a => {
+      const e = ACC_ETIQUETA[a.accion] || {t: a.accion, c: '#64748b', f: '#f1f5f9'};
+      return `<tr>
+        <td style="white-space:nowrap;font-size:.76rem;color:#64748b">${esc(fmtMomento(a.creado_en))}</td>
+        <td>
+          <strong>${esc(a.titulo || '(sin título)')}</strong>
+          <div style="font-size:.72rem;color:#94a3b8">
+            ${a.proyecto ? '📂 ' + esc(a.proyecto) + ' · ' : ''}👤 ${esc(a.responsable || '—')}
+          </div>
+        </td>
+        <td><span class="sem-chip" style="background:${e.f};color:${e.c}">${esc(e.t)}</span>
+          ${a.accion === 'reprogramado'
+            ? `<div style="font-size:.74rem;color:#475569;margin-top:2px">${esc(a.resumen || '')}</div>` : ''}
+        </td>
+        <td style="font-size:.78rem;max-width:320px">${a.justificacion ? esc(a.justificacion) : '<span class="text-muted">—</span>'}</td>
+        <td style="font-size:.76rem">${esc(a.usuario_nombre || a.usuario_email || '—')}</td>
+      </tr>`;
+    }).join('') + '</tbody></table>';
+}
+
+function fmtMomento(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d)) return String(iso).slice(0, 16).replace('T', ' ');
+  return d.toLocaleString('es', {day:'2-digit', month:'short', year:'2-digit',
+                                 hour:'2-digit', minute:'2-digit'});
+}
+
+// Se exporta lo que se está viendo, no una consulta nueva: lo que se descarga
+// es exactamente lo que hay en pantalla.
+function exportarReporte() {
+  if (!_reporte.length) { showToast('No hay nada que exportar', 'warning'); return; }
+  const cab = ['Cuándo','Actividad','Proyecto','Responsable','Qué pasó','Detalle','Justificación','Quién'];
+  const filas = _reporte.map(a => [
+    fmtMomento(a.creado_en), a.titulo || '', a.proyecto || '', a.responsable || '',
+    (ACC_ETIQUETA[a.accion] || {t: a.accion}).t,
+    a.accion === 'reprogramado' ? (a.resumen || '') : '',
+    a.justificacion || '', a.usuario_nombre || a.usuario_email || '',
+  ]);
+  const csv = [cab, ...filas]
+    .map(f => f.map(c => '"' + String(c).replace(/"/g, '""') + '"').join(';'))
+    .join('\r\n');
+  // Con BOM para que Excel en Windows respete los acentos.
+  const url = URL.createObjectURL(new Blob(['\ufeff' + csv], {type: 'text/csv;charset=utf-8;'}));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'reporte_actividades.csv';
+  a.click();
+  URL.revokeObjectURL(url);
 }
 
 // ——————————————————————————————————————————
