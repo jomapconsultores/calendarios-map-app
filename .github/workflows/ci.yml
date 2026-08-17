@@ -34,3 +34,11 @@ jobs:
       # ninguna señal. Ya pasó una vez con el calendario (commit 97dbb91).
       - name: Check inline JavaScript in templates
         run: python tools/revisar_js_plantillas.py
+
+      # Ni compileall ni el revisor de plantillas ven este fallo: el código es
+      # válido y la página se pinta entera. Simplemente cuenta mal. Dos
+      # consultas pedían `tasks` sin la columna `source`, el filtro de
+      # visibilidad no podía descartar lo que bajó del To-Do, y el panel
+      # anunciaba 52 incumplidas mientras la lista no enseñaba ninguna.
+      - name: Check task visibility queries
+        run: python tools/revisar_visibilidad.py

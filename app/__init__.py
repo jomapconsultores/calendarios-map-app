@@ -1273,6 +1273,33 @@ def _project_allowed(app, task, uid):
         return task.get('id') in grants['task_ids']
     return True
 
+# Columnas de las que depende el filtro de visibilidad. Van SIEMPRE en el
+# select, se pidan o no: `source` decide si la fila es del To-Do viejo, y las
+# otras tres, de quién es. Una consulta que se dejara `source` fuera no fallaría
+# —simplemente vería None— y colaría las 52 filas de Outlook como si fueran
+# compromisos. Es exactamente lo que pasó: el panel contaba 52 incumplidas y la
+# lista no enseñaba ninguna.
+CAMPOS_VISIBILIDAD = ('source', 'created_by', 'assigned_to', 'assigned_email',
+                      'project_id')
+
+
+def leer_tareas(app, uid, filtros=None, campos='*'):
+    """La ÚNICA forma de leer actividades. Consulta y filtra en un solo gesto.
+
+    Existe para que no se pueda pedir la tabla `tasks` olvidándose de las
+    columnas que el filtro necesita: aquí se añaden solas. Antes cada pantalla
+    montaba su propio `select` y su propia llamada al filtro, y bastaba que una
+    recortara la lista de columnas para que contara cosas que no debía."""
+    if campos != '*':
+        pedidas = [c.strip() for c in campos.split(',') if c.strip()]
+        for columna in CAMPOS_VISIBILIDAD:
+            if columna not in pedidas:
+                pedidas.append(columna)
+        campos = ','.join(pedidas)
+    filas = app.supabase.get('tasks', filtros, select=campos) or []
+    return _filter_visible_tasks(app, filas, uid)
+
+
 def _filter_visible_tasks(app, rows, uid):
     """Misma regla de visibilidad usada en GET /planning/api/tasks: admins ven
     todo; el resto, las actividades que ha creado o tiene asignadas, y si la
@@ -1282,7 +1309,11 @@ def _filter_visible_tasks(app, rows, uid):
     filas siguen en la base —borrarlas es una decisión de quien tiene los datos,
     no de un filtro—, pero eran correos marcados y pendientes personales: no
     son compromisos de un plan y no tienen nada que hacer en la planificación,
-    ni en el cronograma, ni en el panel, ni en el correo de incumplimientos."""
+    ni en el cronograma, ni en el panel, ni en el correo de incumplimientos.
+
+    Usa `leer_tareas` en vez de llamar a esto con filas traídas por tu cuenta:
+    si al `select` le falta `source`, este filtro no puede distinguir «no es del
+    To-Do» de «no me trajeron la columna», y deja pasar lo que debía tapar."""
     rows = [t for t in (rows or []) if t.get('source') != 'ms_todo']
     if is_admin():
         return rows
@@ -2789,9 +2820,8 @@ def create_app():
         today_iso = date.today().isoformat()
         in_7d_iso = (date.today() + timedelta(days=7)).isoformat()
         # Tareas: aplica los mismos permisos que /planning/api/tasks (rol activo + proyecto)
-        all_tasks = app.supabase.get('tasks',
-            select='id,status,due_date,priority,created_by,assigned_to,assigned_email,subtasks,project_id') or []
-        all_tasks = _filter_visible_tasks(app, all_tasks, current_user.id)
+        all_tasks = leer_tareas(app, current_user.id,
+            campos='id,status,due_date,priority,subtasks')
         pending_all   = [t for t in all_tasks if t.get('status') != 'done']
         overdue       = [t for t in pending_all if t.get('due_date') and t['due_date'] < today_iso]
         today_tasks   = [t for t in pending_all if t.get('due_date') == today_iso]
@@ -3736,12 +3766,8 @@ def create_app():
     @login_required
     def planning_tasks():
         pid = request.args.get('project_id')
-        if pid:
-            rows = app.supabase.get('tasks', {'project_id': pid}, select='*')
-        else:
-            rows = app.supabase.get('tasks', select='*')
-        rows = _filter_visible_tasks(app, rows or [], current_user.id)
-        return jsonify(rows)
+        return jsonify(leer_tareas(app, current_user.id,
+                                   {'project_id': pid} if pid else None))
 
     # ============================================================
     #  WEB PUSH — endpoints
@@ -3810,8 +3836,15 @@ def create_app():
         today_iso = date.today().isoformat()
         all_users = app.supabase.get('users', select='id,full_name,email,active_role_id') or []
         # Independiente del usuario: se consulta una sola vez fuera del bucle.
-        rows = app.supabase.get('tasks',
-            select='id,due_date,status,created_by,assigned_to,assigned_email,project_id') or []
+        # No puede pasar por `leer_tareas` porque evalúa a CADA usuario, no al
+        # que dispara el cron; pero el descarte de lo que bajó del To-Do tiene
+        # que ser el mismo, así que `source` va en el select y se filtra aquí.
+        # Olvidarlo mandaría a todo el mundo un aviso contando los correos
+        # marcados de Outlook como incumplimientos suyos.
+        rows = [t for t in (app.supabase.get('tasks',
+            select='id,due_date,status,created_by,assigned_to,assigned_email,'
+                   'project_id,source') or [])
+            if t.get('source') != 'ms_todo']
         sent_total = 0
         empty_grants = {'modules': [], 'calendar_ids': set(), 'project_ids': set()}
         for u in all_users:
@@ -4055,9 +4088,8 @@ def create_app():
         if not OPENPYXL_AVAILABLE:
             return jsonify({'error': 'openpyxl no instalado'}), 500
         pid = request.args.get('project_id')
-        tasks = (app.supabase.get('tasks', {'project_id': pid}, select='*')
-                 if pid else app.supabase.get('tasks', select='*'))
-        tasks = _filter_visible_tasks(app, tasks or [], current_user.id)
+        tasks = leer_tareas(app, current_user.id,
+                            {'project_id': pid} if pid else None)
         projects_map = {p['id']: p['name']
                         for p in (app.supabase.get('projects', select='id,name') or [])}
         wb = openpyxl.Workbook()
@@ -4199,7 +4231,7 @@ def create_app():
         '_sanitize':             _sanitize,
         '_sanitize_hex_color':   _sanitize_hex_color,
         '_xlsx_safe':            _xlsx_safe,
-        '_filter_visible_tasks': _filter_visible_tasks,
+        'leer_tareas':           leer_tareas,
         # El puente con ATLAS, para que el Directorio pueda traerse de allá a los
         # representantes, docentes y estudiantes.
         '_atlas':                _atlas,
@@ -4230,10 +4262,8 @@ def create_app():
                  'cronograma': 0, 'directorio': 0, 'usuarios': 0}
         try:
             if user_can('planning'):
-                tareas = _filter_visible_tasks(app, app.supabase.get(
-                    'tasks', select='id,status,due_date,created_by,'
-                                    'assigned_to,assigned_email,project_id') or [],
-                    current_user.id)
+                tareas = leer_tareas(app, current_user.id,
+                                     campos='id,status,due_date')
                 datos['proyectos'] = sum(
                     1 for t in tareas
                     if t.get('status') != 'done' and t.get('due_date') and t['due_date'] < hoy)

@@ -79,7 +79,7 @@ def registrar_cronograma(app, ctx):
     user_can              = ctx['user_can']
     _sanitize             = ctx['_sanitize']
     _sanitize_hex_color   = ctx['_sanitize_hex_color']
-    _filter_visible_tasks = ctx['_filter_visible_tasks']
+    leer_tareas           = ctx['leer_tareas']
     db = lambda: app.supabase
 
     def _sin_acceso():
@@ -407,7 +407,7 @@ def registrar_cronograma(app, ctx):
         if not _plan_visible(plan):
             return jsonify({'success': False, 'error': 'Cronograma no encontrado'}), 404
 
-        tareas = _filter_visible_tasks(app, db().get('tasks', select='*') or [], current_user.id)
+        tareas = leer_tareas(app, current_user.id)
         ya_importadas = {a.get('task_id') for a in
                          (db().get('gantt_activities', {'plan_id': pid}, select='task_id') or [])}
         proyectos = {p['id']: p['name'] for p in (db().get('projects', select='id,name') or [])}
@@ -446,7 +446,7 @@ def registrar_cronograma(app, ctx):
         if not ids_pedidos and not cuerpo.get('todas'):
             return jsonify({'success': False, 'error': 'No se seleccionó ninguna tarea'})
 
-        tareas = _filter_visible_tasks(app, db().get('tasks', select='*') or [], current_user.id)
+        tareas = leer_tareas(app, current_user.id)
         if ids_pedidos:
             tareas = [t for t in tareas if t['id'] in ids_pedidos]
         elif cuerpo.get('ocultar_completadas', True):
@@ -503,9 +503,7 @@ def registrar_cronograma(app, ctx):
                 return jsonify({'success': False, 'error': 'No se pudo crear el cronograma'})
             plan, creado = fila[0], True
 
-        tareas = [t for t in _filter_visible_tasks(
-                      app, db().get('tasks', {'project_id': pid}, select='*') or [],
-                      current_user.id)]
+        tareas = leer_tareas(app, current_user.id, {'project_id': pid})
         traidas = _volcar_tareas(plan['id'], tareas)
         return jsonify({'success': True, 'plan_id': plan['id'], 'creado': creado,
                         'importadas': len(traidas or [])})
