@@ -3698,6 +3698,46 @@ def create_app():
         return jsonify({'success': ok, 'warning': sync_warning})
 
     # ============================================================
+    #  PERSONAS ASIGNABLES
+    #  Quien responde de un proyecto o de una actividad se escribía a mano, y
+    #  a mano se escribe distinto cada vez: «M. Posligua», «marco», el correo
+    #  suelto. Tres formas de nombrar a la MISMA persona son tres responsables
+    #  distintos para el correo de incumplimientos y para cualquier recuento.
+    #  Esta lista es la que alimenta el desplegable de las dos pantallas.
+    #
+    #  Se sigue guardando el NOMBRE como texto, no el id: las fichas viejas ya
+    #  tienen nombres escritos a mano y cambiar la columna a una referencia las
+    #  dejaría a todas sin dueño. El desplegable no impide teclear a alguien de
+    #  fuera —un proveedor, un tercero—; sólo hace que lo normal sea elegir.
+    # ============================================================
+    @app.route('/api/personas', methods=['GET'])
+    @login_required
+    def api_personas():
+        # La lista lleva nombres y correos internos: sólo la ve quien tiene
+        # alguna de las dos pantallas donde se asigna un responsable.
+        if not (user_can('planning') or user_can('cronograma')):
+            return jsonify({'success': False, 'personas': [],
+                            'error': 'Sin acceso'}), 403
+        filas = app.supabase.get('users',
+                    select='id,full_name,email,position,is_active') or []
+        personas = []
+        for u in filas:
+            # `is_active` puede venir en blanco en las filas antiguas: sólo se
+            # descarta a quien está dado de baja EXPRESAMENTE.
+            if u.get('is_active') is False:
+                continue
+            nombre = (u.get('full_name') or '').strip() or (u.get('email') or '').strip()
+            if not nombre:
+                continue
+            personas.append({
+                'nombre': nombre,
+                'email': (u.get('email') or '').strip(),
+                'cargo': (u.get('position') or '').strip(),
+            })
+        personas.sort(key=lambda x: x['nombre'].lower())
+        return jsonify({'success': True, 'personas': personas})
+
+    # ============================================================
     #  PLANNING MODULE
     # ============================================================
     @app.route('/planning')
@@ -3736,9 +3776,24 @@ def create_app():
         d['owner'] = _sanitize(current_user.full_name or current_user.email, 200)
         # Y sin fecha de vencimiento no hay nada que vigilar: es lo que
         # convierte el proyecto en un plazo y no en una lista de deseos.
-        if not d.get('due_date'):
+        #
+        # Salvo que se declare PERMANENTE. Hay trabajo que de verdad no termina
+        # —el mantenimiento del despacho, la atención al cliente, el archivo—, y
+        # obligarle a inventarse un 31 de diciembre sólo conseguía dos cosas: un
+        # rojo el 1 de enero por un incumplimiento que nadie pactó, y una fecha
+        # que se corría cada año. Un proyecto permanente se queda A PROPÓSITO
+        # sin fecha, y entonces el semáforo lo pinta gris «Sin plazo» en vez de
+        # rojo y el correo de incumplimientos no lo reclama.
+        #
+        # La marca no es una columna nueva: permanente ES no tener fecha. Pero
+        # la casilla tiene que venir marcada expresamente, porque un descuido y
+        # una decisión no se pueden guardar igual.
+        if d.pop('permanente', False):
+            d['due_date'] = None
+        elif not d.get('due_date'):
             return jsonify({'success': False,
-                            'error': 'Hace falta la fecha de vencimiento del proyecto.'})
+                            'error': 'Hace falta la fecha de vencimiento del proyecto, '
+                                     'o marcarlo como permanente.'})
         if 'color' in d: d['color'] = _sanitize_hex_color(d.get('color'))
         r = app.supabase.insert('projects', d)
         if r and not is_admin():
@@ -3771,11 +3826,16 @@ def create_app():
         # el proyecto a otra persona.
         if 'owner' in d and not is_admin():
             d.pop('owner')
-        # La fecha de vencimiento se puede mover, pero no borrar: sin ella el
-        # proyecto se saldría del calendario de vencimientos sin que se note.
-        if 'due_date' in d and not d['due_date']:
+        # La fecha de vencimiento se puede mover, y se puede quitar pasando el
+        # proyecto a permanente, pero no se borra sola: sin marcar la casilla,
+        # un vencimiento en blanco es un descuido, y dejarlo pasar sacaría al
+        # proyecto del calendario de vencimientos sin que nadie se entere.
+        if body.get('permanente'):
+            d['due_date'] = None
+        elif 'due_date' in d and not d['due_date']:
             return jsonify({'success': False,
-                            'error': 'El proyecto no puede quedarse sin fecha de vencimiento.'})
+                            'error': 'El proyecto no puede quedarse sin fecha de vencimiento. '
+                                     'Si no termina nunca, márcalo como permanente.'})
         if 'color' in d:
             d['color'] = _sanitize_hex_color(d.get('color'))
         if not d:
@@ -4065,9 +4125,13 @@ def create_app():
                 proy = app.supabase.get('projects', {'id': d['project_id']}, select='due_date')
                 heredada = proy[0].get('due_date') if proy else None
                 if not heredada:
+                    # Proyecto permanente: no hay plazo del que heredar. La
+                    # actividad sí tiene que llevar el suyo —el trabajo de
+                    # fondo no termina, pero cada cosa que se hace dentro sí.
                     return jsonify({'success': False,
                                     'error': 'Indica la fecha de vencimiento de la actividad: '
-                                             'el proyecto tampoco tiene una de la que heredarla.'})
+                                             'el proyecto es permanente y no tiene ninguna '
+                                             'de la que heredarla.'})
                 d['due_date'] = heredada
             if not d.get('start_date'):
                 d['start_date'] = date.today().isoformat()

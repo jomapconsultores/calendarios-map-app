@@ -207,7 +207,8 @@
         <div class="row g-2 mt-1">
           <div class="col-md-6">
             <label class="form-label fw-semibold small">RESPONSABLE</label>
-            <input id="aResponsable" class="form-control form-control-sm">
+            <input id="aResponsable" class="form-control form-control-sm" list="listaPersonas"
+                   autocomplete="off" placeholder="Elige de la lista o escribe un nombre">
           </div>
           <div class="col-md-3">
             <label class="form-label fw-semibold small">INICIO</label>
@@ -376,6 +377,8 @@
 </div>
 
 <div id="toastZone" style="position:fixed;bottom:20px;right:20px;z-index:1100"></div>
+<!-- Personas del sistema, para no escribir a mano a quien ya está dado de alta. -->
+<datalist id="listaPersonas"></datalist>
 {% endblock %}
 
 {% block scripts %}
@@ -436,6 +439,30 @@ function textoSemaforo(s) {
   }
 }
 
+// ——————————————————————————————————————————
+//  PERSONAS
+//  El responsable se elige de la lista de personas dadas de alta en vez de
+//  teclearlo. Se admite texto libre —hay responsables sin usuario—, pero lo
+//  normal es elegir: el mismo nombre escrito de tres formas distintas son tres
+//  responsables distintos para el correo de incumplimientos.
+// ——————————————————————————————————————————
+const YO = {{ (current_user.full_name or current_user.email)|tojson }};
+
+async function cargarPersonas() {
+  let personas = [];
+  try {
+    const r = await fetch('/api/personas');
+    const j = await r.json();
+    personas = (j && j.personas) || [];
+  } catch (e) {
+    return;   // sin listado se sigue escribiendo el nombre a mano
+  }
+  const lista = document.getElementById('listaPersonas');
+  if (!lista) return;
+  lista.innerHTML = personas.map(p =>
+    `<option value="${esc(p.nombre)}">${esc(p.cargo || p.email || '')}</option>`).join('');
+}
+
 document.addEventListener('DOMContentLoaded', () => {
   modalActividad = new bootstrap.Modal(document.getElementById('modalActividad'));
   modalIa        = new bootstrap.Modal(document.getElementById('modalIa'));
@@ -447,6 +474,8 @@ document.addEventListener('DOMContentLoaded', () => {
     boton.style.opacity = .5;
     boton.title = 'IA no disponible: ' + (IA.motivo || '');
   }
+
+  cargarPersonas();
 
   // Qué proyecto abrir: el que venga por la URL (/cronograma?proyecto=<id>,
   // que es lo que pone el botón «Ver en Gantt» de Planificación) o el primero.
@@ -834,7 +863,9 @@ function abrirActividad(id) {
   document.getElementById('aId').value = id || '';
   document.getElementById('aNombre').value = a ? a.name : '';
   document.getElementById('aDescripcion').value = (a && a.description) || '';
-  document.getElementById('aResponsable').value = (a && a.responsible) || '';
+  // Una actividad nueva nace a nombre de quien la crea; se puede cambiar por
+  // cualquiera de la lista, pero no se guarda sin dueño.
+  document.getElementById('aResponsable').value = a ? (a.responsible || '') : YO;
   document.getElementById('aInicio').value = (a && a.start_date) || '';
   document.getElementById('aFin').value = (a && a.end_date) || '';
   document.getElementById('aAvance').value = (a && a.progress_pct) || 0;

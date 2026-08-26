@@ -294,7 +294,10 @@ input[type=range].prog-range{accent-color:#4f46e5;width:100%}
             <div class="row mb-3">
               <div class="col-md-6">
                 <label class="form-label fw-semibold">RESPONSABLE</label>
-                <input id="mAssigned" class="form-control" placeholder="Quién responde de esto">
+                <input id="mAssigned" class="form-control" list="listaPersonas"
+                       autocomplete="off" placeholder="Elige de la lista o escribe un nombre"
+                       oninput="autocompletarCorreo()">
+                <div class="form-text">Despliega para ver a las personas del sistema.</div>
               </div>
               <div class="col-md-6">
                 <label class="form-label fw-semibold">CORREO DEL RESPONSABLE</label>
@@ -438,7 +441,16 @@ input[type=range].prog-range{accent-color:#4f46e5;width:100%}
               <input id="mProjDue" type="date" class="form-control" required>
             </div>
           </div>
-          <div class="small text-muted mt-2">
+          {# Hay trabajo que no termina —mantenimiento, atención al cliente,
+             archivo—. Obligarle a una fecha sólo producía un rojo el día
+             siguiente por un plazo que nadie pactó. #}
+          <div class="form-check mt-2">
+            <input class="form-check-input" type="checkbox" id="mProjPerm" onchange="onProjPermChange()">
+            <label class="form-check-label fw-semibold" for="mProjPerm">
+              ♾️ Proyecto permanente <span class="text-muted fw-normal">— no termina, así que no lleva fecha de vencimiento</span>
+            </label>
+          </div>
+          <div class="small text-muted mt-2" id="mProjDueHint">
             Pasada esta fecha sin cerrar el proyecto, el semáforo se pone en
             <strong>rojo</strong> y sale un correo de incumplimiento. Las
             actividades que crees dentro heredan este plazo si no les pones uno propio.
@@ -450,7 +462,8 @@ input[type=range].prog-range{accent-color:#4f46e5;width:100%}
         </div>
         <div class="mb-3">
           <label class="form-label fw-semibold">RESPONSABLE</label>
-          <input id="mProjOwner" class="form-control" readonly style="background:#f8fafc;color:#334155">
+          <input id="mProjOwner" class="form-control" list="listaPersonas" autocomplete="off"
+                 readonly style="background:#f8fafc;color:#334155">
           <div class="form-text" id="mProjOwnerHint">El proyecto queda a nombre de quien lo crea.</div>
         </div>
       </div>
@@ -464,6 +477,9 @@ input[type=range].prog-range{accent-color:#4f46e5;width:100%}
     </div>
   </div>
 </div>
+
+<!-- Personas del sistema, para no escribir a mano a quien ya está dado de alta. -->
+<datalist id="listaPersonas"></datalist>
 
 <!-- ========= JUSTIFICACIÓN =========
      Una sola ventana para las dos cosas que no se pueden hacer en silencio:
@@ -655,6 +671,42 @@ function chipSemaforo(s) {
 }
 
 // ——————————————————————————————————————————
+//  PERSONAS
+//  El responsable se elige de la lista de personas dadas de alta en vez de
+//  teclearlo. Se sigue admitiendo texto libre —hay responsables que no tienen
+//  usuario—, pero lo normal es elegir, y así el mismo nombre se escribe
+//  siempre igual: si no, el correo de incumplimientos reparte una misma
+//  actividad entre tres «personas» que son la misma.
+// ——————————————————————————————————————————
+let PERSONAS = [];
+
+async function cargarPersonas() {
+  try {
+    const r = await fetch('/api/personas');
+    const j = await r.json();
+    PERSONAS = (j && j.personas) || [];
+  } catch (e) {
+    // Sin listado se sigue pudiendo escribir el nombre a mano: es un apoyo,
+    // no un requisito para guardar.
+    PERSONAS = [];
+    return;
+  }
+  const lista = document.getElementById('listaPersonas');
+  if (!lista) return;
+  lista.innerHTML = PERSONAS.map(p =>
+    `<option value="${esc(p.nombre)}">${esc(p.cargo || p.email || '')}</option>`).join('');
+}
+
+// Al elegir a alguien de la lista, su correo va detrás: es el que recibe el
+// aviso de vencimiento, y dejarlo en blanco o con el del anterior responsable
+// es mandar el reclamo a quien no toca.
+function autocompletarCorreo() {
+  const nombre = (document.getElementById('mAssigned').value || '').trim().toLowerCase();
+  const persona = PERSONAS.find(p => p.nombre.toLowerCase() === nombre);
+  if (persona && persona.email) document.getElementById('mEmail').value = persona.email;
+}
+
+// ——————————————————————————————————————————
 //  ARRANQUE
 // ——————————————————————————————————————————
 document.addEventListener('DOMContentLoaded', () => {
@@ -663,6 +715,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // El menú lateral enlaza por color: /planning?tf=overdue son las rojas.
   const porUrl = {overdue:'rojo', week:'ambar', today:'ambar'};
   if (tf && porUrl[tf]) curSem = porUrl[tf];
+  cargarPersonas();
   loadData();
 
   // Refresco silencioso cada 60 s, sólo si la pestaña está visible Y hubo
@@ -892,7 +945,9 @@ function renderProjHead() {
       </div>
       <div class="ph-meta">
         <span title="Responsable del proyecto">👤 <strong>${esc(p.owner || '—')}</strong></span>
-        <span title="Fecha de vencimiento">📅 Vence el <strong>${p.due_date ? fmtDate(p.due_date) : '—'}</strong></span>
+        ${p.due_date
+          ? `<span title="Fecha de vencimiento">📅 Vence el <strong>${fmtDate(p.due_date)}</strong></span>`
+          : `<span title="Proyecto permanente: no tiene fecha de vencimiento">♾️ <strong>Permanente</strong></span>`}
         ${chipSemaforo(s)}
       </div>
     </div>
@@ -1149,7 +1204,8 @@ function renderList() {
       // La cabecera dice de quién es el proyecto y para cuándo: sin eso la
       // vista general no contaba lo único que hay que saber sin abrirlo.
       const extra = p ? `<span style="font-weight:500;font-size:.78rem;opacity:.92;margin-left:8px">👤 ${esc(p.owner || '—')}</span>` +
-        (p.due_date ? `<span class="badge bg-light text-dark ms-1" style="font-size:.7rem">📅 ${fmtDate(p.due_date)}</span>` : '') : '';
+        `<span class="badge bg-light text-dark ms-1" style="font-size:.7rem">${
+          p.due_date ? '📅 ' + fmtDate(p.due_date) : '♾️ Permanente'}</span>` : '';
       return `<tr class="group-header" style="background:linear-gradient(to right,${e.color},${e.color}bb);color:#fff;cursor:pointer" onclick="toggleGroup('${safeId}')">
         <td colspan="7" style="padding:10px 14px;font-weight:700;font-size:.92rem">
           <span style="display:inline-block;width:20px">${caret}</span>
@@ -1687,6 +1743,11 @@ function openProjectModal(id) {
   document.getElementById('mProjColor').value = p ? (p.color||'#4f46e5') : '#4f46e5';
   document.getElementById('mProjStart').value = p ? (p.start_date||'') : todayStr();
   document.getElementById('mProjDue').value   = p ? (p.due_date||'') : '';
+  // Permanente ES no tener fecha: un proyecto ya guardado sin vencimiento se
+  // abre con la casilla marcada, no en blanco pidiendo una fecha que decidió
+  // no tener.
+  document.getElementById('mProjPerm').checked = !!(p && !p.due_date);
+  onProjPermChange();
   document.getElementById('mProjDesc').value  = p ? (p.description||'') : '';
   // El responsable no se teclea: es quien crea el proyecto. Sólo un
   // administrador puede pasárselo a otra persona.
@@ -1703,6 +1764,22 @@ function openProjectModal(id) {
   document.getElementById('btnDeleteProj').style.display = p ? '' : 'none';
   abrirModal('projectModal');
 }
+// La casilla y el campo de fecha no pueden decir cosas distintas: mientras el
+// proyecto sea permanente, la fecha se apaga y se vacía.
+function onProjPermChange() {
+  const perm  = document.getElementById('mProjPerm').checked;
+  const campo = document.getElementById('mProjDue');
+  campo.disabled = perm;
+  campo.required = !perm;
+  if (perm) campo.value = '';
+  document.getElementById('mProjDueHint').innerHTML = perm
+    ? 'Este proyecto no vence: el semáforo lo deja en <strong>gris</strong> y no entra en el '
+      + 'correo de incumplimientos. Sus actividades sí llevan cada una su plazo, y no heredan ninguno.'
+    : 'Pasada esta fecha sin cerrar el proyecto, el semáforo se pone en '
+      + '<strong>rojo</strong> y sale un correo de incumplimiento. Las '
+      + 'actividades que crees dentro heredan este plazo si no les pones uno propio.';
+}
+
 document.getElementById('mProjColor').addEventListener('input', e => {
   document.getElementById('projColorPreview').style.background = e.target.value;
 });
@@ -1710,14 +1787,15 @@ document.getElementById('mProjColor').addEventListener('input', e => {
 async function saveProject() {
   const name = document.getElementById('mProjName').value.trim();
   if (!name) { showToast('❌ El nombre es obligatorio', 'danger'); return; }
-  const due = document.getElementById('mProjDue').value;
-  if (!due) {
-    showToast('❌ Pon la fecha de vencimiento: sin plazo no hay semáforo que encender', 'danger');
+  const permanente = document.getElementById('mProjPerm').checked;
+  const due = permanente ? '' : document.getElementById('mProjDue').value;
+  if (!permanente && !due) {
+    showToast('❌ Pon la fecha de vencimiento, o marca el proyecto como permanente', 'danger');
     document.getElementById('mProjDue').focus();
     return;
   }
   const inicio = document.getElementById('mProjStart').value;
-  if (inicio && inicio > due) {
+  if (due && inicio && inicio > due) {
     showToast('❌ El proyecto no puede vencer antes de empezar', 'danger');
     return;
   }
@@ -1726,7 +1804,8 @@ async function saveProject() {
     status: document.getElementById('mProjStatus').value,
     color: document.getElementById('mProjColor').value,
     start_date: inicio || null,
-    due_date: due,
+    due_date: due || null,
+    permanente,
     description: document.getElementById('mProjDesc').value.trim(),
   };
   // El responsable sólo viaja cuando de verdad se puede cambiar; al crear lo
