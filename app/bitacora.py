@@ -28,11 +28,17 @@ from . import semaforo as _semaforo
 
 TABLA = 'actividad_bitacora'
 
-# Longitud mínima de una justificación. Doce caracteres no garantizan una buena
+# Longitud mínima de una justificación. Ocho caracteres no garantizan una buena
 # razón, pero descartan «ok», «ya», «.» y el resto de formas de saltarse el
 # trámite sin escribir nada. Quien tenga una razón de verdad no se entera de
 # este límite.
-MINIMO_JUSTIFICACION = 12
+#
+# Bajado de doce a ocho: el motivo más frecuente y más legítimo para borrar es
+# que la actividad está repetida, y «duplicado» son nueve caracteres. Obligar a
+# rellenar hasta doce hacía que se escribiera «duplicado 123», que es peor
+# constancia que «duplicado» a secas —enseña que el mínimo se cubre con
+# relleno—. El número vive SÓLO aquí: las pantallas lo reciben del servidor.
+MINIMO_JUSTIFICACION = 8
 
 # Las fechas cuyo movimiento hay que justificar, y cómo se llaman por escrito.
 FECHAS_VIGILADAS = {

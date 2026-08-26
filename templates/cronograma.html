@@ -263,7 +263,7 @@
         <button class="btn btn-outline-danger btn-sm rounded-pill me-auto" id="btnBorrarActividad"
                 style="display:none" onclick="borrarActividad()">🗑 Eliminar</button>
         <button class="btn btn-secondary btn-sm rounded-pill" data-bs-dismiss="modal">Cancelar</button>
-        <button class="btn btn-primary btn-sm rounded-pill" onclick="guardarActividad()">💾 Guardar</button>
+        <button class="btn btn-primary btn-sm rounded-pill" id="btnGuardarAct" onclick="guardarActividad()">💾 Guardar</button>
       </div>
     </div>
   </div>
@@ -385,6 +385,7 @@ const IA = {{ ia|tojson }};
 let proyectos = [], proyectoActivo = null, planActivo = null, actividades = [], propuestas = [];
 let analisisIa = {};   // resumen, riesgos y ruta crítica de la última propuesta
 let modalActividad, modalIa, modalJusti;
+let _guardandoAct = false;   // un guardado en curso bloquea el siguiente
 
 const ESTADOS = {pending:'Pendiente', in_progress:'En progreso', review:'En revisión',
                  done:'Completada', blocked:'Bloqueada'};
@@ -879,7 +880,8 @@ function recalcularDias() {
 // ——————————————————————————————————————————
 //  JUSTIFICACIÓN
 // ——————————————————————————————————————————
-const MIN_JUSTIFICACION = 12;
+// Lo fija el servidor (app/bitacora.py), que es quien rechaza el cambio.
+const MIN_JUSTIFICACION = {{ minimo_justificacion|default(8, true) }};
 let _justiResolver = null;
 
 function pedirJustificacion(titulo, detalle) {
@@ -958,13 +960,36 @@ async function guardarActividad() {
     }
   }
 
-  const r = await pedir(id ? `/cronograma/api/actividades/${id}`
-                           : `/cronograma/api/planes/${planActivo.id}/actividades`,
-    {method: id ? 'PATCH' : 'POST', body: JSON.stringify(cuerpo)});
-  if (!r.success) { aviso(r.error || 'No se pudo guardar', 'danger'); return; }
-  modalActividad.hide();
-  aviso(id ? 'Actividad actualizada' : 'Actividad creada');
-  await abrirProyecto(proyectoActivo);
+  // Igual que en Planificación: mientras un guardado está en curso no se
+  // admite otro, y la ventana se cierra en cuanto el servidor confirma. Dos
+  // guardados de la misma barra nueva son dos barras.
+  if (_guardandoAct) return;
+  _guardandoAct = true;
+  const btn = document.getElementById('btnGuardarAct');
+  const btnHtml = btn ? btn.innerHTML : '';
+  if (btn) { btn.disabled = true; btn.innerHTML = '⏳ Guardando...'; }
+
+  try {
+    const r = await pedir(id ? `/cronograma/api/actividades/${id}`
+                             : `/cronograma/api/planes/${planActivo.id}/actividades`,
+      {method: id ? 'PATCH' : 'POST', body: JSON.stringify(cuerpo)});
+    if (!r.success) { aviso(r.error || 'No se pudo guardar', 'danger'); return; }
+    // Si ya existe, que un segundo intento la corrija en vez de crear otra.
+    if (!id && r.actividad && r.actividad.id) {
+      document.getElementById('aId').value = r.actividad.id;
+    }
+    modalActividad.hide();
+    aviso(id ? 'Actividad actualizada' : 'Actividad creada');
+    await abrirProyecto(proyectoActivo);
+  } catch (e) {
+    console.error('[guardarActividad]', e);
+    modalActividad.hide();
+    await abrirProyecto(proyectoActivo);
+    aviso('Se perdió la respuesta del servidor. Comprueba en el cronograma si la actividad quedó guardada antes de repetirla.', 'warning');
+  } finally {
+    _guardandoAct = false;
+    if (btn) { btn.disabled = false; btn.innerHTML = btnHtml; }
+  }
 }
 
 async function borrarActividad() {

@@ -19,6 +19,7 @@ from googleapiclient.discovery import build
 from datetime import datetime, timedelta, timezone, date
 from collections import defaultdict, OrderedDict
 import os, requests as req_lib, traceback, pytz, json, re, time, calendar as _cal, io, threading, tempfile, secrets
+import unicodedata as _unicodedata
 from urllib.parse import quote as _url_quote, urlparse as _urlparse
 
 # Web push (opcional: si la librería no está disponible la app sigue funcionando)
@@ -1284,6 +1285,64 @@ CAMPOS_VISIBILIDAD = ('source', 'created_by', 'assigned_to', 'assigned_email',
                       'project_id')
 
 
+# ============================================================
+#  ACTIVIDADES REPETIDAS
+#
+#  La misma actividad dos veces no es más trabajo: es el mismo compromiso
+#  contado dos veces. Y hace daño en las dos direcciones —el panel dice que hay
+#  más pendiente del que hay, y cerrar una copia deja la otra incumpliéndose
+#  sola—, así que no basta con que se vea feo en la lista.
+#
+#  Pasó de verdad: una carga de 42 actividades se repitió entera y la
+#  planificación acabó con 84. El camino era la ventana de guardar, que se
+#  quedaba abierta con la actividad ya creada e invitaba a darle otra vez; eso
+#  está arreglado en la pantalla, pero la regla tiene que vivir AQUÍ. Una
+#  pantalla arreglada no impide que la siguiente —o una importación, o una
+#  llamada directa a la API— vuelva a meter lo mismo.
+#
+#  Qué se considera repetido: mismo título y mismo proyecto. El título se
+#  compara sin tildes, sin mayúsculas y sin espacios de sobra, porque «Propuesta
+#  ARCSA» y «propuesta arcsa» son la misma promesa escrita de dos maneras.
+#
+#  Qué NO se considera repetido: que exista una actividad igual pero ya CERRADA.
+#  Eso es trabajo que se repite cada mes —«declaraciones de clientes»— y
+#  prohibirlo obligaría a inventar títulos para poder seguir trabajando.
+# ============================================================
+ESTADOS_CERRADOS = ('done', 'completed', 'cancelled')
+
+
+def clave_actividad(titulo, project_id):
+    """La identidad de una actividad a efectos de repetición."""
+    t = _unicodedata.normalize('NFKD', str(titulo or ''))
+    t = ''.join(c for c in t if not _unicodedata.combining(c))
+    return (' '.join(t.lower().split()), project_id or None)
+
+
+def actividades_abiertas(app, uid):
+    """Las claves de lo que ya está pendiente y esta persona puede ver.
+
+    Se mira sólo lo que ve su rol activo: declarar repetida una actividad
+    contra otra que no puede abrir sería decirle «ya existe» sin poder
+    enseñársela, y no tendría forma de arreglarlo.
+    """
+    vistas = {}
+    for t in leer_tareas(app, uid, None, 'id,title,project_id,status'):
+        if (t.get('status') or '') in ESTADOS_CERRADOS:
+            continue
+        vistas.setdefault(clave_actividad(t.get('title'), t.get('project_id')), t)
+    return vistas
+
+
+def aviso_repetida(app, existente, project_id):
+    """El mensaje que se le da a quien intenta crear algo que ya está."""
+    donde = nombre_de_proyecto(app, project_id) if project_id else None
+    return ('Esa actividad ya está en la planificación'
+            + (f' del proyecto «{donde}»' if donde else '')
+            + ': «' + str(existente.get('title') or '') + '». '
+            'Si de verdad hace falta otra distinta, dale un título que las '
+            'separe; si querías cambiar la que hay, ábrela y edítala.')
+
+
 def nombre_de_proyecto(app, pid):
     """Para que el apunte de la bitácora diga de qué proyecto era, aunque el
     proyecto se borre después."""
@@ -1619,6 +1678,11 @@ def create_app():
                 'face_login_enabled': True,
                 'browser_sync_visible': browser_sync_allowed(),
                 'semaforo_json': _SEMAFORO_JSON,
+                # Cuánto hay que escribir para justificar un borrado o el
+                # movimiento de un plazo. Lo decide app/bitacora.py, que es
+                # quien rechaza el cambio; las pantallas lo reciben en vez de
+                # llevarlo escrito, que es como acabaron discrepando.
+                'minimo_justificacion': _bitacora.MINIMO_JUSTIFICACION,
                 # Admin EFECTIVO según el rol activo (no el flag fijo del sistema),
                 # para que la interfaz se limite/habilite al alternar de rol.
                 'is_effective_admin': is_admin()}
@@ -3973,6 +4037,14 @@ def create_app():
         d['created_by'] = current_user.id
         d['title'] = _sanitize(d.get('title', ''), 300)
         if not d['title']: return jsonify({'success': False, 'error': 'Título requerido'})
+        # Lo mismo dos veces no se guarda dos veces. Es la última barrera: la
+        # pantalla ya evita el doble envío, pero esto vale también para la
+        # importación y para cualquier llamada directa a la API.
+        ya = actividades_abiertas(app, current_user.id).get(
+            clave_actividad(d['title'], d.get('project_id')))
+        if ya:
+            return jsonify({'success': False, 'repetida': True, 'id_existente': ya.get('id'),
+                            'error': aviso_repetida(app, ya, d.get('project_id'))})
         d.setdefault('status', 'pending')
         d.setdefault('priority', 'medium')
         d.setdefault('phase', 'General')
@@ -4313,7 +4385,11 @@ def create_app():
             # asignar tareas a un proyecto fuera de su rol con solo adivinar el nombre.
             proj_by_name = {p['name'].lower(): p['id']
                             for p in get_user_projects(app, current_user.id)}
-            imported = 0; errors = 0
+            # Lo que ya está pendiente, leído UNA vez. Reimportar el mismo
+            # archivo es lo más fácil del mundo —el aviso de que iba en marcha
+            # se desvanecía solo— y así la segunda pasada no mete nada.
+            vistas = actividades_abiertas(app, current_user.id)
+            imported = 0; errors = 0; repetidas = 0
             for row in ws.iter_rows(min_row=2, values_only=True):
                 if all(v is None or str(v).strip() == '' for v in row): continue
                 rd = dict(zip(headers, row))
@@ -4337,6 +4413,14 @@ def create_app():
                     pname = str(rd.get('_project_name', '') or '').strip().lower()
                     if pname and pname in proj_by_name:
                         td['project_id'] = proj_by_name[pname]
+                    # Repetida —ya en la base, o dos veces dentro del mismo
+                    # archivo— se salta y se cuenta aparte. No es un error del
+                    # archivo: es trabajo que ya estaba apuntado.
+                    clave = clave_actividad(title, td.get('project_id'))
+                    if clave in vistas:
+                        repetidas += 1
+                        continue
+                    vistas[clave] = td
                     # Parse dates
                     for fld in ('start_date', 'due_date'):
                         val = rd.get(fld)
@@ -4354,7 +4438,8 @@ def create_app():
                     app.supabase.insert('tasks', td)
                     imported += 1
                 except Exception: errors += 1
-            return jsonify({'success': True, 'imported': imported, 'errors': errors})
+            return jsonify({'success': True, 'imported': imported,
+                            'errors': errors, 'repetidas': repetidas})
         except Exception as e:
             return jsonify({'success': False, 'error': str(e)})
 

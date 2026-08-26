@@ -385,7 +385,7 @@ input[type=range].prog-range{accent-color:#4f46e5;width:100%}
         <button class="btn btn-outline-danger btn-sm" id="btnDeleteTask" onclick="deleteTask()" style="display:none">🗑 Eliminar</button>
         <div class="d-flex gap-2">
           <button class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
-          <button class="btn btn-primary" onclick="saveTask()">💾 Guardar actividad</button>
+          <button class="btn btn-primary" id="btnSaveTask" onclick="saveTask()">💾 Guardar actividad</button>
         </div>
       </div>
     </div>
@@ -458,7 +458,7 @@ input[type=range].prog-range{accent-color:#4f46e5;width:100%}
         <button class="btn btn-outline-danger btn-sm" id="btnDeleteProj" onclick="deleteProject()" style="display:none">🗑 Eliminar</button>
         <div class="d-flex gap-2">
           <button class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
-          <button class="btn btn-primary" onclick="saveProject()">💾 Guardar</button>
+          <button class="btn btn-primary" id="btnSaveProject" onclick="saveProject()">💾 Guardar</button>
         </div>
       </div>
     </div>
@@ -560,6 +560,7 @@ input[type=range].prog-range{accent-color:#4f46e5;width:100%}
 // ——————————————————————————————————————————
 let allTasks = [], allProjects = [], curProject = null;
 let editingTaskId = null, editingProjectId = null;
+let _guardandoTarea = false, _guardandoProyecto = false, _importando = false;
 const today = new Date(); today.setHours(0,0,0,0);
 
 const IS_ADMIN = {{ 'true' if is_admin_user else 'false' }};
@@ -584,6 +585,26 @@ const STATUS_LABELS = {
 };
 const PRIO_LABELS = { low:'Baja', medium:'Media', high:'Alta', urgent:'Urgente' };
 const PRIO_ORDER  = { urgent:0, high:1, medium:2, low:3 };
+
+// ——————————————————————————————————————————
+//  VENTANAS EMERGENTES
+//  Una sola instancia por ventana, y el cierre nunca lanza. Antes cada
+//  apertura hacía `new bootstrap.Modal(...)`: quedaban instancias sueltas
+//  sobre el mismo elemento, con sus fondos grises apilados, y el cierre
+//  dependía de `getInstance()`, que devuelve null si la instancia se perdió
+//  —y entonces la línea reventaba y la ventana se quedaba abierta con la
+//  actividad YA guardada, que es como se acaban duplicando las tareas.
+// ——————————————————————————————————————————
+function abrirModal(id) {
+  bootstrap.Modal.getOrCreateInstance(document.getElementById(id)).show();
+}
+
+function cerrarModal(id) {
+  try {
+    const el = document.getElementById(id);
+    if (el) bootstrap.Modal.getOrCreateInstance(el).hide();
+  } catch (e) { console.error('[cerrarModal] ' + id, e); }
+}
 
 // ——————————————————————————————————————————
 //  SEMÁFORO — misma regla que el servidor
@@ -664,16 +685,34 @@ document.addEventListener('DOMContentLoaded', () => {
 // ——————————————————————————————————————————
 //  DATOS
 // ——————————————————————————————————————————
+// «No se pudo leer» y «no hay nada» son cosas distintas y hay que decirlas
+// distintas. Antes cualquier fallo de lectura acababa en una lista vacía con el
+// texto «Agrega la primera»: la pantalla afirmaba que no había ni un
+// compromiso, y el semáforo ponía cero en incumplidas, justo cuando lo que
+// pasaba es que no se había podido mirar. Eso es peor que un error, porque no
+// se nota — es el mismo fallo que ya costó un panel con 52 incumplidas que la
+// lista no enseñaba.
+let lecturaFallida = false;
+
 async function loadData(silent) {
   try {
     const [proj, tasks] = await Promise.all([
       fetch('/planning/api/projects').then(r => r.json()),
       fetch('/planning/api/tasks').then(r => r.json()),
     ]);
-    allProjects = Array.isArray(proj) ? proj : [];
-    allTasks    = Array.isArray(tasks) ? tasks : [];
+    // Que la respuesta no sea una lista es un fallo, no una lista vacía: la
+    // API devuelve {success:false, error:...} cuando algo va mal, y darlo por
+    // «cero actividades» era tragarse el aviso.
+    if (!Array.isArray(proj) || !Array.isArray(tasks)) throw new Error('respuesta inesperada del servidor');
+    allProjects = proj;
+    allTasks    = tasks;
+    lecturaFallida = false;
   } catch(e) {
-    if (!silent) { allProjects = []; allTasks = []; }
+    console.error('[loadData]', e);
+    // Lo que había se conserva: enseñar datos de hace un minuto es mejor que
+    // enseñar una planificación vacía que no existe. Y se avisa.
+    lecturaFallida = true;
+    if (!silent) showToast('⚠️ No se pudieron cargar las actividades. Lo que ves puede estar desactualizado.', 'danger');
   }
   // Si el proyecto recordado ya no existe, se vuelve a "Todos" en vez de
   // enseñar una pestaña vacía.
@@ -764,6 +803,14 @@ function filteredTasks() {
 function renderSemaforo() {
   const el = document.getElementById('semRow');
   if (!el) return;
+  // Si no se pudo leer, el semáforo NO puede enseñar cinco ceros: se leerían
+  // como «no hay nada incumplido», que es exactamente lo contrario de lo que
+  // se sabe. Cuando no se sabe, se dice que no se sabe.
+  if (lecturaFallida && !allTasks.length) {
+    el.innerHTML = `<span class="text-danger" style="font-size:.8rem;font-weight:700">
+      ⚠️ No se pudo consultar el estado de los plazos — no se sabe qué está incumplido.</span>`;
+    return;
+  }
   const base = tareasDelAmbito();
   const cuenta = {};
   SEM_ORDEN.forEach(k => cuenta[k] = 0);
@@ -1056,7 +1103,21 @@ function renderList() {
       hh.outerHTML = '<span id="hashHeader">#</span>';
     }
   }
-  if (!tasks.length) { tbody.innerHTML=''; empty.style.display=''; return; }
+  if (!tasks.length) {
+    tbody.innerHTML = '';
+    // Sin nada que enseñar hay dos motivos posibles y no se pueden confundir:
+    // que de verdad no haya actividades, o que no se hayan podido leer.
+    empty.innerHTML = lecturaFallida
+      ? `<div class="me-ic">⚠️</div>
+         <p><strong>No se pudieron leer las actividades.</strong><br>
+         Esto <strong>no</strong> quiere decir que no haya ninguna.
+         Comprueba la conexión y vuelve a intentarlo.</p>
+         <button class="btn btn-sm btn-outline-primary" onclick="loadData()">🔄 Reintentar</button>`
+      : `<div class="me-ic">📋</div>
+         <p>No hay actividades que mostrar.<br>Agrega la primera con la barra de arriba.</p>`;
+    empty.style.display = '';
+    return;
+  }
   empty.style.display = 'none';
 
   if (grupoActivo()) {
@@ -1187,16 +1248,28 @@ async function quickAdd() {
   const payload = { title, priority: prio, status: 'pending', phase: 'General' };
   if (pid) payload.project_id = pid;
   if (due) payload.due_date = due;   // sin fecha, el servidor hereda la del proyecto
-  const r = await fetch('/planning/api/tasks', {
-    method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)
-  }).then(x => x.json());
-  if (r.success) {
-    allTasks.push(r.task);
-    document.getElementById('qTitle').value = '';
-    renderAll();
-    showToast('✅ Actividad agregada', 'success');
-  } else {
-    showToast('❌ ' + (r.error||'Error al agregar'), 'danger');
+  // El alta rápida se dispara con Enter: sin esto, dos pulsaciones seguidas
+  // son dos actividades iguales.
+  if (_guardandoTarea) return;
+  _guardandoTarea = true;
+  try {
+    const r = await fetch('/planning/api/tasks', {
+      method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)
+    }).then(x => x.json());
+    if (r.success) {
+      allTasks.push(r.task);
+      document.getElementById('qTitle').value = '';
+      renderAll();
+      showToast('✅ Actividad agregada', 'success');
+    } else {
+      showToast('❌ ' + (r.error||'Error al agregar'), 'danger');
+    }
+  } catch (e) {
+    console.error('[quickAdd]', e);
+    await loadData();
+    showToast('⚠️ Se perdió la respuesta del servidor. Mira la lista antes de repetirla.', 'warning');
+  } finally {
+    _guardandoTarea = false;
   }
 }
 
@@ -1373,7 +1446,7 @@ function openTask(id) {
   loadDeps(id);
   document.getElementById('depSearch').value = '';
   document.getElementById('depSearchResults').innerHTML = '';
-  new bootstrap.Modal(document.getElementById('taskModal')).show();
+  abrirModal('taskModal');
 }
 
 function openNewTask() { editingTaskId = null; openTask(null); }
@@ -1493,24 +1566,62 @@ async function saveTask() {
     }
   }
 
-  let r;
-  if (editingTaskId) {
-    r = await fetch(`/planning/api/tasks/${editingTaskId}`,
-      { method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) }
-    ).then(x => x.json());
-  } else {
-    r = await fetch('/planning/api/tasks',
-      { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) }
-    ).then(x => x.json());
-  }
-  if (r.success) {
-    const tidToSave = editingTaskId || (r.task && r.task.id);
-    if (tidToSave) await saveDeps(tidToSave);
-    bootstrap.Modal.getInstance(document.getElementById('taskModal')).hide();
+  // A partir de aquí se escribe en el servidor. Dos guardados seguidos de la
+  // misma actividad nueva son dos actividades: mientras uno está en curso no
+  // se admite otro.
+  if (_guardandoTarea) return;
+  _guardandoTarea = true;
+  const btn = document.getElementById('btnSaveTask');
+  const btnHtml = btn ? btn.innerHTML : '';
+  if (btn) { btn.disabled = true; btn.innerHTML = '⏳ Guardando...'; }
+  const eraNueva = !editingTaskId;
+
+  try {
+    let r;
+    if (editingTaskId) {
+      r = await fetch(`/planning/api/tasks/${editingTaskId}`,
+        { method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) }
+      ).then(x => x.json());
+    } else {
+      r = await fetch('/planning/api/tasks',
+        { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) }
+      ).then(x => x.json());
+    }
+    if (!r.success) {
+      showToast('❌ ' + (r.error||'Error al guardar'), 'danger');
+      // Si lo que hay es la misma actividad ya apuntada, se abre esa: decir
+      // «ya existe» sin llevar hasta ella deja al usuario buscándola a mano
+      // por una lista de doscientas.
+      if (r.repetida && r.id_existente) {
+        await loadData();
+        openTask(r.id_existente);
+      }
+      return;
+    }
+    // La actividad ya existe. Se apunta su id ANTES de nada más: si algo
+    // falla de aquí en adelante y el usuario vuelve a dar a guardar, que
+    // corrija la que acaba de crear en vez de crear otra igual.
+    if (eraNueva && r.task && r.task.id) {
+      editingTaskId = r.task.id;
+      document.getElementById('mTaskId').value = r.task.id;
+    }
+    // Y la ventana se cierra aquí, no al final: cerrarla era lo último que
+    // pasaba y cualquier tropiezo previo la dejaba abierta encima de una
+    // actividad ya guardada.
+    cerrarModal('taskModal');
+    if (editingTaskId) await saveDeps(editingTaskId);
     await loadData();
-    showToast(editingTaskId ? '✅ Actividad actualizada' : '✅ Actividad creada', 'success');
-  } else {
-    showToast('❌ ' + (r.error||'Error al guardar'), 'danger');
+    showToast(eraNueva ? '✅ Actividad creada' : '✅ Actividad actualizada', 'success');
+  } catch (e) {
+    // Se guardó o no, pero el aviso no puede quedarse en la consola: sin
+    // esto el usuario ve la ventana quieta y repite el guardado.
+    console.error('[saveTask]', e);
+    cerrarModal('taskModal');
+    await loadData();
+    showToast('⚠️ Se perdió la respuesta del servidor. Comprueba en la lista si la actividad quedó guardada antes de repetirla.', 'warning');
+  } finally {
+    _guardandoTarea = false;
+    if (btn) { btn.disabled = false; btn.innerHTML = btnHtml; }
   }
 }
 
@@ -1526,7 +1637,7 @@ async function deleteTask() {
   }).then(x => x.json());
   if (r.success) {
     allTasks = allTasks.filter(t => t.id !== editingTaskId);
-    bootstrap.Modal.getInstance(document.getElementById('taskModal')).hide();
+    cerrarModal('taskModal');
     renderAll();
     showToast('🗑 Actividad eliminada', 'warning');
   } else {
@@ -1590,7 +1701,7 @@ function openProjectModal(id) {
          : 'El proyecto queda a tu nombre por ser quien lo crea.');
   document.getElementById('projColorPreview').style.background = p ? (p.color||'#4f46e5') : '#4f46e5';
   document.getElementById('btnDeleteProj').style.display = p ? '' : 'none';
-  new bootstrap.Modal(document.getElementById('projectModal')).show();
+  abrirModal('projectModal');
 }
 document.getElementById('mProjColor').addEventListener('input', e => {
   document.getElementById('projColorPreview').style.background = e.target.value;
@@ -1622,28 +1733,47 @@ async function saveProject() {
   // pone el servidor con el nombre de quien firma la petición.
   if (IS_ADMIN && editingProjectId) payload.owner = document.getElementById('mProjOwner').value.trim();
 
-  let r;
-  if (editingProjectId) {
-    r = await fetch(`/planning/api/projects/${editingProjectId}`,
-      { method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) }
-    ).then(x => x.json());
-  } else {
-    r = await fetch('/planning/api/projects',
-      { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) }
-    ).then(x => x.json());
-    if (r.success && r.project) {
-      // Recién creado se abre solo: lo siguiente que se hace es meterle
-      // actividades, y así ya se está dentro.
-      curProject = r.project.id;
-      localStorage.setItem('plan_proyecto', curProject);
+  if (_guardandoProyecto) return;
+  _guardandoProyecto = true;
+  const btn = document.getElementById('btnSaveProject');
+  const btnHtml = btn ? btn.innerHTML : '';
+  if (btn) { btn.disabled = true; btn.innerHTML = '⏳ Guardando...'; }
+  const eraNuevo = !editingProjectId;
+
+  try {
+    let r;
+    if (editingProjectId) {
+      r = await fetch(`/planning/api/projects/${editingProjectId}`,
+        { method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) }
+      ).then(x => x.json());
+    } else {
+      r = await fetch('/planning/api/projects',
+        { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) }
+      ).then(x => x.json());
+      if (r.success && r.project) {
+        // Recién creado se abre solo: lo siguiente que se hace es meterle
+        // actividades, y así ya se está dentro. Y queda como el que se está
+        // editando: repetir el guardado lo corrige, no crea otro igual.
+        curProject = r.project.id;
+        localStorage.setItem('plan_proyecto', curProject);
+        editingProjectId = r.project.id;
+      }
     }
-  }
-  if (r.success) {
-    bootstrap.Modal.getInstance(document.getElementById('projectModal')).hide();
+    if (!r.success) {
+      showToast('❌ ' + (r.error || 'Error al guardar el proyecto'), 'danger');
+      return;
+    }
+    cerrarModal('projectModal');
     await loadData();
-    showToast(editingProjectId ? '✅ Proyecto actualizado' : '✅ Proyecto creado', 'success');
-  } else {
-    showToast('❌ ' + (r.error || 'Error al guardar el proyecto'), 'danger');
+    showToast(eraNuevo ? '✅ Proyecto creado' : '✅ Proyecto actualizado', 'success');
+  } catch (e) {
+    console.error('[saveProject]', e);
+    cerrarModal('projectModal');
+    await loadData();
+    showToast('⚠️ Se perdió la respuesta del servidor. Comprueba en la lista si el proyecto quedó guardado antes de repetirlo.', 'warning');
+  } finally {
+    _guardandoProyecto = false;
+    if (btn) { btn.disabled = false; btn.innerHTML = btnHtml; }
   }
 }
 
@@ -1653,7 +1783,7 @@ async function deleteProject() {
   if (r.success) {
     allProjects = allProjects.filter(p => p.id !== editingProjectId);
     if (curProject === editingProjectId) curProject = null;
-    bootstrap.Modal.getInstance(document.getElementById('projectModal')).hide();
+    cerrarModal('projectModal');
     await loadData();
     showToast('🗑 Proyecto eliminado', 'warning');
   } else {
@@ -1667,8 +1797,12 @@ async function deleteProject() {
 //  hacer en silencio. El servidor las rechaza sin motivo escrito; esto es lo
 //  que lo pide, para que el rechazo no llegue como un error seco.
 // ——————————————————————————————————————————
-const MIN_JUSTIFICACION = 12;
+// Cuánto hay que escribir. Lo fija el servidor (app/bitacora.py), que es quien
+// rechaza el cambio: tenerlo escrito también aquí hacía que bajar el mínimo en
+// el servidor no cambiara nada en pantalla, y al revés.
+const MIN_JUSTIFICACION = {{ minimo_justificacion|default(8, true) }};
 let _justiResolver = null;
+let _justiTexto = null;   // el motivo escrito, mientras la ventana termina de cerrarse
 
 function pedirJustificacion(titulo, detalle) {
   return new Promise(resolve => {
@@ -1678,13 +1812,19 @@ function pedirJustificacion(titulo, detalle) {
     const t = document.getElementById('justiTexto');
     t.value = '';
     contarJustificacion();
-    const m = new bootstrap.Modal(document.getElementById('justiModal'));
-    // Cerrar con la X, con Escape o pulsando fuera es cancelar: si no se
-    // resolviera la promesa, la acción se quedaría colgada para siempre.
+    // La promesa se resuelve cuando esta ventana ha TERMINADO de cerrarse, no
+    // al pulsar el botón. Lo que viene después cierra la ventana de la
+    // actividad, y encadenar los dos cierres a la vez deja el fondo gris
+    // puesto sobre una pantalla que ya no se puede tocar.
     document.getElementById('justiModal').addEventListener('hidden.bs.modal', () => {
-      if (_justiResolver) { _justiResolver(null); _justiResolver = null; }
+      const resolver = _justiResolver;
+      _justiResolver = null;
+      // Cerrar con la X, con Escape o pulsando fuera es cancelar: si no se
+      // resolviera la promesa, la acción se quedaría colgada para siempre.
+      if (resolver) resolver(_justiTexto);
+      _justiTexto = null;
     }, {once: true});
-    m.show();
+    abrirModal('justiModal');
     setTimeout(() => t.focus(), 250);
   });
 }
@@ -1702,10 +1842,10 @@ function contarJustificacion() {
 function confirmarJustificacion() {
   const texto = document.getElementById('justiTexto').value.trim();
   if (texto.length < MIN_JUSTIFICACION) return;
-  const resolver = _justiResolver;
-  _justiResolver = null;
-  bootstrap.Modal.getInstance(document.getElementById('justiModal')).hide();
-  if (resolver) resolver(texto);
+  // Se deja escrito el motivo y se cierra: la promesa la resuelve el
+  // 'hidden.bs.modal' de arriba, con este texto, cuando el cierre ha acabado.
+  _justiTexto = texto;
+  cerrarModal('justiModal');
 }
 
 // ——————————————————————————————————————————
@@ -1726,7 +1866,7 @@ async function abrirReporte() {
   const p = curProject ? allProjects.find(x => x.id === curProject) : null;
   document.getElementById('repAmbito').textContent = p
     ? `Proyecto: ${p.name}` : 'Todos los proyectos que puedes ver';
-  new bootstrap.Modal(document.getElementById('reporteModal')).show();
+  abrirModal('reporteModal');
   await cargarReporte();
 }
 
@@ -1826,7 +1966,7 @@ async function abrirAvisosModal() {
   if (!caja) return;
   caja.innerHTML = 'Consultando…';
   res.innerHTML = '';
-  new bootstrap.Modal(document.getElementById('avisosModal')).show();
+  abrirModal('avisosModal');
   let r;
   try { r = await fetch('/planning/api/vencimientos/estado').then(x => x.json()); }
   catch (e) { r = {success: false, error: 'Sin conexión'}; }
@@ -1880,15 +2020,37 @@ async function probarAviso() {
 async function importExcel(input) {
   const file = input.files[0];
   if (!file) return;
-  const fd = new FormData(); fd.append('file', file);
-  showToast('⏳ Importando Excel...', 'warning');
-  const r = await fetch('/planning/api/import-excel', { method:'POST', body: fd }).then(x => x.json());
-  input.value = '';
-  if (r.success) {
-    showToast(`✅ ${r.imported} actividades importadas${r.errors ? ' | '+r.errors+' errores' : ''}`, 'success');
+  // Una importación de cuarenta filas tarda medio minuto y el aviso de que
+  // iba en marcha se desvanecía solo: parecía que no había pasado nada y se
+  // repetía el archivo entero. Ahora se ve que está corriendo y no se admite
+  // otra hasta que termine.
+  if (_importando) { showToast('⏳ Ya hay una importación en marcha, espera a que termine', 'warning'); return; }
+  _importando = true;
+  input.disabled = true;
+  const aviso = showToast('⏳ Importando Excel... no cierres ni recargues la página', 'warning', 0);
+  try {
+    const fd = new FormData(); fd.append('file', file);
+    const r = await fetch('/planning/api/import-excel', { method:'POST', body: fd }).then(x => x.json());
+    if (r.success) {
+      // Lo repetido se dice aparte de lo que falló: no es un error del
+      // archivo, es trabajo que ya estaba apuntado.
+      const partes = [`✅ ${r.imported} actividades importadas`];
+      if (r.repetidas) partes.push(`${r.repetidas} ya estaban y no se repitieron`);
+      if (r.errors)    partes.push(`${r.errors} con errores`);
+      showToast(partes.join(' · '), 'success');
+      await loadData();
+    } else {
+      showToast('❌ ' + (r.error||'Error al importar'), 'danger');
+    }
+  } catch (e) {
+    console.error('[importExcel]', e);
     await loadData();
-  } else {
-    showToast('❌ ' + (r.error||'Error al importar'), 'danger');
+    showToast('⚠️ Se perdió la respuesta del servidor. Mira la lista antes de volver a importar: puede que parte ya esté dentro.', 'warning');
+  } finally {
+    if (aviso) aviso.remove();
+    _importando = false;
+    input.disabled = false;
+    input.value = '';
   }
 }
 
@@ -1910,7 +2072,10 @@ function esc(s) {
   return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
-function showToast(msg, type) {
+// `ms = 0` deja el aviso puesto hasta que quien lo pidió lo quite: lo que
+// tarda medio minuto no puede anunciarse con un mensaje que dura tres segundos.
+// Devuelve el elemento para poder retirarlo.
+function showToast(msg, type, ms) {
   let c = document.getElementById('toastCont');
   if (!c) {
     c = document.createElement('div');
@@ -1924,7 +2089,11 @@ function showToast(msg, type) {
     font-size:.85rem;font-weight:600;box-shadow:0 4px 20px rgba(0,0,0,.25);max-width:360px;`;
   t.textContent = msg;
   c.appendChild(t);
-  setTimeout(() => { t.style.transition='opacity .3s'; t.style.opacity='0'; setTimeout(()=>t.remove(),300); }, 3500);
+  const dura = (ms === undefined) ? 3500 : ms;
+  if (dura > 0) {
+    setTimeout(() => { t.style.transition='opacity .3s'; t.style.opacity='0'; setTimeout(()=>t.remove(),300); }, dura);
+  }
+  return t;
 }
 </script>
 {% endblock %}
