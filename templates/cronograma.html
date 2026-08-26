@@ -13,6 +13,10 @@
 .plan-pill.active{color:#fff;box-shadow:0 4px 12px rgba(79,70,229,.25)}
 .plan-pill .pp-count{background:rgba(0,0,0,.08);border-radius:10px;padding:0 6px;margin-left:5px;font-size:.72rem}
 .plan-pill.active .pp-count{background:rgba(255,255,255,.25)}
+/* Cuántas lleva rotas cada proyecto, en la propia pastilla: el rojo tiene que
+   verse desde fuera o hay que entrar uno por uno para encontrarlo. */
+.plan-pill .pp-rojas{background:#dc2626;color:#fff;border-radius:10px;padding:0 6px;
+  margin-left:4px;font-size:.7rem;font-weight:700}
 
 /* .stats-row y .stat-card viven en static/css/style.css: estaban
    copiados en las tres plantillas y ya habían empezado a divergir. */
@@ -160,6 +164,10 @@
             style="background:#7c3aed;color:#fff;border:0" onclick="abrirPlanificacion()">
       🤖 Planificar con IA
     </button>
+    {# Buscar por nombre o por responsable: con treinta barras en pantalla,
+       encontrar una a ojo es más lento que volver a la lista. #}
+    <input id="buscarAct" class="form-control form-control-sm" style="max-width:240px"
+           placeholder="🔍 Buscar actividad o responsable…" oninput="pintar()">
     <span id="estadoSync" class="small text-muted"></span>
     <div style="flex:1"></div>
     <select id="zoom" class="form-select form-select-sm" style="max-width:150px" onchange="pintarGantt()">
@@ -209,6 +217,7 @@
             <label class="form-label fw-semibold small">RESPONSABLE</label>
             <input id="aResponsable" class="form-control form-control-sm" list="listaPersonas"
                    autocomplete="off" placeholder="Elige de la lista o escribe un nombre">
+            <div class="form-text small" id="aResponsableHint"></div>
           </div>
           <div class="col-md-3">
             <label class="form-label fw-semibold small">INICIO</label>
@@ -454,6 +463,12 @@ async function cargarPersonas() {
     const r = await fetch('/api/personas');
     const j = await r.json();
     personas = (j && j.personas) || [];
+    // El escalafón se dice, no se deja adivinar: una lista corta sin
+    // explicación se lee como un fallo del sistema.
+    const hint = document.getElementById('aResponsableHint');
+    if (hint) hint.textContent = (j && j.manda_sobre_todos)
+      ? 'Todas las personas del sistema.'
+      : 'Sólo puedes asignarte a ti o a quien tengas a cargo.';
   } catch (e) {
     return;   // sin listado se sigue escribiendo el nombre a mano
   }
@@ -528,7 +543,8 @@ function pintarProyectos() {
     <button class="plan-pill ${p.id === proyectoActivo ? 'active' : ''}"
         style="border-color:${esc(p.color)};${p.id === proyectoActivo ? 'background:' + esc(p.color) : 'color:' + esc(p.color)}"
         onclick="abrirProyecto('${p.id}')" title="${esc(p.name)}${p.due_date ? ' — vence ' + p.due_date : ''}">
-      ${esc(p.name)} <span class="pp-count">${p.done || 0}/${p.total || 0}</span>
+      ${esc(p.name)} <span class="pp-count">${p.done || 0}/${p.total || 0}</span>${
+        p.vencidas ? `<span class="pp-rojas" title="${p.vencidas} actividad(es) incumplida(s)">⛔ ${p.vencidas}</span>` : ''}
     </button>`).join('');
 }
 
@@ -636,8 +652,30 @@ function pintarSemaforo(cuenta, total) {
       <span class="sem-dot" style="background:${SEM[k].color}"></span>
       ${esc(SEM[k].etiqueta)} <strong>${cuenta[k]}</strong></button>`;
   }).join('');
-  caja.innerHTML = `<div class="sem-bar">${trozos}</div><div class="sem-leyenda">${leyenda}
+  // «En curso hoy» no es un color del semáforo: es lo que se está haciendo AHORA
+  // —empezó y todavía no termina— y puede estar en verde, en ámbar o en rojo.
+  // Es la otra mitad de la pregunta que se le hace a un cronograma: qué se
+  // incumplió y qué hay entre manos.
+  const enCurso = actividades.filter(esActual).length;
+  const onCurso = filtroSem === 'curso';
+  const botonCurso = `<button class="sem-lg ${onCurso ? 'on' : ''}" onclick="filtrarSemaforo('curso')"
+      style="color:#4f46e5;${onCurso ? 'background:#eef2ff;border-color:#4f46e5' : ''}"
+      title="Ver sólo lo que está en marcha hoy: ya empezó y aún no termina">
+      ▶ En curso hoy <strong>${enCurso}</strong></button>`;
+
+  caja.innerHTML = `<div class="sem-bar">${trozos}</div><div class="sem-leyenda">${leyenda}${botonCurso}
     ${filtroSem ? `<button class="sem-lg" onclick="filtrarSemaforo('')">✕ Quitar filtro</button>` : ''}</div>`;
+}
+
+// ¿Está esto entre manos hoy? Empezó (o vence hoy), no ha terminado y no está
+// cerrada. Lo que no tiene fechas no se puede saber, y no se cuenta.
+function esActual(a) {
+  if ((a.status || '') === 'done') return false;
+  const hoy = hoyIso();
+  const ini = a.start_date || a.end_date;
+  const fin = a.end_date || a.start_date;
+  if (!ini || !fin) return false;
+  return ini <= hoy && hoy <= fin;
 }
 
 let filtroSem = '';
@@ -646,19 +684,33 @@ function filtrarSemaforo(id) {
   pintar();
 }
 
-// Lo que se enseña en la tabla y en las barras, ya filtrado por color.
+// Lo que se enseña en la tabla y en las barras, ya filtrado por color, por «en
+// curso» y por lo que se haya escrito en el buscador. Los tres se aplican en el
+// mismo sitio: si la tabla y el Gantt filtraran cada uno por su cuenta,
+// acabarían enseñando cosas distintas de la misma pregunta.
 function actividadesVisibles() {
-  return filtroSem ? actividades.filter(a => semActividad(a).id === filtroSem) : actividades;
+  let lista = actividades;
+  if (filtroSem === 'curso')      lista = lista.filter(esActual);
+  else if (filtroSem)             lista = lista.filter(a => semActividad(a).id === filtroSem);
+  const q = (document.getElementById('buscarAct')?.value || '').trim().toLowerCase();
+  if (q) lista = lista.filter(a =>
+    (a.name||'').toLowerCase().includes(q) ||
+    (a.responsible||'').toLowerCase().includes(q) ||
+    (a.description||'').toLowerCase().includes(q));
+  return lista;
 }
 
 function pintarTablaActividades() {
   const cuerpo = document.getElementById('actCuerpo');
   const lista = actividadesVisibles();
   if (!lista.length) {
+    const q = (document.getElementById('buscarAct')?.value || '').trim();
     cuerpo.innerHTML = `<tr><td colspan="10" class="text-center text-muted py-4">
-      ${actividades.length
-        ? 'Ninguna actividad está en ese color.'
-        : 'Sin actividades. Agrégalas o tráelas de la planificación.'}</td></tr>`;
+      ${!actividades.length
+        ? 'Sin actividades. Agrégalas o tráelas de la planificación.'
+        : q ? `Ninguna actividad coincide con «${esc(q)}».`
+            : filtroSem === 'curso' ? 'Ahora mismo no hay ninguna actividad en curso.'
+            : 'Ninguna actividad está en ese color.'}</td></tr>`;
     return;
   }
   cuerpo.innerHTML = lista.map((a, i) => {
@@ -1150,6 +1202,11 @@ async function aplicarPropuesta() {
   if (!r.success) { aviso(r.error || 'No se pudo aplicar', 'danger'); return; }
   modalIa.hide();
   aviso(`${r.aplicadas} actividad(es) replanificada(s)` + (r.creadas ? `, ${r.creadas} nueva(s)` : ''));
+  // Si la IA repartió trabajo hacia arriba, se aplicó todo lo demás y el
+  // responsable se dejó como estaba. Callarlo dejaría creyendo que se aplicó.
+  if (r.responsables_rechazados)
+    aviso(`${r.responsables_rechazados} propuesta(s) llevaban un responsable al que no `
+        + `puedes asignarle trabajo: se aplicó el resto y el responsable quedó como estaba.`, 'warning');
   await abrirProyecto(proyectoActivo);
 }
 </script>

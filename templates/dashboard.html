@@ -144,9 +144,20 @@
 </div>
 
 {# Las tarjetas siguen el MISMO orden que el menú lateral y que ALL_MODULES:
-   trabajo del día primero, después planificación y datos, y al final la cuenta
-   y la administración. Cada una aparece sólo si el rol activo la habilita. #}
+   la agenda del día primero, después lo que se planifica a plazo, luego los
+   datos de clientes y al final la cuenta y la administración. Cada una aparece
+   sólo si el rol activo la habilita. #}
 <div class="row g-3 mt-1">
+  {% if can_calendar %}
+  <div class="col-md-6 col-xl-4">
+    <a href="/calendar" class="module-card">
+      <div class="m-icon">📅</div>
+      <h6>Mis calendarios</h6>
+      <p class="m-sub mb-2">{{calendarios|length}} calendario(s) activo(s)</p>
+      <span class="btn btn-primary btn-sm rounded-pill">Ir al calendario →</span>
+    </a>
+  </div>
+  {% endif %}
   {# Una sola tarjeta para toda la planificación: la lista de proyectos con sus
      plazos y el cronograma de barras son la misma cosa vista de dos maneras, y
      en dos tarjetas seguidas parecían dos sistemas para planificar lo mismo. #}
@@ -165,16 +176,6 @@
       {% if can_planning and can_cronograma %}
       <span class="m-sub d-block mt-2" style="font-size:.72rem">Proyectos, plazos y cronograma (Gantt)</span>
       {% endif %}
-    </a>
-  </div>
-  {% endif %}
-  {% if can_calendar %}
-  <div class="col-md-6 col-xl-4">
-    <a href="/calendar" class="module-card">
-      <div class="m-icon">📅</div>
-      <h6>Mis calendarios</h6>
-      <p class="m-sub mb-2">{{calendarios|length}} calendario(s) activo(s)</p>
-      <span class="btn btn-primary btn-sm rounded-pill">Ir al calendario →</span>
     </a>
   </div>
   {% endif %}

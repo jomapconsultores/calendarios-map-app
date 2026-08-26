@@ -95,6 +95,7 @@ def registrar_cronograma(app, ctx):
     get_user_projects     = ctx['get_user_projects']
     _bitacora             = ctx['_bitacora']
     nombre_de_proyecto    = ctx['nombre_de_proyecto']
+    validar_responsable   = ctx['validar_responsable']
     db = lambda: app.supabase
 
     def _sin_acceso():
@@ -405,15 +406,22 @@ def registrar_cronograma(app, ctx):
         # El contador va sobre las ACTIVIDADES de la planificación, no sobre las
         # barras: si sólo contara barras, un proyecto recién abierto saldría
         # vacío hasta que alguien entrara, y no es verdad — el trabajo está.
-        tareas = leer_tareas(app, current_user.id, campos='id,status,project_id')
+        tareas = leer_tareas(app, current_user.id,
+                             campos='id,status,project_id,due_date')
+        # Cada pastilla dice además cuántas lleva INCUMPLIDAS. Sin ese número
+        # había que entrar proyecto por proyecto para descubrir en cuál estaba
+        # el problema, que es justo lo que un cronograma tiene que ahorrar.
+        hoy_iso = date.today().isoformat()
         conteo = {}
         for t in tareas:
             if not t.get('project_id'):
                 continue
-            r = conteo.setdefault(t['project_id'], {'total': 0, 'done': 0})
+            r = conteo.setdefault(t['project_id'], {'total': 0, 'done': 0, 'vencidas': 0})
             r['total'] += 1
             if t.get('status') == 'done':
                 r['done'] += 1
+            elif (t.get('due_date') or '') and str(t['due_date'])[:10] < hoy_iso:
+                r['vencidas'] += 1
         salida = []
         for pr in proyectos:
             salida.append({
@@ -421,7 +429,7 @@ def registrar_cronograma(app, ctx):
                 'color': pr.get('color') or '#4f46e5',
                 'owner': pr.get('owner'), 'status': pr.get('status'),
                 'start_date': pr.get('start_date'), 'due_date': pr.get('due_date'),
-                **conteo.get(pr['id'], {'total': 0, 'done': 0}),
+                **conteo.get(pr['id'], {'total': 0, 'done': 0, 'vencidas': 0}),
             })
         salida.sort(key=lambda x: (x.get('due_date') or '9999-99-99', x['name'].lower()))
         return jsonify(salida)
@@ -454,6 +462,13 @@ def registrar_cronograma(app, ctx):
         actividad = _normalizar_actividad(request.get_json() or {})
         if not actividad.get('name'):
             return jsonify({'success': False, 'error': 'El nombre de la actividad es obligatorio'})
+        # El mismo escalafón que en la planificación: a uno mismo o a quien se
+        # tenga a cargo. Si el Gantt no lo aplicara, bastaría con cambiar de
+        # pantalla para asignarle trabajo a un superior.
+        motivo = validar_responsable(app, current_user.id, actividad.get('responsible'),
+                                     mando_total=is_admin())
+        if motivo:
+            return jsonify({'success': False, 'error': motivo}), 403
         if actividad.get('order_index') is None:
             existentes = db().get('gantt_activities', {'plan_id': pid}, select='order_index') or []
             actividad['order_index'] = max([a.get('order_index') or 0 for a in existentes], default=0) + 1
@@ -477,6 +492,11 @@ def registrar_cronograma(app, ctx):
             return jsonify({'success': False, 'error': 'El nombre de la actividad es obligatorio'})
         if not cambios:
             return jsonify({'success': False, 'error': 'Nada que actualizar'})
+        if 'responsible' in cambios:
+            motivo = validar_responsable(app, current_user.id, cambios.get('responsible'),
+                                         mando_total=is_admin())
+            if motivo:
+                return jsonify({'success': False, 'error': motivo}), 403
 
         # Arrastrar una barra es mover una fecha, y aquí se pide lo mismo que en
         # la lista. Si el Gantt no lo pidiera, sería la puerta de atrás: bastaría
@@ -729,12 +749,25 @@ def registrar_cronograma(app, ctx):
             except _bitacora.FaltaJustificacion as e:
                 return jsonify({'success': False, 'requiere_justificacion': True,
                                 'error': str(e)}), 400
+        # La IA propone responsables, y aprobar su plan no puede ser la forma
+        # cómoda de asignarle trabajo a un superior. Se aplica el mismo
+        # escalafón que a mano; lo que no se pueda, se aplica sin tocar el
+        # responsable en vez de rechazar el plan entero.
+        manda_todo = is_admin()
+        rechazadas = 0
         orden = len(del_plan)
         aplicadas, creadas = 0, 0
 
         for propuesta in propuestas:
             cambios = _normalizar_actividad(propuesta.get('cambios') or {})
             cambios['ai_generated'] = True
+            if 'responsible' in cambios and validar_responsable(
+                    app, current_user.id, cambios.get('responsible'),
+                    mando_total=manda_todo):
+                cambios.pop('responsible')
+                rechazadas += 1
+                if not cambios:
+                    continue
             aid = propuesta.get('actividad_id')
             if aid and aid in del_plan:
                 cambios['updated_at'] = datetime.now(timezone.utc).isoformat()
@@ -770,7 +803,8 @@ def registrar_cronograma(app, ctx):
             analisis['updated_at'] = analisis['ai_generado_en']
             db().update('gantt_plans', pid, analisis)
 
-        return jsonify({'success': True, 'aplicadas': aplicadas, 'creadas': creadas})
+        return jsonify({'success': True, 'aplicadas': aplicadas, 'creadas': creadas,
+                        'responsables_rechazados': rechazadas})
 
     @app.route('/cronograma/api/ia-estado', methods=['GET'])
     @login_required

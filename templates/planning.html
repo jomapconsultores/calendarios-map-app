@@ -76,6 +76,35 @@
 .proj-head .ph-prog-lbl{font-size:.66rem;color:#94a3b8;margin-top:2px}
 @media(max-width:640px){.proj-head{gap:10px}.proj-head .ph-prog{text-align:left}}
 
+/* ===== BLOQUES DE LA PANTALLA =====
+   Primero los proyectos, después las actividades. Es el orden en que se
+   compromete el trabajo: una actividad suelta no se le reclama a nadie; un
+   proyecto con su responsable y su plazo, sí. Antes la pantalla abría por la
+   lista de actividades y los proyectos eran unas pestañas pequeñas encima,
+   así que lo primero que se veía era el detalle y no el compromiso. */
+.plan-bloque{margin-bottom:16px}
+.bloque-head{display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin-bottom:9px}
+.bloque-num{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;
+  border-radius:50%;background:#4f46e5;color:#fff;font-size:.7rem;font-weight:800;flex-shrink:0}
+.bloque-title{font-size:.95rem;font-weight:800;color:#0f172a;margin:0}
+.bloque-sub{font-size:.74rem;color:#94a3b8}
+
+/* Rejilla de proyectos: una tarjeta por proyecto, con lo que hay que saber
+   sin abrirlo — de quién es, para cuándo, cómo va y cuántas lleva rotas. */
+.proj-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(258px,1fr));gap:10px;margin-bottom:12px}
+.proj-card{text-align:left;background:#fff;border:1.5px solid #e2e8f0;border-left-width:5px;
+  border-radius:12px;padding:10px 12px;cursor:pointer;transition:.15s;
+  box-shadow:0 1px 3px rgba(0,0,0,.05);display:flex;flex-direction:column;gap:6px}
+.proj-card:hover{border-color:#c7d2fe;box-shadow:0 4px 12px rgba(79,70,229,.12);transform:translateY(-1px)}
+.proj-card.abierto{border-color:#4f46e5;box-shadow:0 4px 12px rgba(79,70,229,.18)}
+.pc-name{font-size:.86rem;font-weight:700;color:#0f172a;line-height:1.25;
+  display:flex;align-items:center;gap:6px}
+.pc-meta{display:flex;flex-wrap:wrap;gap:8px;font-size:.72rem;color:#64748b}
+.pc-foot{display:flex;align-items:center;gap:8px;font-size:.7rem;color:#94a3b8}
+.pc-rojas{background:#fee2e2;color:#991b1b;border-radius:20px;padding:1px 8px;font-weight:700}
+.proj-grid-vacio{grid-column:1/-1;background:#fff;border:1.5px dashed #cbd5e1;border-radius:12px;
+  padding:16px;text-align:center;color:#64748b;font-size:.82rem}
+
 /* ===== PESTAÑAS DE PROYECTO ===== */
 .entity-tabs{display:flex;gap:2px;flex-wrap:nowrap;overflow-x:auto;overflow-y:hidden;
   margin-bottom:12px;border-bottom:2px solid #e2e8f0}
@@ -123,42 +152,15 @@ input[type=range].prog-range{accent-color:#4f46e5;width:100%}
 
 {% block content %}
 
-<!-- CABECERA DEL PROYECTO ABIERTO -->
-<div id="projHead"></div>
-
-<!-- SEMÁFORO: el marcador y el mando, en el mismo sitio -->
-<div class="sem-row" id="semRow"></div>
-
-<!-- BARRA DE HERRAMIENTAS -->
+<!-- ===== BUSCADOR =====
+     Busca en TODA la planificación, no sólo dentro del proyecto abierto. Si
+     para encontrar una actividad hay que acordarse antes de en qué proyecto
+     estaba, el buscador no sirve para lo único que se le pide. -->
 <div class="mod-toolbar">
-  <input id="searchInput" class="form-control form-control-sm" style="max-width:210px"
-    placeholder="🔍 Buscar actividad…" oninput="renderCurrentView()">
-  <select id="filterStatus" class="form-select form-select-sm" style="max-width:155px" onchange="renderCurrentView()">
-    <option value="">Todos los estados</option>
-    <option value="pending">Pendiente</option>
-    <option value="in_progress">En Progreso</option>
-    <option value="review">En Revisión</option>
-    <option value="done">Completado</option>
-    <option value="blocked">Bloqueado</option>
-  </select>
-
-  <span class="mt-sep"></span>
-
-  <button id="btnShowDone" class="btn btn-outline-secondary btn-sm rounded-pill" onclick="toggleDone()"
-          title="Mostrar u ocultar las actividades ya cerradas">✅ Cumplidas</button>
-  <button id="btnSelectMode" class="btn btn-outline-secondary btn-sm rounded-pill" onclick="toggleSelectMode()"
-          title="Activar selección múltiple para acciones masivas">☑ Seleccionar</button>
-
+  <input id="searchInput" class="form-control form-control-sm" style="max-width:420px;flex:1"
+    placeholder="🔍 Buscar proyecto, actividad, responsable, fase o etiqueta…" oninput="renderAll()">
+  <span id="searchHint" class="small text-muted"></span>
   <span class="mt-push"></span>
-
-  <button class="btn btn-outline-primary btn-sm rounded-pill" onclick="openNewTask()"
-          title="Crear una actividad con su plazo de ejecución">+ Actividad</button>
-  <button class="btn btn-primary btn-sm rounded-pill" onclick="openProjectModal(null)">+ Proyecto</button>
-  {% if can_cronograma %}
-  {# Los mismos plazos, en barras. Es la otra vista de esta misma pantalla. #}
-  <button class="btn btn-outline-primary btn-sm rounded-pill" onclick="abrirCronograma()"
-          title="Ver estos plazos como diagrama de Gantt">📈 Ver en Gantt</button>
-  {% endif %}
   <button class="btn btn-outline-secondary btn-sm rounded-pill" onclick="abrirReporte()"
           title="Qué se hizo con cada actividad, quién y por qué">📋 Reporte</button>
   {% if is_admin_user %}
@@ -167,8 +169,55 @@ input[type=range].prog-range{accent-color:#4f46e5;width:100%}
   {% endif %}
 </div>
 
-<!-- PESTAÑAS DE PROYECTO -->
-<div class="entity-tabs" id="entityTabs"></div>
+<!-- SEMÁFORO: el marcador y el mando, en el mismo sitio -->
+<div class="sem-row" id="semRow"></div>
+
+<!-- ============ 1 · PROYECTOS ============ -->
+<section class="plan-bloque">
+  <div class="bloque-head">
+    <span class="bloque-num">1</span>
+    <h2 class="bloque-title">📁 Proyectos</h2>
+    <span class="bloque-sub" id="projCount"></span>
+    <span style="flex:1"></span>
+    <button class="btn btn-primary btn-sm rounded-pill" onclick="openProjectModal(null)">+ Proyecto</button>
+    {% if can_cronograma %}
+    {# Los mismos plazos, en barras. No es otro módulo: es esta misma
+       planificación dibujada en el tiempo, y con el proyecto abierto entra
+       directamente en el suyo. #}
+    <button class="btn btn-outline-primary btn-sm rounded-pill" onclick="abrirCronograma()"
+            title="Los mismos plazos, dibujados en el tiempo">📈 Ver en Gantt</button>
+    {% endif %}
+  </div>
+  <!-- Cabecera del proyecto abierto -->
+  <div id="projHead"></div>
+  <!-- Índice de proyectos: se ve entero mientras no haya ninguno abierto -->
+  <div class="proj-grid" id="projGrid"></div>
+  <!-- Salto rápido de un proyecto a otro sin volver al índice -->
+  <div class="entity-tabs" id="entityTabs"></div>
+</section>
+
+<!-- ============ 2 · ACTIVIDADES ============ -->
+<section class="plan-bloque">
+  <div class="bloque-head">
+    <span class="bloque-num">2</span>
+    <h2 class="bloque-title">📝 Actividades</h2>
+    <span class="bloque-sub" id="taskScope"></span>
+    <span style="flex:1"></span>
+    <select id="filterStatus" class="form-select form-select-sm" style="max-width:155px" onchange="renderCurrentView()">
+      <option value="">Todos los estados</option>
+      <option value="pending">Pendiente</option>
+      <option value="in_progress">En Progreso</option>
+      <option value="review">En Revisión</option>
+      <option value="done">Completado</option>
+      <option value="blocked">Bloqueado</option>
+    </select>
+    <button id="btnShowDone" class="btn btn-outline-secondary btn-sm rounded-pill" onclick="toggleDone()"
+            title="Mostrar u ocultar las actividades ya cerradas">✅ Cumplidas</button>
+    <button id="btnSelectMode" class="btn btn-outline-secondary btn-sm rounded-pill" onclick="toggleSelectMode()"
+            title="Activar selección múltiple para acciones masivas">☑ Seleccionar</button>
+    <button class="btn btn-outline-primary btn-sm rounded-pill" onclick="openNewTask()"
+            title="Crear una actividad con su plazo de ejecución">+ Actividad</button>
+  </div>
 
 <!-- BARRA DE ACCIONES MASIVAS -->
 <div id="bulkBar" style="display:none;position:sticky;top:0;z-index:50;background:#eef2ff;color:#3730a3;border:1px solid #c7d2fe;border-radius:14px;padding:10px 16px;margin-bottom:12px;box-shadow:0 2px 8px rgba(79,70,229,.12)">
@@ -231,6 +280,7 @@ input[type=range].prog-range{accent-color:#4f46e5;width:100%}
     </div>
   </div>
 </div>
+</section>
 
 <!-- ========= MODAL DE ACTIVIDAD ========= -->
 <div class="modal fade plan-modal" id="taskModal" tabindex="-1">
@@ -297,7 +347,7 @@ input[type=range].prog-range{accent-color:#4f46e5;width:100%}
                 <input id="mAssigned" class="form-control" list="listaPersonas"
                        autocomplete="off" placeholder="Elige de la lista o escribe un nombre"
                        oninput="autocompletarCorreo()">
-                <div class="form-text">Despliega para ver a las personas del sistema.</div>
+                <div class="form-text" id="mAssignedHint">Despliega para ver a las personas del sistema.</div>
               </div>
               <div class="col-md-6">
                 <label class="form-label fw-semibold">CORREO DEL RESPONSABLE</label>
@@ -679,12 +729,22 @@ function chipSemaforo(s) {
 //  actividad entre tres «personas» que son la misma.
 // ——————————————————————————————————————————
 let PERSONAS = [];
+// ¿Manda sobre todos? Sólo el administrador. El resto ve en la lista a quien
+// puede encargarle trabajo —él y quien tenga a cargo—, y conviene DECIRLO: una
+// lista corta sin explicación se lee como un fallo del sistema.
+let MANDA_TODO = false;
 
 async function cargarPersonas() {
   try {
     const r = await fetch('/api/personas');
     const j = await r.json();
     PERSONAS = (j && j.personas) || [];
+    MANDA_TODO = !!(j && j.manda_sobre_todos);
+    const hint = document.getElementById('mAssignedHint');
+    if (hint) hint.textContent = MANDA_TODO
+      ? 'Despliega para ver a todas las personas del sistema.'
+      : 'Sólo puedes asignarte a ti o a quien tengas a cargo. '
+        + 'Para el resto, pídeselo al administrador.';
   } catch (e) {
     // Sin listado se sigue pudiendo escribir el nombre a mano: es un apoyo,
     // no un requisito para guardar.
@@ -774,11 +834,13 @@ async function loadData(silent) {
 }
 
 function renderAll() {
+  renderProjGrid();
   renderEntityTabs();
   renderProjHead();
   renderSemaforo();
   fillProjectSelects();
   renderCurrentView();
+  renderSearchHint();
 }
 
 // ——————————————————————————————————————————
@@ -830,8 +892,30 @@ function smartSort(tasks) {
   });
 }
 
+// Lo que se busca se busca en TODA la planificación. Estando dentro de un
+// proyecto, el buscador sale de él a propósito: quien escribe un nombre en la
+// caja está preguntando «dónde está esto», y contestarle «aquí dentro no»
+// cuando sí existe dos proyectos más allá es la forma más rápida de que deje
+// de usarse el buscador.
+function textoBuscado() {
+  const c = document.getElementById('searchInput');
+  return (c ? c.value : '').trim().toLowerCase();
+}
+
 function tareasDelAmbito() {
+  if (textoBuscado()) return allTasks;
   return curProject ? allTasks.filter(t => t.project_id === curProject) : allTasks;
+}
+
+// Los proyectos también se buscan: por su nombre, por su responsable o por lo
+// que diga su descripción.
+function proyectosFiltrados() {
+  const q = textoBuscado();
+  if (!q) return allProjects;
+  return allProjects.filter(p =>
+    (p.name||'').toLowerCase().includes(q) ||
+    (p.owner||'').toLowerCase().includes(q) ||
+    (p.description||'').toLowerCase().includes(q));
 }
 
 function filteredTasks() {
@@ -840,7 +924,7 @@ function filteredTasks() {
   if (curSem)    t = t.filter(x => semTarea(x).id === curSem);
   const s = document.getElementById('filterStatus').value;
   if (s) t = t.filter(x => (x.status || 'pending') === s);
-  const q = (document.getElementById('searchInput').value || '').toLowerCase();
+  const q = textoBuscado();
   if (q) t = t.filter(x =>
     (x.title||'').toLowerCase().includes(q) ||
     (x.description||'').toLowerCase().includes(q) ||
@@ -963,12 +1047,112 @@ function renderProjHead() {
 }
 
 // ——————————————————————————————————————————
+//  ÍNDICE DE PROYECTOS
+//  Lo primero de la pantalla. Cada tarjeta dice lo que hay que saber sin
+//  abrirla: de quién es, para cuándo, cómo va y cuántas lleva rotas. Al entrar
+//  en un proyecto el índice se recoge y deja sitio a sus actividades, que es
+//  el detalle; volver a «Todos» lo despliega otra vez.
+// ——————————————————————————————————————————
+function renderProjGrid() {
+  const c = document.getElementById('projGrid');
+  if (!c) return;
+  const buscando = !!textoBuscado();
+  const lista = proyectosFiltrados();
+
+  // Dentro de un proyecto no se repite el índice: arriba ya está su cabecera.
+  // Buscando sí se enseña, porque lo que se busca puede estar en otro.
+  if (curProject && !buscando) { c.innerHTML = ''; c.style.display = 'none'; return; }
+  c.style.display = '';
+
+  const cuenta = document.getElementById('projCount');
+  if (cuenta) cuenta.textContent = allProjects.length
+    ? (buscando ? `${lista.length} de ${allProjects.length}` : `${allProjects.length} en total`)
+    : '';
+
+  if (!lista.length) {
+    c.innerHTML = `<div class="proj-grid-vacio">${allProjects.length
+      ? 'Ningún proyecto coincide con lo que buscas.'
+      : 'Todavía no hay proyectos. Crea el primero con <strong>+ Proyecto</strong>: ' +
+        'las actividades cuelgan de él.'}</div>`;
+    return;
+  }
+
+  // El orden es el de la urgencia, igual que en todo lo demás: primero lo que
+  // está en rojo. Un índice por orden alfabético esconde justo lo que hay que
+  // mirar antes.
+  const orden = [...lista].sort((a, b) => {
+    const sa = SEM[semProyecto(a).id].orden, sb = SEM[semProyecto(b).id].orden;
+    if (sa !== sb) return sa - sb;
+    const da = a.due_date || '9999-12-31', db = b.due_date || '9999-12-31';
+    if (da !== db) return da < db ? -1 : 1;
+    return (a.name||'').localeCompare(b.name||'');
+  });
+
+  c.innerHTML = orden.map(p => {
+    const tareas = allTasks.filter(t => t.project_id === p.id);
+    const hechas = tareas.filter(t => CERRADOS.includes(t.status||'')).length;
+    const avance = tareas.length ? Math.round(hechas * 100 / tareas.length) : 0;
+    const rojas  = tareas.filter(t => semTarea(t).id === 'rojo').length;
+    const s = semProyecto(p);
+    const e = SEM[s.id];
+    return `<div class="proj-card ${curProject===p.id?'abierto':''}"
+      style="border-left-color:${p.color || '#4f46e5'}"
+      onclick="setProject('${p.id}')"
+      title="${esc(p.name)} — ${esc(e.etiqueta)} · doble clic para editar"
+      ondblclick="event.stopPropagation(); openProjectModal('${p.id}')">
+      <div class="pc-name">
+        <span class="sem-dot" style="background:${e.color};width:11px;height:11px"></span>
+        ${esc(p.name)}
+      </div>
+      <div class="pc-meta">
+        <span>👤 ${esc(p.owner || '—')}</span>
+        ${p.due_date ? `<span>📅 ${fmtDate(p.due_date)}</span>` : '<span>♾️ Permanente</span>'}
+      </div>
+      <div class="prog-bar" style="width:100%">
+        <div class="prog-bar-fill" style="width:${avance}%;background:${e.color}"></div>
+      </div>
+      <div class="pc-foot">
+        <span><strong style="color:#475569">${avance}%</strong> · ${hechas}/${tareas.length} actividades</span>
+        <span style="flex:1"></span>
+        ${rojas ? `<span class="pc-rojas" title="Actividades incumplidas">⛔ ${rojas}</span>` : ''}
+      </div>
+    </div>`;
+  }).join('');
+}
+
+// Qué se está enseñando abajo, dicho con palabras. Sin esto, una lista filtrada
+// y una lista vacía se parecen demasiado.
+function renderSearchHint() {
+  const q = textoBuscado();
+  const hint = document.getElementById('searchHint');
+  if (hint) {
+    if (!q) hint.textContent = '';
+    else {
+      const nP = proyectosFiltrados().length;
+      const nA = filteredTasks().length;
+      hint.innerHTML = `En toda la planificación: <strong>${nP}</strong> proyecto(s) y ` +
+        `<strong>${nA}</strong> actividad(es)` +
+        (curProject ? ' <span class="text-muted">— se buscó fuera del proyecto abierto</span>' : '');
+    }
+  }
+  const ambito = document.getElementById('taskScope');
+  if (!ambito) return;
+  const p = curProject ? allProjects.find(x => x.id === curProject) : null;
+  ambito.textContent = q ? 'resultados de la búsqueda'
+    : (p ? `de «${p.name}»` : 'de todos los proyectos');
+}
+
+// ——————————————————————————————————————————
 //  PESTAÑAS DE PROYECTO
 // ——————————————————————————————————————————
 function renderEntityTabs() {
   const c = document.getElementById('entityTabs');
   if (!c) return;
-  let html = `<button class="etab ${!curProject?'active':''}" onclick="setProject(null)">Todos</button>`;
+  // Sin proyecto abierto manda el índice de arriba: dos listas de lo mismo,
+  // una encima de otra, sólo obligan a decidir cuál de las dos se usa.
+  if (!curProject) { c.innerHTML = ''; c.style.display = 'none'; return; }
+  c.style.display = '';
+  let html = `<button class="etab" onclick="setProject(null)" title="Volver al índice de proyectos">← Todos</button>`;
   allProjects.forEach(p => {
     // Un punto de color por proyecto: el estado se ve sin entrar a mirarlo.
     const e = SEM[semProyecto(p).id];
@@ -1143,7 +1327,7 @@ function renderCurrentView() { renderList(); renderSemaforo(); }
 
 // Sin proyecto abierto la lista se parte por proyecto, que es la estructura
 // real del trabajo. Dentro de uno va seguida y ordenada por urgencia.
-function grupoActivo() { return curProject ? '' : 'project'; }
+function grupoActivo() { return (curProject && !textoBuscado()) ? '' : 'project'; }
 
 function renderList() {
   const tasks = expandedTasks(filteredTasks());
@@ -2115,6 +2299,7 @@ async function importExcel(input) {
       // archivo, es trabajo que ya estaba apuntado.
       const partes = [`✅ ${r.imported} actividades importadas`];
       if (r.repetidas) partes.push(`${r.repetidas} ya estaban y no se repitieron`);
+      if (r.ajenas)    partes.push(`${r.ajenas} con un responsable al que no puedes asignarle trabajo`);
       if (r.errors)    partes.push(`${r.errors} con errores`);
       showToast(partes.join(' · '), 'success');
       await loadData();

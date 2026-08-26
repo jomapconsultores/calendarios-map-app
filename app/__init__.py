@@ -158,13 +158,17 @@ class User(UserMixin):
 # que se planifica, después la agenda, y al final los datos maestros. Este orden
 # es el que siguen el menú lateral y la pantalla de roles, para que el usuario
 # encuentre lo mismo en los dos sitios.
+# El orden es el del menú y el de las tarjetas del panel: primero la agenda
+# del día, después lo que se planifica a plazo y al final los datos de
+# clientes. Si esta lista y el menú discreparan, la pantalla de roles enseñaría
+# los módulos en un orden y el usuario los encontraría en otro.
 ALL_MODULES = [
+    ('calendar',    '📅 Calendario de citas'),
     # Planificación y Cronograma son la misma cosa vista de dos maneras: la
     # lista de proyectos con sus plazos y esos mismos plazos en barras. Van
     # seguidos y así se conceden juntos; en el menú comparten un solo botón.
     ('planning',    '📋 Planificación — proyectos y actividades'),
     ('cronograma',  '📈 Planificación — cronograma (Gantt)'),
-    ('calendar',    '📅 Calendario de citas'),
     ('directorio',  '🗂️ Directorio de clientes'),
 ]
 
@@ -184,6 +188,123 @@ ROLE_LEVELS = [
 ]
 ROLE_LEVEL_IDS = {lid for lid, _ in ROLE_LEVELS}
 DEFAULT_ROLE_LEVEL = 'funcionario'
+
+
+# ============================================================
+#  ESCALAFÓN: A QUIÉN SE LE PUEDE ENCARGAR TRABAJO
+#
+#  Sólo el administrador reparte trabajo a cualquiera. El resto se lo asigna a
+#  sí mismo o a quien tenga por debajo — nunca hacia arriba ni de lado. Una
+#  actividad que aparece a nombre de un socio porque se la puso un funcionario
+#  no es un compromiso de nadie: el día que vence, el que responde no sabía que
+#  la tenía. Y el correo de incumplimientos se la reclama igual.
+#
+#  El número es el RANGO DE MANDO: cuanto más bajo, más arriba en la escala.
+#  Secretaría, profesorado y psicología comparten rango a propósito — son
+#  perfiles de ejecución, no una cadena de mando entre ellos, así que se
+#  asignan trabajo a sí mismos y a nadie más.
+# ============================================================
+NIVEL_MANDO = {
+    'administrador': 0,
+    'socio':         1,
+    'funcionario':   2,
+    'secretaria':    3,
+    'profesor':      3,
+    'psicologo':     3,
+}
+RANGO_MAS_BAJO = max(NIVEL_MANDO.values()) + 1
+
+
+def _clave_persona(texto):
+    """Nombres y correos se comparan sin tildes, sin mayúsculas y sin espacios
+    de sobra: «José  Pérez» y «jose perez» son la misma persona, y si no se
+    normalizara, escribir el nombre del jefe sin tilde saltaría el escalafón."""
+    t = _unicodedata.normalize('NFKD', str(texto or '').strip().lower())
+    t = ''.join(c for c in t if not _unicodedata.combining(c))
+    return ' '.join(t.split())
+
+
+def personas_del_sistema(app):
+    """Todos los usuarios dados de alta, cada uno con su rango de mando.
+
+    Memoizado por request: la validación del responsable se hace una vez por
+    actividad, y una importación de Excel son cien actividades seguidas."""
+    if hasattr(g, '_personas_sistema'):
+        return g._personas_sistema
+    filas = app.supabase.get('users',
+        select='id,full_name,email,position,is_active,active_role_id,role') or []
+    roles = app.supabase.get('roles', select='id,level') or []
+    nivel_por_rol = {r['id']: (r.get('level') or DEFAULT_ROLE_LEVEL) for r in roles}
+    gente = []
+    for u in filas:
+        # `is_active` viene en blanco en las filas antiguas: sólo se descarta a
+        # quien está dado de baja EXPRESAMENTE.
+        if u.get('is_active') is False:
+            continue
+        nombre = (u.get('full_name') or '').strip() or (u.get('email') or '').strip()
+        if not nombre:
+            continue
+        # Un usuario marcado users.role=='admin' manda aunque todavía no tenga
+        # rol de negocio: es la misma salvaguarda de bootstrap que is_admin().
+        nivel = ('administrador' if (u.get('role') or '') == 'admin'
+                 else (nivel_por_rol.get(u.get('active_role_id')) or DEFAULT_ROLE_LEVEL))
+        gente.append({
+            'id':     str(u['id']),
+            'nombre': nombre,
+            'email':  (u.get('email') or '').strip(),
+            'cargo':  (u.get('position') or '').strip(),
+            'nivel':  nivel,
+            'rango':  NIVEL_MANDO.get(nivel, RANGO_MAS_BAJO),
+        })
+    gente.sort(key=lambda x: x['nombre'].lower())
+    g._personas_sistema = gente
+    return gente
+
+
+def personas_asignables(app, uid, mando_total=False):
+    """A quién puede encargarle trabajo ESTE usuario: a sí mismo y a quien
+    tenga por debajo. El administrador, a cualquiera."""
+    gente = personas_del_sistema(app)
+    if mando_total:
+        return gente
+    yo = next((p for p in gente if p['id'] == str(uid)), None)
+    mi_rango = yo['rango'] if yo else RANGO_MAS_BAJO
+    return [p for p in gente
+            if (yo and p['id'] == yo['id']) or p['rango'] > mi_rango]
+
+
+def validar_responsable(app, uid, nombre, email=None, mando_total=False):
+    """¿Puede este usuario poner a esa persona de responsable? Devuelve None si
+    sí, o el motivo por el que no.
+
+    Sólo se juzga a la gente DEL SISTEMA. Un nombre que no es de nadie dado de
+    alta —un proveedor, un perito, alguien de fuera— no es repartir trabajo
+    dentro del despacho: prohibirlo rompería la importación de un Excel y no
+    protegería a nadie, porque nadie de dentro acabaría con una actividad que
+    no pidió. Lo que sí se comprueba es el CORREO además del nombre: es a donde
+    va el aviso de vencimiento, y por ahí se colaría lo que el nombre no."""
+    if mando_total:
+        return None
+    clave_n = _clave_persona(nombre)
+    clave_e = _clave_persona(email)
+    if not clave_n and not clave_e:
+        return None
+    gente = personas_del_sistema(app)
+    apuntado = next(
+        (p for p in gente
+         if (clave_n and _clave_persona(p['nombre']) == clave_n)
+         or (clave_e and p['email'] and _clave_persona(p['email']) == clave_e)), None)
+    if not apuntado:
+        return None                       # no es del personal: no es una asignación
+    if apuntado['id'] == str(uid):
+        return None                       # a uno mismo, siempre
+    yo = next((p for p in gente if p['id'] == str(uid)), None)
+    mi_rango = yo['rango'] if yo else RANGO_MAS_BAJO
+    if apuntado['rango'] > mi_rango:
+        return None                       # está por debajo: se le puede encargar
+    return (f'No puedes poner a {apuntado["nombre"]} de responsable. '
+            'Sólo el administrador asigna trabajo a cualquiera; tú puedes '
+            'asignártelo a ti o a quien tengas a cargo.')
 
 
 # ============================================================
@@ -3709,6 +3830,10 @@ def create_app():
     #  tienen nombres escritos a mano y cambiar la columna a una referencia las
     #  dejaría a todas sin dueño. El desplegable no impide teclear a alguien de
     #  fuera —un proveedor, un tercero—; sólo hace que lo normal sea elegir.
+    #
+    #  La lista NO es la misma para todos: cada uno ve a quien puede encargarle
+    #  trabajo —él y quien tenga a cargo—, y el administrador ve a todos. Ver
+    #  el escalafón en NIVEL_MANDO.
     # ============================================================
     @app.route('/api/personas', methods=['GET'])
     @login_required
@@ -3718,24 +3843,12 @@ def create_app():
         if not (user_can('planning') or user_can('cronograma')):
             return jsonify({'success': False, 'personas': [],
                             'error': 'Sin acceso'}), 403
-        filas = app.supabase.get('users',
-                    select='id,full_name,email,position,is_active') or []
-        personas = []
-        for u in filas:
-            # `is_active` puede venir en blanco en las filas antiguas: sólo se
-            # descarta a quien está dado de baja EXPRESAMENTE.
-            if u.get('is_active') is False:
-                continue
-            nombre = (u.get('full_name') or '').strip() or (u.get('email') or '').strip()
-            if not nombre:
-                continue
-            personas.append({
-                'nombre': nombre,
-                'email': (u.get('email') or '').strip(),
-                'cargo': (u.get('position') or '').strip(),
-            })
-        personas.sort(key=lambda x: x['nombre'].lower())
-        return jsonify({'success': True, 'personas': personas})
+        manda_todo = is_admin()
+        personas = [{'nombre': p['nombre'], 'email': p['email'], 'cargo': p['cargo']}
+                    for p in personas_asignables(app, current_user.id,
+                                                 mando_total=manda_todo)]
+        return jsonify({'success': True, 'personas': personas,
+                        'manda_sobre_todos': manda_todo})
 
     # ============================================================
     #  PLANNING MODULE
@@ -4117,6 +4230,12 @@ def create_app():
             d['assigned_to'] = _sanitize(current_user.full_name or current_user.email, 200)
         if not d.get('assigned_email'):
             d['assigned_email'] = current_user.email
+        # Y no se le puede encargar a cualquiera: sólo a uno mismo o a quien se
+        # tenga a cargo. El administrador sí reparte trabajo a cualquiera.
+        motivo = validar_responsable(app, current_user.id, d.get('assigned_to'),
+                                     d.get('assigned_email'), mando_total=is_admin())
+        if motivo:
+            return jsonify({'success': False, 'error': motivo}), 403
         # Una actividad dentro de un proyecto lleva plazo propio. Si no se
         # indica, hereda el del proyecto —nunca puede terminar después que él—
         # y su tiempo de ejecución arranca hoy.
@@ -4173,6 +4292,16 @@ def create_app():
         if 'assigned_to' in d and not (d.get('assigned_to') or '').strip():
             return jsonify({'success': False,
                             'error': 'La actividad tiene que tener un responsable.'}), 400
+        # Pasarle una actividad a otra persona es asignarle trabajo, y va por el
+        # mismo escalafón que crearla: hacia abajo o a uno mismo.
+        if 'assigned_to' in d or 'assigned_email' in d:
+            motivo = validar_responsable(
+                app, current_user.id,
+                d.get('assigned_to', task.get('assigned_to')),
+                d.get('assigned_email', task.get('assigned_email')),
+                mando_total=is_admin())
+            if motivo:
+                return jsonify({'success': False, 'error': motivo}), 403
 
         d['updated_at'] = datetime.now(timezone.utc).isoformat()
         cerrando = d.get('status') == 'done' and task.get('status') != 'done'
@@ -4216,6 +4345,13 @@ def create_app():
                 return jsonify({'success': False, 'requiere_justificacion': True,
                                 'fechas': [c for c in _bitacora.FECHAS_VIGILADAS if c in patch],
                                 'error': str(e)}), 400
+        # Reasignar veinte de golpe sigue siendo reasignar: el escalafón vale
+        # igual. Si esta puerta quedara abierta, la de una en una no serviría.
+        if 'assigned_to' in patch or 'assigned_email' in patch:
+            motivo = validar_responsable(app, current_user.id, patch.get('assigned_to'),
+                                         patch.get('assigned_email'), mando_total=is_admin())
+            if motivo:
+                return jsonify({'success': False, 'error': motivo}), 403
         patch['updated_at'] = datetime.now(timezone.utc).isoformat()
         cerrando_lote = patch.get('status') == 'done'
         if cerrando_lote and not patch.get('completed_date'):
@@ -4453,7 +4589,12 @@ def create_app():
             # archivo es lo más fácil del mundo —el aviso de que iba en marcha
             # se desvanecía solo— y así la segunda pasada no mete nada.
             vistas = actividades_abiertas(app, current_user.id)
-            imported = 0; errors = 0; repetidas = 0
+            # Un archivo puede venir con responsables que quien importa no
+            # puede mandar. Esas filas se saltan y se cuentan aparte: cambiarles
+            # el responsable en silencio dejaría el archivo diciendo una cosa y
+            # la planificación otra.
+            manda_todo = is_admin()
+            imported = 0; errors = 0; repetidas = 0; ajenas = 0
             for row in ws.iter_rows(min_row=2, values_only=True):
                 if all(v is None or str(v).strip() == '' for v in row): continue
                 rd = dict(zip(headers, row))
@@ -4484,6 +4625,10 @@ def create_app():
                     if clave in vistas:
                         repetidas += 1
                         continue
+                    if validar_responsable(app, current_user.id, td['assigned_to'],
+                                           td['assigned_email'], mando_total=manda_todo):
+                        ajenas += 1
+                        continue
                     vistas[clave] = td
                     # Parse dates
                     for fld in ('start_date', 'due_date'):
@@ -4503,7 +4648,8 @@ def create_app():
                     imported += 1
                 except Exception: errors += 1
             return jsonify({'success': True, 'imported': imported,
-                            'errors': errors, 'repetidas': repetidas})
+                            'errors': errors, 'repetidas': repetidas,
+                            'ajenas': ajenas})
         except Exception as e:
             return jsonify({'success': False, 'error': str(e)})
 
@@ -4524,6 +4670,12 @@ def create_app():
         'user_has_project_access': user_has_project_access,
         '_bitacora':             _bitacora,
         'nombre_de_proyecto':    nombre_de_proyecto,
+        # El escalafón de quién puede encargarle trabajo a quién. Va por aquí
+        # para que el cronograma aplique EXACTAMENTE la misma regla que la
+        # planificación: dos criterios distintos sobre quién manda sobre quién
+        # convierten la regla en una sugerencia que se esquiva cambiando de
+        # pantalla.
+        'validar_responsable':   validar_responsable,
         # El puente con ATLAS, para que el Directorio pueda traerse de allá a los
         # representantes, docentes y estudiantes.
         '_atlas':                _atlas,

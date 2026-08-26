@@ -61,16 +61,24 @@
         <img src="{{ url_for('static', filename='images/map_logo.png') }}" alt="MAP" class="rail-brand-logo">
       </a>
 
-      {# Orden de los módulos: primero el trabajo del día (pendientes y agenda),
-         después lo que se planifica y los datos de clientes, y al final la
-         cuenta propia y la administración. Es el mismo orden que sigue
-         ALL_MODULES en app/__init__.py y la pantalla de roles. #}
+      {# Orden de los módulos: el panel primero porque es el resumen de todo,
+         después la agenda del día, después lo que se planifica a plazo, luego
+         los datos de clientes, y al final la cuenta propia y la
+         administración. Es el mismo orden que siguen ALL_MODULES en
+         app/__init__.py, las tarjetas del panel y la pantalla de roles. #}
       <nav class="rail-nav">
         <div class="rail-section"><span>Trabajo</span></div>
 
         <a href="/dashboard" class="rail-btn {{ 'active' if ns.active_key == 'dashboard' }}" data-panel="dashboard" title="Panel — Resumen general del sistema">
           <span class="rail-ic">📊</span><span class="rail-label">Panel</span>
         </a>
+
+        {% if is_adm or 'calendar' in active_modules %}
+        <a href="/calendar" class="rail-btn {{ 'active' if ns.active_key == 'calendar' }}" data-panel="calendar" data-group title="Calendario — Agenda de citas y feriados">
+          <span class="rail-ic">📅</span><span class="rail-label">Calendario</span>
+          <span class="nav-badge tono-aviso" data-badge="calendario" title="Citas por aprobar"></span>
+        </a>
+        {% endif %}
 
         {# Un solo botón para toda la planificación: proyectos, sus actividades y
            el cronograma de barras. Quien sólo tenga concedido el cronograma
@@ -80,13 +88,6 @@
         <a href="{{ plan_home }}" class="rail-btn {{ 'active' if ns.active_key == 'planning' }}" data-panel="planning" data-group title="Planificación — Proyectos, actividades y cronograma">
           <span class="rail-ic">📋</span><span class="rail-label">Planificación</span>
           <span class="nav-badge" data-badge="proyectos" title="Actividades incumplidas"></span>
-        </a>
-        {% endif %}
-
-        {% if is_adm or 'calendar' in active_modules %}
-        <a href="/calendar" class="rail-btn {{ 'active' if ns.active_key == 'calendar' }}" data-panel="calendar" data-group title="Calendario — Agenda de citas y feriados">
-          <span class="rail-ic">📅</span><span class="rail-label">Calendario</span>
-          <span class="nav-badge tono-aviso" data-badge="calendario" title="Citas por aprobar"></span>
         </a>
         {% endif %}
 
@@ -156,33 +157,6 @@
           </div>
         </section>
 
-        {# Planificación es UNA sola cosa con dos formas de verla: la lista de
-           proyectos con sus plazos y el cronograma de barras. Antes eran dos
-           módulos separados en el menú, y separados parecían dos sistemas
-           distintos para planificar el mismo trabajo. #}
-        {% if is_adm or 'planning' in active_modules or 'cronograma' in active_modules %}
-        <section class="panel-page {{ 'active' if ns.active_key == 'planning' }}" data-page="planning">
-          <div class="panel-head"><span class="panel-head-ic">📋</span><span><span class="panel-title">Planificación</span><span class="panel-sub">Proyectos, plazos y cronograma</span></span></div>
-          {% if is_adm or 'planning' in active_modules %}
-          <div class="panel-group">Proyectos y actividades</div>
-          <ul class="panel-links">
-            <li><a href="/planning" class="{{ 'active' if path == '/planning' and not request.args.get('tf') }}"><span class="pl-t">📝 Ver planificación</span><span class="pl-d">Cada proyecto con su responsable y su plazo</span></a></li>
-            <li><a href="/planning?tf=overdue"><span class="pl-t">🔴 Incumplidas <span class="nav-badge" data-badge="proyectos"></span></span><span class="pl-d">El plazo ya pasó</span></a></li>
-            <li><a href="/planning?tf=week"><span class="pl-t">🟡 Por vencer</span><span class="pl-d">Vencen hoy o en los próximos días</span></a></li>
-          </ul>
-          {% endif %}
-          {% if is_adm or 'cronograma' in active_modules %}
-          <div class="panel-group">Cronograma (Gantt)</div>
-          <ul class="panel-links">
-            {# No hay «nuevo cronograma» ni «traer del plan»: el cronograma
-               nace del proyecto y se pone al día solo al abrirlo. Eran dos
-               listas de lo mismo que había que mantener a la par. #}
-            <li><a href="/cronograma" class="{{ 'active' if path == '/cronograma' }}"><span class="pl-t">📈 Ver en barras <span class="nav-badge" data-badge="cronograma"></span></span><span class="pl-d">Los plazos del proyecto, en Gantt</span></a></li>
-          </ul>
-          {% endif %}
-        </section>
-        {% endif %}
-
         {% if is_adm or 'calendar' in active_modules %}
         <section class="panel-page {{ 'active' if ns.active_key == 'calendar' }}" data-page="calendar">
           <div class="panel-head"><span class="panel-head-ic">📅</span><span><span class="panel-title">Calendario</span><span class="panel-sub">Agenda de citas y feriados</span></span></div>
@@ -190,6 +164,31 @@
             <li><a href="/calendar" class="{{ 'active' if path == '/calendar' and not request.args.get('action') }}"><span class="pl-t">🗓️ Agenda mensual</span><span class="pl-d">Todas las citas del mes</span></a></li>
             <li><a href="/calendar?action=new"><span class="pl-t">➕ Nueva cita</span><span class="pl-d">Agendar a un cliente</span></a></li>
             <li><a href="/calendar?action=pending"><span class="pl-t">⏳ Por aprobar <span class="nav-badge tono-aviso" data-badge="calendario"></span></span><span class="pl-d">Citas que esperan tu decisión</span></a></li>
+          </ul>
+        </section>
+        {% endif %}
+
+        {# Planificación es UNA sola cosa con dos formas de verla: la lista de
+           proyectos con sus plazos y esos mismos plazos en barras. Van en un
+           solo grupo de enlaces a propósito: bajo dos encabezados parecían dos
+           sistemas distintos para planificar el mismo trabajo, y la pregunta
+           «¿cuál de los dos uso?» no tiene respuesta, porque el botón «Ver en
+           Gantt» de la planificación lleva exactamente aquí. #}
+        {% if is_adm or 'planning' in active_modules or 'cronograma' in active_modules %}
+        <section class="panel-page {{ 'active' if ns.active_key == 'planning' }}" data-page="planning">
+          <div class="panel-head"><span class="panel-head-ic">📋</span><span><span class="panel-title">Planificación</span><span class="panel-sub">Proyectos, plazos y cronograma</span></span></div>
+          <div class="panel-group">Proyectos y actividades</div>
+          <ul class="panel-links">
+            {% if is_adm or 'planning' in active_modules %}
+            <li><a href="/planning" class="{{ 'active' if path == '/planning' and not request.args.get('tf') }}"><span class="pl-t">📝 Ver planificación</span><span class="pl-d">Los proyectos primero y, dentro, sus actividades</span></a></li>
+            <li><a href="/planning?tf=overdue"><span class="pl-t">🔴 Incumplidas <span class="nav-badge" data-badge="proyectos"></span></span><span class="pl-d">El plazo ya pasó</span></a></li>
+            <li><a href="/planning?tf=week"><span class="pl-t">🟡 Por vencer</span><span class="pl-d">Vencen hoy o en los próximos días</span></a></li>
+            {% endif %}
+            {% if is_adm or 'cronograma' in active_modules %}
+            {# No hay «nuevo cronograma» ni «traer del plan»: el cronograma
+               nace del proyecto y se pone al día solo al abrirlo. #}
+            <li><a href="/cronograma" class="{{ 'active' if path == '/cronograma' }}"><span class="pl-t">📈 Ver en barras (Gantt) <span class="nav-badge" data-badge="cronograma"></span></span><span class="pl-d">Los mismos plazos, dibujados en el tiempo</span></a></li>
+            {% endif %}
           </ul>
         </section>
         {% endif %}
