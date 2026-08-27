@@ -132,6 +132,14 @@
    la otra cara del proyecto y aparece con él. #}
 <div class="plan-pills" id="planPills"></div>
 
+{# Entrar al cronograma tarda: se pide la lista de proyectos y se pone al día
+   el del que se abre. Sin esto la pantalla se quedaba en blanco esos segundos,
+   sin nada que dijera si estaba trabajando o si se había roto. #}
+<div id="cargandoPlan" class="mod-empty">
+  <div class="me-ic">⏳</div>
+  <p class="mt-2">Abriendo el cronograma…</p>
+</div>
+
 <div id="sinPlanes" class="mod-empty" style="display:none">
   <div class="me-ic">📊</div>
   <p class="mt-2">Todavía no hay ningún proyecto que dibujar.<br>
@@ -525,11 +533,36 @@ const hoyIso = () => new Date().toISOString().slice(0, 10);
 //  mete las actividades nuevas y refresca las que ya estaban.
 // ——————————————————————————————————————————
 async function cargarProyectos(seleccionar) {
-  proyectos = await pedir('/cronograma/api/proyectos');
-  const hay = Array.isArray(proyectos) && proyectos.length > 0;
-  document.getElementById('sinPlanes').style.display = hay ? 'none' : '';
-  document.getElementById('zonaPlan').style.display  = hay ? '' : 'none';
-  document.getElementById('planPills').style.display = hay ? '' : 'none';
+  const cargando = document.getElementById('cargandoPlan');
+  const mostrar = (cargandoVisible, hay) => {
+    cargando.style.display = cargandoVisible ? '' : 'none';
+    document.getElementById('sinPlanes').style.display = (!cargandoVisible && !hay) ? '' : 'none';
+    document.getElementById('zonaPlan').style.display  = (!cargandoVisible && hay) ? '' : 'none';
+    document.getElementById('planPills').style.display = (!cargandoVisible && hay) ? '' : 'none';
+  };
+  mostrar(true, false);
+
+  // No poder leer y no tener nada son cosas distintas y hay que decirlas
+  // distintas. Antes cualquier fallo acababa en «todavía no hay ningún
+  // proyecto que dibujar»: la pantalla afirmaba que no hay trabajo justo
+  // cuando lo que pasa es que no se ha podido mirar.
+  try {
+    proyectos = await pedir('/cronograma/api/proyectos');
+    if (!Array.isArray(proyectos)) throw new Error((proyectos && proyectos.error) || 'respuesta inesperada');
+  } catch (e) {
+    proyectos = [];
+    proyectoActivo = null; planActivo = null;
+    cargando.innerHTML = `<div class="me-ic">⚠️</div>
+      <p class="mt-2"><strong>No se pudo leer la lista de proyectos.</strong><br>
+      Esto <strong>no</strong> quiere decir que no haya ninguno.
+      Comprueba la conexión y vuelve a intentarlo.</p>
+      <button class="btn btn-sm btn-outline-primary rounded-pill" onclick="cargarProyectos()">🔄 Reintentar</button>`;
+    mostrar(true, false);
+    return;
+  }
+
+  const hay = proyectos.length > 0;
+  mostrar(false, hay);
   if (!hay) { proyectoActivo = null; planActivo = null; return; }
 
   // Si el id pedido ya no existe (proyecto borrado, enlace viejo) se cae al

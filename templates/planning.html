@@ -1075,6 +1075,16 @@ function renderProjHead() {
 //  en un proyecto el índice se recoge y deja sitio a sus actividades, que es
 //  el detalle; volver a «Todos» lo despliega otra vez.
 // ——————————————————————————————————————————
+// En una tarjeta de doscientos píxeles, «Johanna Maricela Nievecela Loja» se
+// come la línea entera y la fecha de vencimiento se queda fuera. Se enseña
+// nombre y primer apellido, que es como se llama a la gente; el nombre
+// completo sigue estando en el título emergente.
+function nombreCorto(nombre) {
+  const partes = String(nombre || '').trim().split(/\s+/).filter(Boolean);
+  if (!partes.length) return '—';
+  return partes.length <= 2 ? partes.join(' ') : partes[0] + ' ' + partes[2];
+}
+
 function renderProjGrid() {
   const c = document.getElementById('projGrid');
   if (!c) return;
@@ -1127,7 +1137,7 @@ function renderProjGrid() {
         <span class="pc-txt">${esc(p.name)}</span>
       </div>
       <div class="pc-meta">
-        <span>👤 ${esc(p.owner || '—')}</span>
+        <span title="${esc(p.owner || '')}">👤 ${esc(nombreCorto(p.owner))}</span>
         ${p.due_date ? `<span>📅 ${fmtDate(p.due_date)}</span>` : '<span>♾️ Permanente</span>'}
       </div>
       <div class="prog-bar" style="width:100%">
