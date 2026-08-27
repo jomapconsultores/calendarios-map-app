@@ -713,6 +713,109 @@ def _build_google_event(apt, attendees):
 
 
 # ============================================================
+#  EL CALENDARIO DEL CORREO TIENE QUE DECIR LO MISMO QUE LA FICHA
+#
+#  Una cita vive en dos sitios: aquí y en el calendario de Google al que está
+#  atado el correo. Mientras los dos digan lo mismo, da igual dónde se mire.
+#  El problema aparece cuando dejan de decirlo: se mueve una cita al jueves y
+#  en el correo del cliente sigue estando el martes, o se cancela y allí sigue
+#  como si nada. El que la tiene apuntada no se entera, y el sistema tampoco
+#  sabe que no se enteró.
+#
+#  Por eso todo lo que le pase a una cita —moverla, editarla, cancelarla,
+#  borrarla— pasa por estas dos funciones, y todas avisan a los invitados
+#  (`sendUpdates='all'`): a quien se le puso una cita en su correo, enterarse
+#  de que cambió o de que ya no existe es parte de la cita.
+# ============================================================
+def _borrar_evento_google(app, apt, avisar=True):
+    """Quita de Google el evento de esta cita. True si allí ya no está.
+
+    Que el evento ya no exista NO es un fallo: el objetivo era justamente que
+    no estuviera. Por eso un 404 o un 410 cuentan como éxito."""
+    gid = apt.get('google_event_id')
+    if not gid:
+        return True                       # no había nada que quitar
+    creds = get_google_creds(app)
+    if not creds:
+        return False
+    try:
+        build('calendar', 'v3', credentials=creds).events().delete(
+            calendarId=apt.get('google_cal_id') or 'primary',
+            eventId=gid,
+            sendUpdates='all' if avisar else 'none').execute()
+        return True
+    except Exception as e:
+        texto = str(e)
+        if '404' in texto or '410' in texto or 'not found' in texto.lower() \
+                or 'deleted' in texto.lower():
+            return True
+        print(f'[google] no se pudo borrar el evento {gid}: {texto[:200]}')
+        return False
+
+
+def _reflejar_en_google(app, apt, cambios):
+    """Deja el evento de Google como quedó la cita después de los cambios.
+
+    Devuelve (parches, aviso): `parches` son las columnas que hay que guardar
+    además de los cambios pedidos —los identificadores del evento— y `aviso`
+    es el texto que hay que enseñarle a quien guardó cuando la ficha se pudo
+    actualizar pero el calendario no. Guardar en silencio en ese caso sería lo
+    peor de los dos mundos: la ficha diría una cosa, el correo otra, y nadie
+    tendría motivos para sospecharlo.
+
+    Mover la cita de calendario obliga a borrar y volver a crear —un evento no
+    salta de un calendario a otro—. Cualquier otro cambio, incluido el de
+    fecha, se hace SOBRE EL MISMO evento: así no queda un duplicado en la
+    fecha vieja y los invitados reciben la actualización del que ya tenían, en
+    vez de una invitación nueva a una cita que creían conocer."""
+    gid = apt.get('google_event_id')
+    if not gid:
+        return {}, None                   # la cita todavía no está en Google
+
+    viejo_cal = apt.get('calendar_id')
+    nuevo_cal = cambios.get('calendar_id', viejo_cal)
+    cambia_de_calendario = bool(cambios.get('calendar_id')) and nuevo_cal != viejo_cal
+
+    creds = get_google_creds(app)
+    if not creds:
+        return {}, ('Se guardaron los cambios, pero Google no está conectado: '
+                    'el evento del calendario NO se actualizó y sigue como estaba.')
+
+    todos = _get_calendar_config(app)
+    email_map, gcal_id_map = _make_cal_maps(todos)
+    fusion = {**apt, **cambios}
+    try:
+        service = build('calendar', 'v3', credentials=creds)
+        cuerpo = _build_google_event(fusion, _build_attendees(fusion, email_map))
+        if cambia_de_calendario:
+            # Primero se quita de donde estaba. Si esto falla, no se crea el
+            # nuevo: dos eventos para una sola cita es peor que uno mal puesto.
+            if not _borrar_evento_google(app, apt):
+                return {}, ('Se guardaron los cambios, pero no se pudo quitar el evento '
+                            'del calendario anterior. Revísalo antes de que queden dos.')
+            destino = gcal_id_map.get(nuevo_cal, 'primary')
+            creado = service.events().insert(
+                calendarId=destino, body=cuerpo, sendUpdates='all').execute()
+            return {'google_event_id': creado.get('id'), 'google_cal_id': destino}, None
+
+        service.events().update(
+            calendarId=apt.get('google_cal_id') or gcal_id_map.get(viejo_cal, 'primary'),
+            eventId=gid, body=cuerpo, sendUpdates='all').execute()
+        return {}, None
+    except Exception as e:
+        print(f'[google] no se pudo actualizar el evento {gid}: {str(e)[:200]}')
+        if cambia_de_calendario:
+            # El de antes ya se borró y el nuevo no llegó a crearse: se deja la
+            # ficha sin identificador para que «Reparar eventos» lo recree, en
+            # vez de apuntando a un evento que ya no existe.
+            return ({'google_event_id': None, 'google_cal_id': None},
+                    'Se guardaron los cambios, pero falló la sincronización con Google. '
+                    'Usa «Reparar eventos» para volver a crearlo.')
+        return {}, ('Se guardaron los cambios, pero no se pudo actualizar el evento en '
+                    'Google: el calendario del correo sigue con los datos anteriores.')
+
+
+# ============================================================
 #  GOOGLE CREDENTIALS
 # ============================================================
 def get_google_creds(app):
@@ -3150,7 +3253,7 @@ def create_app():
     # ============================================================
     APPT_SELECT_BASE = ('id,title,encargado,start_time,end_time,status,calendar_id,'
                         'tema,client_name,client_email,notes,lugar,direccion,mapa,'
-                        'ciudad,meeting_link,google_event_id')
+                        'ciudad,meeting_link,google_event_id,invitados')
     # Columnas de recurrencia — requieren la migración 002. El SELECT cae al
     # base automáticamente si todavía no existen (ver _events_query abajo).
     APPT_SELECT = APPT_SELECT_BASE + ',is_recurring,parent_event_id'
@@ -3197,6 +3300,11 @@ def create_app():
                     'direccion': e.get('direccion', ''), 'mapa': e.get('mapa', ''),
                     'ciudad': e.get('ciudad', ''), 'meeting_link': e.get('meeting_link', ''),
                     'google_event_id': e.get('google_event_id', ''),
+                    # Los invitados viajan para poder ENSEÑARLOS al editar. Sin
+                    # esto la ventana de edición salía con la lista vacía, y al
+                    # guardar dejaba el evento sin los invitados que tenía: el
+                    # cliente se quedaba fuera de su propia cita.
+                    'invitados': e.get('invitados', ''),
                     'is_recurring': is_rec,
                     'parent_event_id': e.get('parent_event_id', ''), 'id': e['id'],
                 },
@@ -3605,12 +3713,27 @@ def create_app():
         if not user_can('calendar.aprobar'):
             return jsonify({'success': False,
                             'error': 'No tienes permiso para rechazar citas.'}), 403
-        apts = app.supabase.get('appointments', {'id': aid}, select='id,calendar_id')
+        apts = app.supabase.get('appointments', {'id': aid},
+            select='id,calendar_id,google_event_id,google_cal_id')
         if not apts: return jsonify({'success': False})
-        if not is_admin() and not user_has_calendar_access(app, current_user.id, apts[0].get('calendar_id')):
+        apt = apts[0]
+        if not is_admin() and not user_has_calendar_access(app, current_user.id, apt.get('calendar_id')):
             return jsonify({'success': False, 'error': 'Sin autorizacion'})
-        app.supabase.update('appointments', aid, {'status': 'cancelled'})
-        return jsonify({'success': True})
+        # Cancelar es quitarla de la agenda de todos, no sólo de esta pantalla.
+        # Antes la fila quedaba en «cancelada» y el evento seguía intacto en el
+        # calendario del correo: el cliente se presentaba a una cita que aquí
+        # llevaba días anulada.
+        cambios = {'status': 'cancelled'}
+        aviso = None
+        if apt.get('google_event_id'):
+            if _borrar_evento_google(app, apt):
+                cambios['google_event_id'] = None
+                cambios['google_cal_id']   = None
+            else:
+                aviso = ('La cita quedó cancelada, pero no se pudo quitar del calendario '
+                         'de Google: sigue apareciendo en el correo. Revísalo.')
+        app.supabase.update('appointments', aid, cambios)
+        return jsonify({'success': True, 'warning': aviso})
 
     @app.route('/calendar/api/delete/<aid>', methods=['POST'])
     @login_required
@@ -3624,17 +3747,13 @@ def create_app():
         apt = apts[0]
         if not is_admin() and not user_has_calendar_access(app, current_user.id, apt.get('calendar_id')):
             return jsonify({'success': False, 'error': 'Sin autorizacion'})
-        if apt.get('google_event_id'):
-            creds = get_google_creds(app)
-            if creds:
-                gcal_id = apt.get('google_cal_id') or 'primary'
-                try:
-                    build('calendar', 'v3', credentials=creds).events().delete(
-                        calendarId=gcal_id, eventId=apt['google_event_id']).execute()
-                except Exception:
-                    pass
+        # Se borra también del calendario del correo, y avisando: a quien tenía
+        # la cita apuntada hay que decirle que ya no la tiene.
+        quitado = _borrar_evento_google(app, apt)
         app.supabase.delete('appointments', aid)
-        return jsonify({'success': True})
+        return jsonify({'success': True, 'warning': None if quitado else
+                        'La cita se eliminó aquí, pero no se pudo quitar del calendario '
+                        'de Google: sigue apareciendo en el correo.'})
 
     @app.route('/calendar/api/delete-series/<parent_id>', methods=['POST'])
     @login_required
@@ -3651,17 +3770,15 @@ def create_app():
         if not is_admin() and not user_has_calendar_access(
                 app, current_user.id, series[0].get('calendar_id')):
             return jsonify({'success': False, 'error': 'Sin autorizacion'})
-        creds = get_google_creds(app); deleted = 0
+        deleted = 0; quedaron = 0
         for apt in series:
-            if apt.get('google_event_id') and creds:
-                gcal_id = apt.get('google_cal_id') or 'primary'
-                try:
-                    build('calendar', 'v3', credentials=creds).events().delete(
-                        calendarId=gcal_id, eventId=apt['google_event_id']).execute()
-                except Exception:
-                    pass
+            if not _borrar_evento_google(app, apt):
+                quedaron += 1
             app.supabase.delete('appointments', apt['id']); deleted += 1
-        return jsonify({'success': True, 'deleted': deleted})
+        return jsonify({'success': True, 'deleted': deleted,
+                        'warning': None if not quedaron else
+                        f'{quedaron} evento(s) no se pudieron quitar del calendario de '
+                        'Google y siguen apareciendo en el correo.'})
 
     @app.route('/calendar/api/sync', methods=['POST'])
     @login_required
@@ -3755,14 +3872,34 @@ def create_app():
     # ============================================================
     #  APPOINTMENT UPDATE — re-sync Google Calendar on calendar change
     # ============================================================
+    # Campos que se pueden editar de una cita ya creada. `status` NO está: se
+    # aprueba y se cancela por sus propias puertas, que son las que avisan a
+    # quien toca. Y `google_event_id` tampoco: eso lo lleva el sistema.
+    CITA_EDITABLE = {'title', 'calendar_id', 'encargado', 'tema',
+                     'client_name', 'client_email', 'invitados',
+                     'lugar', 'direccion', 'ciudad', 'mapa',
+                     'notes', 'meeting_link', 'start_time', 'end_time'}
+    CITA_EN_MAYUSCULAS = {'title', 'encargado', 'lugar', 'ciudad', 'client_name'}
+    CITA_LARGOS = {'title': 200, 'calendar_id': 100, 'encargado': 100, 'tema': 300,
+                   'client_name': 150, 'client_email': 254, 'invitados': 1000,
+                   'lugar': 150, 'direccion': 300, 'ciudad': 100, 'mapa': 500,
+                   'notes': 1000, 'meeting_link': 500}
+
     @app.route('/calendar/api/appointment/<aid>', methods=['PATCH'])
     @login_required
     def api_update_appointment(aid):
-        """Update appointment fields.
-        If calendar_id changes and the appointment is confirmed, deletes the
-        old Google Calendar event and creates a new one in the correct calendar.
-        """
-        if not is_admin(): return jsonify({'success': False, 'error': 'Solo admin'})
+        """Edita una cita EN SU SITIO, sin crear otra.
+
+        Antes, editar desde la pantalla era borrar la cita y crear una nueva.
+        Eso dejaba tres cosas rotas: la cita cambiaba de identidad (y perdía su
+        aprobación, y su rastro), el borrado se lanzaba sin esperar a que
+        terminara —así que un fallo dejaba las dos—, y en el calendario del
+        correo quedaba el evento viejo en la fecha vieja. Mover una cita al
+        jueves tiene que dejarla el jueves en todas partes, no el jueves aquí y
+        el martes en el correo del cliente.
+
+        Acepta las fechas en los dos formatos: `start_time`/`end_time` en ISO, o
+        `date` + `time` + `duration` como los manda el formulario."""
         d = request.get_json() or {}
         if not d: return jsonify({'success': False, 'error': 'Sin datos'})
 
@@ -3770,53 +3907,71 @@ def create_app():
             select='id,calendar_id,google_event_id,google_cal_id,status,'
                    'title,encargado,tema,client_name,client_email,'
                    'start_time,end_time,invitados,lugar,direccion,ciudad,mapa,notes,meeting_link')
-        if not apts: return jsonify({'success': False, 'error': 'No encontrado'})
+        if not apts: return jsonify({'success': False, 'error': 'No encontrado'}), 404
         apt = apts[0]
 
-        new_cal_id = d.get('calendar_id')
-        old_cal_id = apt.get('calendar_id')
-        cal_changed = new_cal_id and new_cal_id != old_cal_id
-        is_confirmed = apt.get('status') == 'confirmed'
+        # Quien puede agendar en un calendario puede editar lo que hay en él.
+        # Se mira el de ANTES y el de DESPUÉS: mover una cita a un calendario
+        # ajeno es meterla donde no se tiene permiso, aunque se saque de uno
+        # propio.
+        if not is_admin():
+            if not user_can('calendar'):
+                return jsonify({'success': False, 'error': 'Sin acceso al Calendario'}), 403
+            for cal in (apt.get('calendar_id'), d.get('calendar_id')):
+                if cal and not user_has_calendar_access(app, current_user.id, cal):
+                    return jsonify({'success': False, 'error': 'Sin autorizacion para este calendario'}), 403
 
-        sync_warning = None
-        if cal_changed and apt.get('google_event_id') and is_confirmed:
-            creds = get_google_creds(app)
-            if creds:
-                all_cals = _get_calendar_config(app)
-                email_map, gcal_id_map = _make_cal_maps(all_cals)
-                try:
-                    service = build('calendar', 'v3', credentials=creds)
-                    # Borrar del calendario anterior
-                    old_gcal = apt.get('google_cal_id') or gcal_id_map.get(old_cal_id, 'primary')
-                    try:
-                        service.events().delete(
-                            calendarId=old_gcal, eventId=apt['google_event_id']).execute()
-                    except Exception:
-                        pass
-                    # Crear en el nuevo calendario
-                    merged = {**apt, **d}
-                    new_gcal = gcal_id_map.get(new_cal_id, 'primary')
-                    attendees = _build_attendees(merged, email_map)
-                    event = _build_google_event(merged, attendees)
-                    created = service.events().insert(
-                        calendarId=new_gcal, body=event, sendUpdates='all').execute()
-                    d['google_event_id'] = created.get('id')
-                    d['google_cal_id']   = new_gcal
-                except Exception as e:
-                    print(f'[api_update_appointment] Google error: {e}')
-                    # El evento anterior ya pudo haberse borrado en Google: no dejar el
-                    # google_event_id viejo apuntando a un evento que ya no existe.
-                    d['google_event_id'] = None
-                    d['google_cal_id']   = None
-                    sync_warning = ('Se guardaron los cambios, pero falló la sincronización '
-                                     'con Google Calendar. Usa "Reparar eventos" o vuelve a '
-                                     'intentar el cambio de calendario.')
-            else:
-                sync_warning = ('Se guardó el cambio de calendario, pero Google no está '
-                                 'conectado: el evento no se movió en Google Calendar.')
+        # --- fecha y hora: se admiten los dos formatos ---
+        if d.get('date') and d.get('time'):
+            try:
+                dur = max(15, min(1440, int(d.get('duration') or 30)))
+                local = TIMEZONE.localize(datetime.strptime(
+                    f"{d['date']} {d['time']}:00", '%Y-%m-%d %H:%M:%S'))
+                inicio = local.astimezone(pytz.UTC)
+                d['start_time'] = inicio.isoformat()
+                d['end_time']   = (inicio + timedelta(minutes=dur)).isoformat()
+            except Exception:
+                return jsonify({'success': False, 'error': 'Fecha u hora inválida'}), 400
 
-        ok = app.supabase.update('appointments', aid, d)
-        return jsonify({'success': ok, 'warning': sync_warning})
+        # Una cita virtual lleva enlace y una presencial no: si se cambia el
+        # tipo y no se limpia, el evento sale con un enlace de una reunión que
+        # ya no es virtual.
+        if d.get('type') == 'presencial':
+            d['meeting_link'] = ''
+
+        cambios = {}
+        for campo, valor in d.items():
+            if campo not in CITA_EDITABLE:
+                continue
+            if campo in CITA_LARGOS:
+                valor = _sanitize(valor if valor is not None else '', CITA_LARGOS[campo])
+                if campo in CITA_EN_MAYUSCULAS:
+                    valor = valor.upper()
+                if campo == 'client_email':
+                    valor = valor.lower()
+            cambios[campo] = valor
+        if not cambios:
+            return jsonify({'success': False, 'error': 'Nada que actualizar'})
+        if 'title' in cambios and not cambios['title']:
+            return jsonify({'success': False, 'error': 'El título es obligatorio'}), 400
+
+        # Los desplegables aprenden de lo que se escribe, igual que al agendar:
+        # si sólo aprendieran al crear, un título corregido al editar no
+        # volvería a aparecer nunca.
+        if cambios.get('ciudad'):    app.supabase.insert_ignore('ciudades', {'name': cambios['ciudad']})
+        if cambios.get('title'):     app.supabase.insert_ignore('appointment_titles', {'title': cambios['title']})
+        if cambios.get('encargado'): app.supabase.insert_ignore('encargados', {'name': cambios['encargado']})
+        if cambios.get('tema'):      app.supabase.insert_ignore('temas', {'description': cambios['tema']})
+
+        # El calendario del correo se toca ANTES de guardar: si allí no se pudo,
+        # se guarda igual pero diciéndolo. Lo que no puede pasar es que se
+        # guarde en silencio y los dos calendarios queden contándose cosas
+        # distintas sin que nadie lo sepa.
+        parches, aviso = _reflejar_en_google(app, apt, cambios)
+        cambios.update(parches)
+
+        ok = app.supabase.update('appointments', aid, cambios)
+        return jsonify({'success': ok, 'warning': aviso})
 
     # ============================================================
     #  PERSONAS ASIGNABLES

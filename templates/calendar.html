@@ -699,9 +699,23 @@ function editAppt(info) {
   // Hide recurring / sessions sections when editing
   document.getElementById('recurringBox').style.display = 'none';
   document.getElementById('sessionsBox').style.display = 'none';
-  document.getElementById('notifyList').innerHTML = '<div class="notify-row"><input class="form-control not-upper notify-email" placeholder="email@ejemplo.com"><button type="button" class="notify-rm" onclick="removeNotify(this)">×</button></div>';
+  // Los invitados que YA tiene la cita se enseñan. Antes la lista salía en
+  // blanco y al guardar se iban todos: mover una cita dejaba al cliente fuera
+  // del evento sin que nadie lo pidiera.
+  pintarInvitados((p.invitados || '').split(',').map(x => x.trim()).filter(Boolean));
   loadCiudades();
   modal.show();
+}
+
+// La lista de invitados, con una fila por correo y siempre una vacía al final
+// para poder añadir otro.
+function pintarInvitados(correos) {
+  const caja = document.getElementById('notifyList');
+  const fila = valor =>
+    `<div class="notify-row"><input class="form-control not-upper notify-email" ` +
+    `value="${esc(valor)}" placeholder="email@ejemplo.com">` +
+    `<button type="button" class="notify-rm" onclick="removeNotify(this)">×</button></div>`;
+  caja.innerHTML = (correos || []).map(fila).join('') + fila('');
 }
 
 function clearForm() {
@@ -882,10 +896,6 @@ function saveBooking() {
     return;
   }
 
-  if (editId) {
-    fetch('/calendar/api/delete/' + editId, { method: 'POST' });
-  }
-
   let durSel = document.getElementById('fDuration').value;
   let dur = durSel === 'custom' ? document.getElementById('fCustomDuration').value : durSel;
   let tipo = document.getElementById('fType').value;
@@ -897,6 +907,42 @@ function saveBooking() {
   let clientName = document.getElementById('fClient').value.trim().toUpperCase();
   let clientEmail = document.getElementById('fEmail').value.trim();
   let notes = document.getElementById('fNotes').value.trim();
+
+  // Editar es MOVER la cita, no borrarla y crear otra en su lugar. Antes se
+  // lanzaba el borrado sin esperarlo y se creaba una nueva a continuación: si
+  // el borrado fallaba —por ejemplo, porque quien edita no tiene permiso para
+  // eliminar— quedaban las dos, aquí y en el calendario del correo. Y la cita
+  // cambiaba de identidad en cada edición: perdía su aprobación y su rastro.
+  if (editId) {
+    let invitados = [];
+    document.querySelectorAll('.notify-email').forEach(i => {
+      let e = i.value.trim(); if (e) invitados.push(e);
+    });
+    fetch('/calendar/api/appointment/' + editId, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        title: title, calendar_id: calId, encargado: encargado, tema: tema,
+        client_name: clientName, client_email: clientEmail,
+        date: date, time: time, duration: dur, type: tipo,
+        lugar: lugar, direccion: direccion, mapa: mapa, ciudad: ciudad,
+        meeting_link: link, notes: notes, invitados: invitados.join(',')
+      })
+    })
+      .then(r => r.json())
+      .then(d => {
+        btn.disabled = false; btn.textContent = '✅ GUARDAR';
+        if (!d.success) { alert('❌ ' + (d.error || 'Error al guardar')); return; }
+        // Un aviso NO es un error: la cita se guardó, pero el calendario del
+        // correo puede haberse quedado atrás y eso hay que decirlo, no
+        // esconderlo detrás de un «guardado» en verde.
+        showToast('✅ Cita actualizada', 'success');
+        if (d.warning) alert('⚠️ ' + d.warning);
+        modal.hide(); cal.refetchEvents(); loadPending();
+      })
+      .catch(() => { btn.disabled = false; btn.textContent = '✅ GUARDAR'; alert('❌ Error de conexión'); });
+    return;
+  }
 
   let form = new FormData();
   form.append('title', title); form.append('calendar_id', calId);
@@ -928,9 +974,8 @@ function saveBooking() {
     .then(d => {
       btn.disabled = false; btn.textContent = '✅ GUARDAR';
       if (d.success) {
-        let msg = editId ? '✅ Cita actualizada' :
-          (useSessions ? `✅ ${d.count} sesiones creadas` :
-            (d.recurring ? `✅ ${d.count} eventos creados como serie recurrente${d.capped ? ' (tope máximo alcanzado)' : ''}` : '✅ Cita creada'));
+        let msg = useSessions ? `✅ ${d.count} sesiones creadas` :
+          (d.recurring ? `✅ ${d.count} eventos creados como serie recurrente${d.capped ? ' (tope máximo alcanzado)' : ''}` : '✅ Cita creada');
         showToast(msg, 'success');
         modal.hide();
         cal.refetchEvents();
@@ -951,8 +996,9 @@ function deleteAppt() {
   if (!editId) return;
   if (!confirm('¿Eliminar esta cita?')) return;
   fetch('/calendar/api/delete/' + editId, { method: 'POST' })
-    .then(r => r.json()).then(() => {
+    .then(r => r.json()).then(d => {
       showToast('🗑️ Cita eliminada', 'warning');
+      if (d && d.warning) alert('⚠️ ' + d.warning);
       modal.hide(); cal.refetchEvents(); loadPending();
     });
 }
@@ -964,6 +1010,7 @@ function deleteSeries() {
     .then(r => r.json()).then(d => {
       if (d.success) showToast(`🗑️ Serie eliminada (${d.deleted} eventos)`, 'warning');
       else alert('❌ ' + (d.error || 'Error'));
+      if (d && d.warning) alert('⚠️ ' + d.warning);
       modal.hide(); cal.refetchEvents(); loadPending();
     });
 }
@@ -1005,8 +1052,11 @@ function apr(id) {
 
 function rej(id) {
   if (confirm('¿Rechazar esta cita?')) {
-    fetch('/calendar/api/reject/' + id, { method: 'POST' }).then(r => r.json()).then(() => {
-      showToast('Cita rechazada', 'warning');
+    fetch('/calendar/api/reject/' + id, { method: 'POST' }).then(r => r.json()).then(d => {
+      showToast('Cita cancelada', 'warning');
+      // Cancelar la quita también del calendario del correo. Si eso falló hay
+      // que decirlo: el cliente seguiría viéndola en su agenda.
+      if (d && d.warning) alert('⚠️ ' + d.warning);
       cal.refetchEvents(); loadPending();
     });
   }
