@@ -453,7 +453,7 @@ body {
 
 /* Zona central: densidad controlada y ancho máximo para que no se estire
    sin límite en monitores anchos (se veía enorme y descuadrado). */
-.content { padding: 18px 22px 26px; flex: 1; width: 100%; max-width: 1400px; margin: 0 auto; }
+.content { padding: 13px 16px 20px; flex: 1; width: 100%; max-width: 1400px; margin: 0 auto; }
 
 .sidebar-backdrop {
     display: none;
@@ -490,9 +490,9 @@ body {
 /* Module cards on dashboard */
 .module-card {
     background: var(--white);
-    border-radius: 12px;
+    border-radius: 10px;
     box-shadow: var(--shadow);
-    padding: 15px;
+    padding: 11px 12px;
     height: 100%;
     transition: var(--transition);
     border: 1px solid var(--border);
@@ -502,15 +502,15 @@ body {
 }
 .module-card:hover { transform: translateY(-2px); box-shadow: var(--shadow-md); color: inherit; border-color: #cbd5e1; }
 .module-card .m-icon {
-    width: 38px; height: 38px;
-    border-radius: 10px;
+    width: 32px; height: 32px;
+    border-radius: 9px;
     display: grid; place-items: center;
-    font-size: 1rem;
-    margin-bottom: 10px;
+    font-size: var(--fs-md);
+    margin-bottom: 7px;
 }
 .module-card h6 { font-weight: 700; margin: 0 0 2px; font-size: .8125rem; }
 .module-card .m-sub { color: var(--gray); font-size: .75rem; margin: 0; line-height: 1.35; }
-.module-card .m-value { font-size: 1.25rem; font-weight: 800; color: var(--dark); font-variant-numeric: tabular-nums; }
+.module-card .m-value { font-size: var(--fs-xl); font-weight: 800; color: var(--dark); font-variant-numeric: tabular-nums; }
 
 /* ============================================
    STAT TILES — fila de indicadores del panel
@@ -986,9 +986,9 @@ textarea.form-control { resize: vertical; min-height: 70px; }
    después, si quedaba sitio, los datos por los que se abre la pantalla. La
    cifra sigue siendo lo primero que se lee, pero ya no a costa de todo. */
 .stat-card {
-    background: var(--white); border-radius: 14px; padding: 10px 14px;
-    border: 1.5px solid var(--border); display: flex; flex-direction: column; gap: 2px;
-    box-shadow: 0 1px 3px rgba(0,0,0,.05); transition: var(--transition);
+    background: var(--white); border-radius: 10px; padding: 7px 11px;
+    border: 1px solid var(--border); display: flex; flex-direction: column; gap: 1px;
+    transition: var(--transition);
     position: relative; overflow: hidden;
 }
 .stat-card::before {
@@ -996,8 +996,8 @@ textarea.form-control { resize: vertical; min-height: 70px; }
     background: var(--gray); opacity: .55;
 }
 .stat-card:hover { transform: translateY(-1px); box-shadow: 0 6px 16px rgba(0,0,0,.07); }
-.stat-card .sc-num { font-size: 1.25rem; font-weight: 700; line-height: 1; color: var(--dark); }
-.stat-card .sc-lbl { font-size: .6875rem; color: var(--gray); font-weight: 500; }
+.stat-card .sc-num { font-size: var(--fs-xl); font-weight: 700; line-height: 1; color: var(--dark); }
+.stat-card .sc-lbl { font-size: var(--fs-3xs); color: var(--gray); font-weight: 500; }
 .stat-card.info::before    { background: var(--primary); opacity: 1; }
 .stat-card.success::before { background: #10b981; opacity: 1; }
 .stat-card.warning::before { background: #f59e0b; opacity: 1; }
@@ -1007,19 +1007,25 @@ textarea.form-control { resize: vertical; min-height: 70px; }
 .stat-card.warning .sc-num { color: #f59e0b; }
 .stat-card.danger .sc-num  { color: #ef4444; }
 
-/* ---- Barra de herramientas de módulo ---- */
+/* ---- Barra de herramientas de módulo ----
+   Es el mando de la pantalla, no su contenido. Con 9 px de relleno, botones a
+   tamaño natural y 14 px de margen, las barras de arriba se comían el primer
+   tercio de la pantalla y el trabajo empezaba por debajo del pliegue. */
 .mod-toolbar {
-    display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 14px;
-    background: var(--white); border: 1.5px solid var(--border); border-radius: 14px;
-    padding: 9px 12px;
+    display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 10px;
+    background: var(--white); border: 1px solid var(--border); border-radius: 10px;
+    padding: 6px 9px;
 }
+.mod-toolbar .btn { font-size: var(--fs-xs); padding: 3px 11px; }
+.mod-toolbar .form-control, .mod-toolbar .form-select { font-size: var(--fs-xs); padding: 4px 9px; }
+.mod-toolbar .form-select { padding-right: 26px; }
 .mod-toolbar .mt-sep { width: 1px; align-self: stretch; background: var(--border); margin: 0 2px; }
 .mod-toolbar .mt-push { flex: 1; }
 
 /* ---- Estado vacío ---- */
-.mod-empty { text-align: center; color: var(--gray); padding: 44px 16px; }
-.mod-empty .me-ic { font-size: 2.5rem; margin-bottom: 6px; }
-.mod-empty p { font-size: .875rem; margin: 6px 0 14px; }
+.mod-empty { text-align: center; color: var(--gray); padding: 26px 16px; }
+.mod-empty .me-ic { font-size: var(--fs-3xl); margin-bottom: 4px; }
+.mod-empty p { font-size: var(--fs-sm); margin: 5px 0 11px; }
 
 /* ============================================
    CONTADORES EN EL MENÚ
