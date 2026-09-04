@@ -50,6 +50,7 @@
   {% elif path.startswith('/admin/users') %}{% set ns.active_key = 'users' %}
   {% elif path.startswith('/admin/database') %}{% set ns.active_key = 'database' %}
   {% elif path.startswith('/admin/browser-sync') %}{% set ns.active_key = 'browser-sync' %}
+  {% elif path.startswith('/admin/cuentas') %}{% set ns.active_key = 'cuentas' %}
   {% endif %}
 
   <!-- ============ MENÚ LATERAL IZQUIERDO (2 columnas: riel + panel) ============ -->
@@ -124,12 +125,13 @@
         <div class="rail-section"><span>Enlaces</span></div>
 
         {% if google_connected_global %}
-        <a class="rail-btn" style="cursor:default" data-panel="integraciones" data-group title="Integraciones — Google Calendar conectado">
+        <a href="/admin/cuentas" class="rail-btn {{ 'active' if ns.active_key == 'cuentas' }}" data-panel="integraciones" data-group title="Integraciones — Todas las cuentas de agenda conectadas">
           <span class="rail-ic">🔗</span><span class="rail-label">Integraciones</span>
         </a>
         {% else %}
-        <a href="/auth/google" class="rail-btn" data-panel="integraciones" data-group title="Integraciones — Conectar Google Calendar">
+        <a href="/admin/cuentas" class="rail-btn {{ 'active' if ns.active_key == 'cuentas' }}" data-panel="integraciones" data-group title="Integraciones — Hay cuentas de agenda por conectar">
           <span class="rail-ic">🔗</span><span class="rail-label">Integraciones</span>
+          <span class="nav-badge tono-aviso">{{ google_cuentas_pendientes|length or '' }}</span>
         </a>
         {% endif %}
         {% endif %}
@@ -262,9 +264,9 @@
           <div class="panel-head"><span class="panel-head-ic">🔗</span><span><span class="panel-title">Integraciones</span><span class="panel-sub">Servicios externos conectados</span></span></div>
           <ul class="panel-links">
             {% if google_connected_global %}
-            <li><a class="pill-link" style="cursor:default"><span class="pl-t">🔗 Google Calendar <span class="nav-pill" style="background:#dcfce7;color:#166534">Conectado</span></span><span class="pl-d">Las citas se sincronizan solas</span></a></li>
+            <li><a href="/admin/cuentas" class="pill-link"><span class="pl-t">📮 Cuentas de agenda <span class="nav-pill" style="background:#dcfce7;color:#166534">Todas</span></span><span class="pl-d">Cada calendario agenda desde su cuenta</span></a></li>
             {% else %}
-            <li><a href="/auth/google" class="pill-link"><span class="pl-t">🔗 Google Calendar <span class="nav-pill" style="background:#fee2e2;color:#991b1b">Conectar</span></span><span class="pl-d">Para sincronizar tus citas</span></a></li>
+            <li><a href="/admin/cuentas" class="pill-link"><span class="pl-t">📮 Cuentas de agenda <span class="nav-pill" style="background:#fee2e2;color:#991b1b">Faltan {{ google_cuentas_pendientes|length }}</span></span><span class="pl-d">{{ google_cuentas_pendientes | join(', ') }}</span></a></li>
             {% endif %}
             {# El puente con ATLAS existe y funciona, pero no figuraba en ningún
                menú: sólo se llegaba a él por un botón dentro del calendario. #}
@@ -301,9 +303,9 @@
         {% block topbar_actions %}
         {% if is_adm %}
           {% if google_connected_global %}
-          <span class="status-pill on">✅ Google</span>
+          <span class="status-pill on">✅ Agendas</span>
           {% else %}
-          <a href="/auth/google" class="status-pill off">🔗 Conectar Google</a>
+          <a href="/admin/cuentas" class="status-pill off" title="{{ google_cuentas_pendientes | join(', ') }}">🔗 Conectar {{ google_cuentas_pendientes|length }} cuenta(s)</a>
           {% endif %}
         {% endif %}
         {% endblock %}

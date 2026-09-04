@@ -317,6 +317,29 @@
     </div>
   </div>
 </div>
+
+{# Lo que agendaron otros. Es una ficha de LECTURA a propósito: se puede mirar y
+   se puede dar por visto, pero no editar ni borrar, porque el evento no vive
+   aquí — vive en la agenda de quien lo convocó. #}
+<div class="modal fade" id="externoModal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content border-0 shadow">
+      <div class="modal-header" style="background:linear-gradient(135deg,#64748b,#94a3b8);color:#fff">
+        <h6 class="modal-title">↙ Te agendaron esto</h6>
+        <button class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <h5 id="exTitulo" class="mb-2"></h5>
+        <table class="table table-sm mb-2"><tbody id="exDatos"></tbody></table>
+        <div id="exNotas" class="small text-muted" style="white-space:pre-wrap"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-light" data-bs-dismiss="modal">Cerrar</button>
+        <button class="btn btn-outline-primary btn-sm" id="exVisto" onclick="marcarVisto()">Dar por visto</button>
+      </div>
+    </div>
+  </div>
+</div>
 {% endblock %}
 
 {% block scripts %}
@@ -325,7 +348,9 @@
 <script src='https://cdn.jsdelivr.net/npm/fullcalendar@5.11.3/locales/es.js'></script>
 
 <script>
-let cal, modal, clientModal, clientsData = [], editId = null, editParentId = null;
+let cal, modal, clientModal, externoModal, clientsData = [], editId = null, editParentId = null;
+let externoActual = null;
+const CSRF_TOKEN = document.querySelector('meta[name="csrf-token"]').content;
 const DEFAULTS_T = ['REUNIÓN','WEBINAR','CAPACITACIÓN','CONSULTA','ENTREVISTA','ASESORÍA','TALLER','VISITA'];
 const DEFAULTS_E = ['MAP'];
 
@@ -350,6 +375,7 @@ document.addEventListener('DOMContentLoaded', function () {
 
   modal = new bootstrap.Modal(document.getElementById('myModal'));
   clientModal = new bootstrap.Modal(document.getElementById('clientModal'));
+  externoModal = new bootstrap.Modal(document.getElementById('externoModal'));
   document.getElementById('fDate').min = new Date().toISOString().split('T')[0];
 
   setupAutocomplete('fTitle', 'sugTitle', '/calendar/api/titles', DEFAULTS_T);
@@ -649,6 +675,65 @@ function openModal(calId) {
 
 function quickBook(calId) { openModal(calId); }
 
+// ---- Lo que agendaron otros: ficha de lectura ----
+const RESPUESTAS = {
+  accepted: 'Aceptada', declined: 'Rechazada',
+  tentative: 'Provisional', needsAction: 'Sin responder'
+};
+
+function verEventoExterno(evento, p) {
+  externoActual = p.id;
+  document.getElementById('exTitulo').textContent = p.title || '(sin título)';
+
+  const cuando = evento.start
+    ? evento.start.toLocaleString('es-EC', { dateStyle: 'full', timeStyle: 'short' })
+    : '';
+  const filas = [
+    ['Cuándo', cuando],
+    ['Convoca', p.organizador_nombre || p.organizador],
+    ['Entró por', p.cuenta + (p.calendario ? ' · ' + p.calendario : '')],
+    ['Dónde', p.lugar],
+    ['Enlace', p.meeting_link],
+    ['Invitados', p.invitados],
+    ['Tu respuesta', RESPUESTAS[p.mi_respuesta] || p.mi_respuesta],
+  ];
+  document.getElementById('exDatos').innerHTML = filas
+    .filter(([, v]) => v)
+    .map(([k, v]) => {
+      const valor = (k === 'Enlace')
+        ? `<a href="${v}" target="_blank" rel="noopener">${v}</a>`
+        : escapeHtml(v);
+      return `<tr><td class="text-muted" style="width:35%">${k}</td><td>${valor}</td></tr>`;
+    }).join('');
+  document.getElementById('exNotas').textContent = p.notes || '';
+
+  const btn = document.getElementById('exVisto');
+  btn.disabled = !!p.visto;
+  btn.textContent = p.visto ? 'Ya visto' : 'Dar por visto';
+  externoModal.show();
+}
+
+function escapeHtml(t) {
+  const d = document.createElement('div');
+  d.textContent = t == null ? '' : String(t);
+  return d.innerHTML;
+}
+
+async function marcarVisto() {
+  if (!externoActual) return;
+  const r = await fetch(`/calendar/api/entrantes/${externoActual}/visto`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF_TOKEN }
+  }).then(x => x.json()).catch(() => ({ success: false }));
+  if (r.success) {
+    document.getElementById('exVisto').disabled = true;
+    document.getElementById('exVisto').textContent = 'Ya visto';
+    cal.refetchEvents();
+  } else {
+    showToast('No se pudo marcar como visto', 'warning');
+  }
+}
+
 function editAppt(info) {
   let p = info.event.extendedProps;
   // Los feriados no son citas: mostrar detalle informativo y salir
@@ -657,6 +742,13 @@ function editAppt(info) {
     let real = p.trasladado ? ' · original: ' + p.fecha_real + ' (trasladado por ley)' : '';
     let ver  = p.verificado ? '✅ oficial confirmado' : '⚠️ proyección (sin confirmar)';
     showToast(ambito + ': ' + p.nombre + ' — ' + ver + real, p.verificado ? 'info' : 'warning');
+    return;
+  }
+  // Lo que agendaron OTROS. No se edita desde aquí: sobre esto la plataforma no
+  // manda, y abrir el formulario de citas daría a entender que sí. Se enseña
+  // quién convoca y desde qué cuenta entró, que es lo que hace falta saber.
+  if (p && p.externo) {
+    verEventoExterno(info.event, p);
     return;
   }
   editId = info.event.id;

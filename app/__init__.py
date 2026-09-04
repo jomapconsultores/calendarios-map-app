@@ -70,6 +70,8 @@ from . import atlas_sync as _atlas
 from . import avisos as _avisos
 from . import semaforo as _semaforo
 from . import bitacora as _bitacora
+from . import invitaciones as _invitaciones
+from . import agenda_entrante as _entrante
 
 load_dotenv()
 os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
@@ -555,6 +557,27 @@ class SupabaseAPI:
             print(f'[supabase.insert_on_conflict] {table}: {e}')
             return None
 
+    def upsert(self, table, data, on_conflict, timeout=None):
+        """Inserta, y si la fila ya está, la ACTUALIZA (merge-duplicates).
+
+        `insert_on_conflict` descarta lo que choca —bien para lo que no cambia
+        nunca, como un apunte de bitácora—; esto es para lo contrario: lo que
+        se vuelve a leer de fuera en cada pasada y tiene que quedar como está
+        ahora, no como estaba la primera vez que se vio.
+        """
+        h = {'Prefer': 'resolution=merge-duplicates,return=minimal'}
+        try:
+            r = self._session.post(
+                f'{self.url}/rest/v1/{table}?on_conflict={on_conflict}',
+                headers=h, json=data, timeout=timeout or self._timeout)
+            if r.status_code in (200, 201, 204):
+                return True
+            print(f'[supabase.upsert] {table}: HTTP {r.status_code} {r.text[:120]}')
+            return False
+        except Exception as e:
+            print(f'[supabase.upsert] {table}: {e}')
+            return False
+
     def update(self, table, id_val, data, id_col='id'):
         h = {'Prefer': 'return=minimal'}
         try:
@@ -735,7 +758,9 @@ def _borrar_evento_google(app, apt, avisar=True):
     gid = apt.get('google_event_id')
     if not gid:
         return True                       # no había nada que quitar
-    creds = get_google_creds(app)
+    # En la cuenta donde se creó, no en la que hoy figure en la configuración:
+    # un evento no se borra desde otra cuenta.
+    creds = get_google_creds(app, cuenta_de_la_cita(app, apt))
     if not creds:
         return False
     try:
@@ -753,6 +778,57 @@ def _borrar_evento_google(app, apt, avisar=True):
         return False
 
 
+def _secuencia_ics(app, apt, incrementar=False):
+    """El número de versión de la invitación por correo.
+
+    Un cliente de calendario sólo se cree una actualización si viene con un
+    SEQUENCE mayor que el que ya tiene: mandar la modificación con el mismo
+    número deja al que la recibe con la cita vieja y sin saberlo."""
+    actual = int(apt.get('ics_sequence') or 0)
+    if 'ics_sequence' not in apt:
+        # No venía en el SELECT (o la 033 aún no está aplicada y la columna no
+        # existe, en cuyo caso esto devuelve vacío y se empieza por cero).
+        filas = app.supabase.get('appointments', {'id': apt.get('id')}, select='ics_sequence')
+        actual = int(((filas[0].get('ics_sequence') if filas else 0)) or 0)
+    if incrementar:
+        actual += 1
+        try:
+            app.supabase.update('appointments', apt['id'], {'ics_sequence': actual})
+        except Exception:
+            pass
+    return actual
+
+
+def retirar_de_la_agenda(app, apt, avisar=True):
+    """Quita la cita de donde esté: del calendario de Google si nació ahí, o
+    con una cancelación por correo si salió como invitación.
+
+    Es la puerta única de «esto ya no existe». Antes sólo sabía de Google, y
+    una cita de csccue cancelada aquí seguía intacta en el calendario de quien
+    la recibió: se había mandado por correo y por correo había que retirarla.
+
+    Manda dónde ESTÁ la cita, no dónde saldría hoy: una cita creada cuando su
+    calendario todavía agendaba por Google tiene un evento de Google que hay
+    que borrar, aunque ese calendario haya pasado después a una cuenta de
+    Microsoft. Mirar sólo la configuración de hoy dejaría ese evento colgado en
+    el calendario del cliente para siempre."""
+    if apt.get('google_event_id'):
+        return _borrar_evento_google(app, apt, avisar=avisar)
+    cals = _get_calendar_config(app)
+    proveedor = _proveedor_map(cals).get(apt.get('calendar_id'), 'google')
+    if proveedor == 'google':
+        return True             # nunca llegó a Google: no hay nada que quitar
+    if not avisar:
+        return True             # no hay nada que borrar: nunca hubo evento propio
+    cuenta = cuenta_de_la_cita(app, apt)
+    email_map, _ = _make_cal_maps(cals)
+    _, error = _invitaciones.enviar_cancelacion(
+        app, apt, cuenta, email_map, secuencia=_secuencia_ics(app, apt, incrementar=True))
+    if error:
+        print(f'[invitaciones] no se pudo cancelar la cita {apt.get("id")}: {error}')
+    return not error
+
+
 def _reflejar_en_google(app, apt, cambios):
     """Deja el evento de Google como quedó la cita después de los cambios.
 
@@ -768,25 +844,59 @@ def _reflejar_en_google(app, apt, cambios):
     fecha, se hace SOBRE EL MISMO evento: así no queda un duplicado en la
     fecha vieja y los invitados reciben la actualización del que ya tenían, en
     vez de una invitación nueva a una cita que creían conocer."""
+    todos_cals = _get_calendar_config(app)
+    fusion_cal = cambios.get('calendar_id', apt.get('calendar_id'))
+    # Si la cita ya tiene evento en Google, se sigue llevando por Google aunque
+    # su calendario haya cambiado de cuenta después: el evento existe y hay que
+    # actualizarlo donde está, no mandar una invitación por correo y dejar el
+    # otro en pie diciendo lo de antes.
+    if not apt.get('google_event_id') \
+            and _proveedor_map(todos_cals).get(fusion_cal, 'google') != 'google':
+        # Cita que sale por correo: la actualización es otra invitación con el
+        # número de versión subido. El cliente de calendario del que la recibió
+        # la reconoce por el UID y REEMPLAZA la que tenía, en vez de añadir una
+        # segunda reunión a la misma hora.
+        if apt.get('status') != 'confirmed':
+            return {}, None               # todavía no se ha convocado a nadie
+        cuenta = _cuenta_map(todos_cals).get(fusion_cal) or GOOGLE_ACCOUNT_EMAIL
+        email_map, _ = _make_cal_maps(todos_cals)
+        _, error = _invitaciones.enviar_invitacion(
+            app, {**apt, **cambios}, cuenta, email_map,
+            secuencia=_secuencia_ics(app, apt, incrementar=True))
+        if error:
+            return {'google_account': cuenta}, (
+                'Se guardaron los cambios, pero no se pudo avisar por correo a los '
+                f'invitados desde {cuenta}: siguen con los datos anteriores. ({error})')
+        return {'google_account': cuenta}, None
+
     gid = apt.get('google_event_id')
     if not gid:
         return {}, None                   # la cita todavía no está en Google
 
     viejo_cal = apt.get('calendar_id')
     nuevo_cal = cambios.get('calendar_id', viejo_cal)
-    cambia_de_calendario = bool(cambios.get('calendar_id')) and nuevo_cal != viejo_cal
 
-    creds = get_google_creds(app)
+    email_map, gcal_id_map = _make_cal_maps(todos_cals)
+    cuenta_map = _cuenta_map(todos_cals)
+
+    cuenta_vieja = cuenta_de_la_cita(app, apt)
+    cuenta_nueva = cuenta_map.get(nuevo_cal) or GOOGLE_ACCOUNT_EMAIL
+    # Cambiar de calendario obliga a rehacer el evento; cambiar de CUENTA,
+    # todavía más: un evento no se pasa de una cuenta de Google a otra, hay que
+    # quitarlo de la primera y volver a convocarlo desde la segunda.
+    cambia_de_calendario = (bool(cambios.get('calendar_id')) and nuevo_cal != viejo_cal) \
+        or cuenta_nueva != cuenta_vieja
+
+    creds = get_google_creds(app, cuenta_nueva)
     if not creds:
-        return {}, ('Se guardaron los cambios, pero Google no está conectado: '
-                    'el evento del calendario NO se actualizó y sigue como estaba.')
+        return {}, (f'Se guardaron los cambios, pero la cuenta {cuenta_nueva} no está '
+                    'conectada: el evento del calendario NO se actualizó y sigue como '
+                    'estaba. Conéctala en /auth/google.')
 
-    todos = _get_calendar_config(app)
-    email_map, gcal_id_map = _make_cal_maps(todos)
     fusion = {**apt, **cambios}
     try:
         service = build('calendar', 'v3', credentials=creds)
-        cuerpo = _build_google_event(fusion, _build_attendees(fusion, email_map))
+        cuerpo = _build_google_event(fusion, _build_attendees(fusion, email_map, cuenta_nueva))
         if cambia_de_calendario:
             # Primero se quita de donde estaba. Si esto falla, no se crea el
             # nuevo: dos eventos para una sola cita es peor que uno mal puesto.
@@ -796,7 +906,8 @@ def _reflejar_en_google(app, apt, cambios):
             destino = gcal_id_map.get(nuevo_cal, 'primary')
             creado = service.events().insert(
                 calendarId=destino, body=cuerpo, sendUpdates='all').execute()
-            return {'google_event_id': creado.get('id'), 'google_cal_id': destino}, None
+            return {'google_event_id': creado.get('id'), 'google_cal_id': destino,
+                    'google_account': cuenta_nueva}, None
 
         service.events().update(
             calendarId=apt.get('google_cal_id') or gcal_id_map.get(viejo_cal, 'primary'),
@@ -808,7 +919,8 @@ def _reflejar_en_google(app, apt, cambios):
             # El de antes ya se borró y el nuevo no llegó a crearse: se deja la
             # ficha sin identificador para que «Reparar eventos» lo recree, en
             # vez de apuntando a un evento que ya no existe.
-            return ({'google_event_id': None, 'google_cal_id': None},
+            return ({'google_event_id': None, 'google_cal_id': None,
+                     'google_account': None},
                     'Se guardaron los cambios, pero falló la sincronización con Google. '
                     'Usa «Reparar eventos» para volver a crearlo.')
         return {}, ('Se guardaron los cambios, pero no se pudo actualizar el evento en '
@@ -818,9 +930,15 @@ def _reflejar_en_google(app, apt, cambios):
 # ============================================================
 #  GOOGLE CREDENTIALS
 # ============================================================
-def get_google_creds(app):
+def get_google_creds(app, email=None):
+    """Credenciales de UNA cuenta de Google. Sin `email`, la cuenta histórica.
+
+    Devuelve None si esa cuenta no está conectada, y eso ya no significa que el
+    sistema esté desconectado: puede haber seis cuentas al día y una sin
+    autorizar. Quien llame tiene que decir de cuál habla."""
     try:
-        tokens = app.supabase.get('google_tokens', {'email': GOOGLE_ACCOUNT_EMAIL})
+        tokens = app.supabase.get('google_tokens',
+                                  {'email': email or GOOGLE_ACCOUNT_EMAIL})
         if not tokens:
             return None
         t = tokens[0]
@@ -867,14 +985,34 @@ def _save_token_fields(app, token_id, creds):
     if not app.supabase.update('google_tokens', token_id, data) and creds.expiry:
         app.supabase.update('google_tokens', token_id, {'token': creds.token, 'refresh_token': creds.refresh_token})
 
-def save_google_creds(app, creds):
+def email_de_las_credenciales(creds):
+    """A qué cuenta pertenece este permiso recién concedido.
+
+    Se le pregunta a Google en vez de fiarse de lo que se pidió: el usuario
+    puede elegir en la pantalla de Google una cuenta distinta de la que se le
+    sugirió, y guardar el token bajo el correo equivocado es peor que no
+    guardarlo — la plataforma creería estar agendando en una cuenta mientras
+    escribe en otra. El id del calendario 'primary' ES la dirección de la
+    cuenta, así que no hace falta pedir ningún permiso adicional."""
+    try:
+        primario = build('calendar', 'v3', credentials=creds) \
+            .calendarList().get(calendarId='primary').execute()
+        correo = (primario.get('id') or '').strip().lower()
+        return correo or None
+    except Exception as e:
+        print(f'[google] no se pudo identificar la cuenta autorizada: {str(e)[:200]}')
+        return None
+
+
+def save_google_creds(app, creds, email=None):
     """Update-si-existe / insert-si-no, para no dejar la cuenta sin token si el
     guardado falla a mitad de camino (antes se borraba la fila antes de insertar)."""
-    existing = app.supabase.get('google_tokens', {'email': GOOGLE_ACCOUNT_EMAIL})
+    cuenta = (email or GOOGLE_ACCOUNT_EMAIL).strip().lower()
+    existing = app.supabase.get('google_tokens', {'email': cuenta})
     refresh_token = creds.refresh_token
     if not refresh_token and existing and existing[0].get('refresh_token'):
         refresh_token = existing[0]['refresh_token']
-    data = {'email': GOOGLE_ACCOUNT_EMAIL, 'token': creds.token, 'refresh_token': refresh_token}
+    data = {'email': cuenta, 'token': creds.token, 'refresh_token': refresh_token}
     if creds.expiry:
         data['token_expiry'] = creds.expiry.isoformat()
     if existing:
@@ -889,17 +1027,40 @@ def save_google_creds(app, creds):
             result = app.supabase.insert('google_tokens', data)
         ok = bool(result)
     if not ok:
-        print(f'[save_google_creds] fallo al guardar credenciales de Google para {GOOGLE_ACCOUNT_EMAIL}')
+        print(f'[save_google_creds] fallo al guardar credenciales de Google para {cuenta}')
     _google_cache.invalidate_prefix('google_status_')  # bust cache on reconnect
     if ok:
         # Reconexión manual recién hecha: se limpia el estado de avería y se
         # suben las citas que quedaron sin evento mientras estuvo caído.
         _guardar_estado_google(app, {'estado': 'ok', 'error': None, 'notificado_en': None})
         try:
-            resincronizar_citas_google(app, creds)
+            resincronizar_citas_google(app)
         except Exception as e:
             print(f'[google] resincronización tras reconectar: {e}')
     return ok
+
+
+def cuentas_google_conectadas(app):
+    """Correos de las cuentas de Google que ahora mismo tienen permiso vivo."""
+    try:
+        filas = app.supabase.get('google_tokens', select='email,refresh_token') or []
+    except Exception:
+        return []
+    return [f['email'] for f in filas if f.get('email') and f.get('refresh_token')]
+
+
+def cuentas_google_que_agendan(app):
+    """Cuentas de las que sale al menos un calendario, estén conectadas o no.
+
+    Es la lista que hay que tener autorizada para que todo el calendario
+    funcione; comparada con `cuentas_google_conectadas` dice exactamente qué
+    falta por conectar, en vez de un «Google desconectado» que no distingue
+    entre ninguna cuenta y una de siete."""
+    cals = _get_calendar_config(app)
+    proveedores = _proveedor_map(cals)
+    cuentas = {c for cal_id, c in _cuenta_map(cals).items()
+               if proveedores.get(cal_id, 'google') == 'google'}
+    return sorted(cuentas)
 
 
 # ============================================================
@@ -974,17 +1135,18 @@ def _es_avería_permanente(err):
     return _is_invalid_grant(err)
 
 
-def refrescar_token_google(app, intentos=3, espera_inicial=2):
-    """Renueva el token reintentando los fallos pasajeros.
+def refrescar_token_google(app, intentos=3, espera_inicial=2, email=None):
+    """Renueva el token de UNA cuenta reintentando los fallos pasajeros.
 
     Devuelve (creds|None, estado, mensaje_error). `estado` es 'ok', 'reauth'
     (hace falta reconectar a mano) o 'transitorio' (falló, pero se reintentará)."""
+    cuenta = email or GOOGLE_ACCOUNT_EMAIL
     try:
-        tokens = app.supabase.get('google_tokens', {'email': GOOGLE_ACCOUNT_EMAIL})
+        tokens = app.supabase.get('google_tokens', {'email': cuenta})
     except Exception as e:
         return None, 'transitorio', f'No se pudo leer el token guardado: {str(e)[:120]}'
     if not tokens:
-        return None, 'reauth', 'No hay ninguna cuenta de Google conectada'
+        return None, 'reauth', f'La cuenta {cuenta} no está conectada'
     fila = tokens[0]
     if not fila.get('refresh_token'):
         return None, 'reauth', 'La cuenta está conectada sin permiso de refresco'
@@ -1012,15 +1174,18 @@ def refrescar_token_google(app, intentos=3, espera_inicial=2):
     return None, 'transitorio', ultimo_error
 
 
-def resincronizar_citas_google(app, creds, limite_segundos=60):
+def resincronizar_citas_google(app, creds=None, limite_segundos=60):
     """Sube a Google las citas confirmadas que se quedaron sin evento.
 
     Mientras Google está caído, aprobar una cita la guarda en el sistema pero no
     crea el evento. Sin este paso esas citas quedaban invisibles en el calendario
     para siempre, salvo que un administrador se acordara de pulsar el botón de
-    sincronizar. Ahora se hace solo en cuanto vuelve la conexión."""
-    if not creds:
-        return {'subidas': 0, 'errores': 0, 'pendientes': 0}
+    sincronizar. Ahora se hace solo en cuanto vuelve la conexión.
+
+    Cada cita se sube a SU cuenta. El parámetro `creds` ya no se usa —se quedó
+    por las llamadas antiguas—: con varias cuentas conectadas, unas credenciales
+    sueltas no sirven para todas, y subir una cita de csccue con el permiso de
+    jomap la habría puesto en el calendario equivocado."""
     try:
         citas = app.supabase.get('appointments',
             select='id,title,encargado,tema,client_name,start_time,end_time,calendar_id,'
@@ -1035,16 +1200,31 @@ def resincronizar_citas_google(app, creds, limite_segundos=60):
     if not pendientes:
         return {'subidas': 0, 'errores': 0, 'pendientes': 0}
 
-    email_map, gcal_id_map = _make_cal_maps(_get_calendar_config(app))
-    service = build('calendar', 'v3', credentials=creds)
+    cals = _get_calendar_config(app)
+    email_map, gcal_id_map = _make_cal_maps(cals)
+    cuenta_map, proveedor_map = _cuenta_map(cals), _proveedor_map(cals)
     limite = time.monotonic() + limite_segundos
     subidas, errores = 0, 0
+    servicios = {}          # cuenta → servicio, para no reconstruirlo por cita
 
     for cita in pendientes:
         if time.monotonic() > limite:
             break
-        gcal_id = gcal_id_map.get(cita.get('calendar_id'), 'primary')
+        cal_id  = cita.get('calendar_id')
+        gcal_id = gcal_id_map.get(cal_id, 'primary')
+        cuenta  = cuenta_map.get(cal_id) or GOOGLE_ACCOUNT_EMAIL
+        # Las cuentas de Microsoft no van por la API de Calendar: su cita sale
+        # por correo, y de eso se encarga el módulo de invitaciones.
+        if proveedor_map.get(cal_id, 'google') != 'google':
+            continue
         try:
+            if cuenta not in servicios:
+                creds_cuenta = get_google_creds(app, cuenta)
+                servicios[cuenta] = (build('calendar', 'v3', credentials=creds_cuenta)
+                                     if creds_cuenta else None)
+            service = servicios[cuenta]
+            if service is None:
+                continue        # esa cuenta no está conectada; las demás sí siguen
             # Puede que el evento sí se creara y sólo se perdiera el id: se busca
             # antes de insertar para no duplicar la cita en el calendario.
             existente = service.events().list(
@@ -1052,36 +1232,44 @@ def resincronizar_citas_google(app, creds, limite_segundos=60):
                 q=cita.get('title') or '', maxResults=1).execute()
             if existente.get('items'):
                 app.supabase.update('appointments', cita['id'], {
-                    'google_event_id': existente['items'][0]['id'], 'google_cal_id': gcal_id})
+                    'google_event_id': existente['items'][0]['id'],
+                    'google_cal_id': gcal_id, 'google_account': cuenta})
                 continue
-            evento = _build_google_event(cita, _build_attendees(cita, email_map))
+            evento = _build_google_event(cita, _build_attendees(cita, email_map, cuenta))
             creado = service.events().insert(calendarId=gcal_id, body=evento,
                                              sendUpdates='all').execute()
             app.supabase.update('appointments', cita['id'], {
-                'google_event_id': creado.get('id'), 'google_cal_id': gcal_id})
+                'google_event_id': creado.get('id'), 'google_cal_id': gcal_id,
+                'google_account': cuenta})
             subidas += 1
         except Exception as e:
             if _es_avería_permanente(e):
-                break        # se volvió a caer: lo retoma el siguiente ciclo
+                # Esa cuenta perdió el permiso: se descarta para el resto de la
+                # pasada, pero las citas de las demás cuentas siguen subiendo.
+                servicios[cuenta] = None
+                continue
             errores += 1
     if subidas:
         print(f'[google] resincronizadas {subidas} cita(s) pendientes')
     return {'subidas': subidas, 'errores': errores, 'pendientes': len(pendientes)}
 
 
-def _avisar_reconexion_google(app, mensaje):
+def _avisar_reconexion_google(app, mensaje, cuentas=None):
     """Notifica a los administradores UNA vez por avería, no en cada ciclo."""
     estado = _leer_estado_google(app)
     if estado.get('notificado_en'):
         return 0
     enviados = 0
+    # Con varias cuentas, «Google necesita reconexión» no dice nada: hay que
+    # nombrar cuál, porque el resto sigue agendando con normalidad.
+    cuales = ', '.join(cuentas) if cuentas else 'la cuenta de Google'
     try:
         for admin in (app.supabase.get('users', {'role': 'admin'}, select='id') or []):
             enviados += send_push_to_user(
                 app, admin['id'],
-                '⚠️ Google Calendar necesita reconexión',
-                'El permiso caducó o fue revocado. Las citas se aprueban igual, '
-                'pero no llegan al calendario hasta reconectar.',
+                '⚠️ Hay cuentas de Google por reconectar',
+                f'{cuales}: el permiso caducó o fue revocado. Las citas de esas '
+                'cuentas se aprueban igual, pero no llegan a su calendario.',
                 '/auth/google')
     except Exception as e:
         print(f'[google] no se pudo avisar a los administradores: {e}')
@@ -1092,29 +1280,51 @@ def _avisar_reconexion_google(app, mensaje):
 
 
 def google_autoreconectar(app):
-    """Un ciclo completo: refrescar, y si vuelve la conexión, poner al día.
+    """Un ciclo completo: refrescar TODAS las cuentas y, si vuelve la conexión,
+    poner al día lo que se quedó sin subir.
 
-    Es lo que llaman el hilo de fondo y la ruta de cron."""
-    creds, estado, error = refrescar_token_google(app)
+    Es lo que llaman el hilo de fondo y la ruta de cron. Con varias cuentas el
+    estado ya no es «conectado o no»: puede haber cinco al día y una revocada.
+    Se resume así: si alguna necesita que una persona vuelva a autorizarla, el
+    estado global es 'reauth' y se dice CUÁL; si sólo hubo fallos de red, es
+    'transitorio' y se reintenta solo; si todas van, 'ok'."""
+    cuentas = cuentas_google_que_agendan(app) or [GOOGLE_ACCOUNT_EMAIL]
     previo = _leer_estado_google(app).get('estado')
 
-    if estado == 'ok':
-        _guardar_estado_google(app, {
-            'estado': 'ok', 'error': None, 'notificado_en': None,
-            'ultimo_ok': datetime.now(timezone.utc).isoformat()})
-        resultado = resincronizar_citas_google(app, creds)
-        if previo != 'ok':
-            print('[google] conexión recuperada automáticamente')
-        return {'success': True, 'estado': 'ok', 'recuperado': previo != 'ok', **resultado}
+    por_cuenta, reauth, transitorios = {}, [], []
+    for cuenta in cuentas:
+        _, estado, error = refrescar_token_google(app, email=cuenta)
+        por_cuenta[cuenta] = estado
+        if estado == 'reauth':
+            reauth.append(cuenta)
+        elif estado != 'ok':
+            transitorios.append(f'{cuenta}: {error}')
 
-    if estado == 'reauth':
-        avisados = _avisar_reconexion_google(app, error)
-        return {'success': False, 'estado': 'reauth', 'error': error, 'avisados': avisados}
+    if reauth:
+        mensaje = 'Sin permiso: ' + ', '.join(reauth)
+        avisados = _avisar_reconexion_google(app, mensaje, reauth)
+        # Las cuentas que sí responden no tienen por qué esperar a que se
+        # arregle la que no: lo suyo se sube igual.
+        resultado = resincronizar_citas_google(app)
+        return {'success': False, 'estado': 'reauth', 'error': mensaje,
+                'avisados': avisados, 'cuentas': por_cuenta, **resultado}
 
-    # Transitorio: no se toca `notificado_en` ni se molesta a nadie; el próximo
-    # ciclo lo reintenta. Marcarlo como avería aquí sería mentir sobre el estado.
-    _guardar_estado_google(app, {'estado': 'transitorio', 'error': error})
-    return {'success': False, 'estado': 'transitorio', 'error': error}
+    if transitorios:
+        # No se toca `notificado_en` ni se molesta a nadie; el próximo ciclo lo
+        # reintenta. Marcarlo como avería aquí sería mentir sobre el estado.
+        mensaje = ' | '.join(transitorios)
+        _guardar_estado_google(app, {'estado': 'transitorio', 'error': mensaje})
+        return {'success': False, 'estado': 'transitorio', 'error': mensaje,
+                'cuentas': por_cuenta}
+
+    _guardar_estado_google(app, {
+        'estado': 'ok', 'error': None, 'notificado_en': None,
+        'ultimo_ok': datetime.now(timezone.utc).isoformat()})
+    resultado = resincronizar_citas_google(app)
+    if previo != 'ok':
+        print('[google] conexión recuperada automáticamente')
+    return {'success': True, 'estado': 'ok', 'recuperado': previo != 'ok',
+            'cuentas': por_cuenta, **resultado}
 
 
 def start_google_autoheal(app, interval_min=60):
@@ -1153,12 +1363,23 @@ def start_google_autoheal(app, interval_min=60):
 # ============================================================
 #  CALENDAR ACCESS (with caching)
 # ============================================================
+CAL_SELECT      = 'calendar_id,name,email,color,google_cal_id,cuenta_email,proveedor'
+CAL_SELECT_BASE = 'calendar_id,name,email,color,google_cal_id'
+
 def _get_calendar_config(app):
-    """Cached calendar_config (5 min)."""
+    """Cached calendar_config (5 min).
+
+    Se pide primero con las columnas de la 033 (de qué cuenta sale cada
+    calendario). Si esa migración todavía no está aplicada, PostgREST devuelve
+    error y aquí llega []: entonces se vuelve a pedir sin ellas. Sin esa vuelta
+    atrás, un despliegue sin migrar se quedaría sin calendarios —ni barra
+    lateral, ni desplegable de la cita— por una columna que aún no existe."""
     val, hit = _cal_cache.get('all')
     if hit:
         return val
-    result = app.supabase.get('calendar_config', select='calendar_id,name,email,color,google_cal_id')
+    result = app.supabase.get('calendar_config', select=CAL_SELECT)
+    if not result:
+        result = app.supabase.get('calendar_config', select=CAL_SELECT_BASE)
     _cal_cache.set('all', result)
     return result
 
@@ -1174,12 +1395,53 @@ def _make_cal_maps(all_cals):
                    for c in all_cals}
     return email_map, gcal_id_map
 
-def _build_attendees(apt, email_map):
+
+# ============================================================
+#  DE QUÉ CUENTA SALE CADA CITA
+#
+#  Antes había una sola: todo se creaba en mposligua0000 y a la cuenta que de
+#  verdad correspondía se le mandaba una invitación, como a un asistente más.
+#  Ahora cada calendario dice de qué cuenta sale (`calendar_config.cuenta_email`)
+#  y la cita se crea AHÍ, con esa cuenta como organizadora.
+#
+#  Para una cita ya creada manda `appointments.google_account`, no la
+#  configuración: el evento está donde se creó, y ahí hay que ir a moverlo o a
+#  borrarlo aunque el calendario haya cambiado de cuenta desde entonces.
+# ============================================================
+def _cuenta_map(all_cals):
+    """calendar_id → cuenta de la que salen sus citas."""
+    return {c['calendar_id']: (c.get('cuenta_email') or GOOGLE_ACCOUNT_EMAIL)
+            for c in all_cals}
+
+
+def _proveedor_map(all_cals):
+    """calendar_id → 'google' (API de Calendar) | 'microsoft' (invitación .ics)."""
+    return {c['calendar_id']: (c.get('proveedor') or 'google') for c in all_cals}
+
+
+def cuenta_del_calendario(app, calendar_id):
+    return _cuenta_map(_get_calendar_config(app)).get(calendar_id) or GOOGLE_ACCOUNT_EMAIL
+
+
+def cuenta_de_la_cita(app, apt):
+    """Dónde vive —o va a vivir— el evento de esta cita."""
+    return apt.get('google_account') or cuenta_del_calendario(app, apt.get('calendar_id'))
+
+def _build_attendees(apt, email_map, cuenta_organizadora=None):
     """Build a deduplicated attendee list for a Google Calendar event.
     Uses lowercase comparison to avoid case-sensitive duplicates.
+
+    La cuenta que convoca NO se invita a sí misma. Antes hacía falta —el evento
+    vivía en mposligua0000 y la cuenta de verdad interesada era un asistente
+    más—, pero ahora el evento nace en la cuenta que corresponde y esa cuenta ya
+    es la organizadora: volver a ponerla en la lista la deja como invitada de su
+    propia cita, pidiéndose confirmación a sí misma.
     """
     seen = set()
     attendees = []
+    organizadora = (cuenta_organizadora or '').strip().lower()
+    if organizadora:
+        seen.add(organizadora)
     def _add(email):
         e = (email or '').strip().lower()
         if e and e not in seen:
@@ -1191,7 +1453,7 @@ def _build_attendees(apt, email_map):
     if apt.get('invitados'):
         for inv in apt['invitados'].split(','):
             _add(inv)
-    if not attendees:
+    if not attendees and not organizadora:
         _add(GOOGLE_ACCOUNT_EMAIL)
     return attendees
 
@@ -1876,6 +2138,30 @@ def create_app():
     except Exception as e:
         print(f'Supabase error: {e}'); app.supabase = None
 
+    # Los módulos propios no importan nada de este archivo (para no formar un
+    # ciclo): lo que necesitan de aquí se les cuelga de `app`.
+    app.obtener_creds_google = lambda cuenta: get_google_creds(app, cuenta)
+
+    def _sincronizar_agenda_entrante():
+        """Trae de las nueve cuentas lo que agendaron otros.
+
+        El mapa cuenta→calendario permite pintar cada cosa del color del
+        calendario al que pertenece: una convocatoria que entra por csccue se ve
+        como CSCCUE, no como un evento suelto sin dueño."""
+        cals = _get_calendar_config(app)
+        cuenta_map, proveedor_map = _cuenta_map(cals), _proveedor_map(cals)
+        cal_por_cuenta = {}
+        google, microsoft = set(), set()
+        for cal_id, cuenta in cuenta_map.items():
+            cal_por_cuenta.setdefault(cuenta, cal_id)
+            (google if proveedor_map.get(cal_id, 'google') == 'google'
+             else microsoft).add(cuenta)
+        conectadas = set(cuentas_google_conectadas(app))
+        return _entrante.sincronizar(app, sorted(google & conectadas),
+                                     sorted(microsoft), cal_por_cuenta)
+
+    app.sincronizar_agenda_entrante = _sincronizar_agenda_entrante
+
     login_manager.init_app(app)
     login_manager.login_view = 'login'
     # Flask-Login trae su aviso en inglés: a quien le caducaba la sesión le
@@ -1980,23 +2266,29 @@ def create_app():
     # ------ Context processor (cached) ------
     @app.context_processor
     def inject_layout_globals():
-        connected = False; needs_reauth = False
+        connected = False; needs_reauth = False; cuentas_pendientes = []
         try:
             if current_user.is_authenticated and app.supabase:
                 cache_key = f'google_status_{current_user.role}'
                 val, hit = _google_cache.get(cache_key)
                 if hit:
-                    connected, needs_reauth = val
+                    connected, needs_reauth, cuentas_pendientes = val
                 else:
-                    tokens = app.supabase.get('google_tokens',
-                        {'email': GOOGLE_ACCOUNT_EMAIL}, select='email,token,refresh_token,token_expiry,id')
-                    if tokens:
-                        if current_user.role == 'admin':
-                            connected = get_google_creds(app) is not None
-                            needs_reauth = not connected
-                        else:
-                            connected = True
-                    _google_cache.set(cache_key, (connected, needs_reauth))
+                    # Con varias cuentas, «conectado» significa que están todas
+                    # las que agendan: faltando una, hay calendarios cuyas citas
+                    # no van a salir, y decir que sí es esconder justo eso.
+                    esperadas = cuentas_google_que_agendan(app)
+                    tokens = {t['email'] for t in (app.supabase.get(
+                        'google_tokens', select='email,refresh_token') or [])
+                        if t.get('refresh_token')}
+                    if current_user.role == 'admin':
+                        cuentas_pendientes = [c for c in esperadas
+                                              if get_google_creds(app, c) is None]
+                    else:
+                        cuentas_pendientes = [c for c in esperadas if c not in tokens]
+                    connected = bool(esperadas) and not cuentas_pendientes
+                    needs_reauth = bool(cuentas_pendientes) and current_user.role == 'admin'
+                    _google_cache.set(cache_key, (connected, needs_reauth, cuentas_pendientes))
         except Exception:
             pass
         user_roles_list = []
@@ -2029,6 +2321,7 @@ def create_app():
         except Exception:
             atlas_activo = False
         return {'google_connected_global': connected, 'google_needs_reauth': needs_reauth,
+                'google_cuentas_pendientes': cuentas_pendientes,
                 'google_health': google_health, 'atlas_activo': atlas_activo,
                 'user_roles_list': user_roles_list, 'active_role_id': active_role_id,
                 'active_modules': active_modules}
@@ -2461,21 +2754,36 @@ def create_app():
     # ============================================================
     #  GOOGLE OAUTH
     # ============================================================
-    @app.route('/auth/google')
-    @login_required
-    def google_auth():
-        if not is_admin():
-            flash('Solo el administrador puede conectar Google Calendar.', 'warning')
-            return redirect('/dashboard')
+    def _flujo_google(state=None):
         flow = Flow.from_client_config({'web': {
             'client_id': app.config['GOOGLE_CLIENT_ID'],
             'client_secret': app.config['GOOGLE_CLIENT_SECRET'],
             'auth_uri': 'https://accounts.google.com/o/oauth2/auth',
             'token_uri': 'https://oauth2.googleapis.com/token',
-            'redirect_uris': [app.config['GOOGLE_REDIRECT_URI']]}}, scopes=GOOGLE_SCOPES)
+            'redirect_uris': [app.config['GOOGLE_REDIRECT_URI']]}},
+            scopes=GOOGLE_SCOPES, state=state)
         flow.redirect_uri = app.config['GOOGLE_REDIRECT_URI']
-        auth_url, state = flow.authorization_url(access_type='offline', prompt='consent')
+        return flow
+
+    @app.route('/auth/google')
+    @login_required
+    def google_auth():
+        """Conecta UNA cuenta. `?cuenta=` dice cuál se pretende conectar.
+
+        Se pasa como `login_hint` para que Google abra ya la cuenta correcta
+        —con siete por conectar, elegir mal es lo normal, no la excepción—,
+        pero lo que se guarda es la cuenta que Google confirme al final, no
+        ésta: la sugerencia se puede ignorar en la pantalla de Google."""
+        if not is_admin():
+            flash('Solo el administrador puede conectar Google Calendar.', 'warning')
+            return redirect('/dashboard')
+        cuenta = (request.args.get('cuenta') or '').strip().lower()
+        flow = _flujo_google()
+        extra = {'login_hint': cuenta} if cuenta else {}
+        auth_url, state = flow.authorization_url(
+            access_type='offline', prompt='consent', **extra)
         session['state'] = state
+        session['google_cuenta_pedida'] = cuenta
         return redirect(auth_url)
 
     @app.route('/auth/google/callback')
@@ -2485,20 +2793,29 @@ def create_app():
         if not state:
             flash('Sesion expirada. Intenta de nuevo.', 'warning')
             return redirect('/dashboard')
-        flow = Flow.from_client_config({'web': {
-            'client_id': app.config['GOOGLE_CLIENT_ID'],
-            'client_secret': app.config['GOOGLE_CLIENT_SECRET'],
-            'auth_uri': 'https://accounts.google.com/o/oauth2/auth',
-            'token_uri': 'https://oauth2.googleapis.com/token',
-            'redirect_uris': [app.config['GOOGLE_REDIRECT_URI']]}},
-            scopes=GOOGLE_SCOPES, state=state)
-        flow.redirect_uri = app.config['GOOGLE_REDIRECT_URI']
+        pedida = (session.pop('google_cuenta_pedida', '') or '').strip().lower()
+        flow = _flujo_google(state)
         flow.fetch_token(authorization_response=request.url)
-        if save_google_creds(app, flow.credentials):
-            flash('Google Calendar conectado correctamente.', 'success')
+        creds = flow.credentials
+
+        cuenta = email_de_las_credenciales(creds)
+        if not cuenta:
+            # Sin saber de quién es el permiso no se puede guardar en su sitio.
+            # Se cae a la cuenta que se pidió, y si tampoco había, a la
+            # histórica: es exactamente lo que hacía antes de haber varias.
+            cuenta = pedida or GOOGLE_ACCOUNT_EMAIL
+            flash(f'No se pudo confirmar con Google qué cuenta autorizó; se guardó '
+                  f'como {cuenta}. Compruébalo en el panel de cuentas.', 'warning')
+        elif pedida and cuenta != pedida:
+            flash(f'Autorizaste {cuenta}, no {pedida}. Se guardó {cuenta}; '
+                  f'si querías la otra, vuelve a conectarla.', 'warning')
+
+        if save_google_creds(app, creds, cuenta):
+            _cal_cache.invalidate_prefix('all')
+            flash(f'{cuenta}: calendario conectado correctamente.', 'success')
         else:
             flash('No se pudieron guardar las credenciales de Google. Intenta reconectar.', 'danger')
-        return redirect('/dashboard')
+        return redirect('/admin/cuentas')
 
     # ============================================================
     #  ADMIN — USERS  (optimized: O(3) queries instead of O(N+3))
@@ -3224,7 +3541,12 @@ def create_app():
         else:
             cals = get_user_calendars(app, current_user.id)
             pending = []; pending_all = []
-        google_ok = get_google_creds(app) is not None
+        # En el panel, «conectado» sólo puede querer decir que se puede agendar
+        # en TODAS las cuentas: con una sin autorizar hay calendarios cuyas
+        # citas no van a salir, y eso es justo lo que el panel debe delatar.
+        _cuentas_agenda = cuentas_google_que_agendan(app)
+        google_ok = bool(_cuentas_agenda) and all(
+            get_google_creds(app, c) is not None for c in _cuentas_agenda)
         widgets = _dashboard_widgets(app)
         return render_template('dashboard.html', calendarios=cals, pending=pending,
                                pending_all=pending_all, google_connected=google_ok,
@@ -3245,8 +3567,14 @@ def create_app():
             return redirect('/dashboard')
         cals = (_get_calendar_config(app) if is_admin()
                 else get_user_calendars(app, current_user.id))
+        # `google_connected` mantiene su significado —¿se puede agendar?— pero
+        # ahora sólo es cierto si TODAS las cuentas que agendan están al día:
+        # decir que sí cuando falta una es prometer citas que no van a salir.
+        cuentas = cuentas_google_que_agendan(app)
+        sin_conectar = [c for c in cuentas if get_google_creds(app, c) is None]
         return render_template('calendar.html', calendarios=cals,
-                               google_connected=get_google_creds(app) is not None)
+                               google_connected=bool(cuentas) and not sin_conectar,
+                               cuentas_sin_conectar=sin_conectar)
 
     # ============================================================
     #  API — EVENTS  (single query with IN filter for non-admin)
@@ -3309,6 +3637,55 @@ def create_app():
                     'parent_event_id': e.get('parent_event_id', ''), 'id': e['id'],
                 },
             })
+
+        # Lo que agendaron OTROS en esas mismas cuentas. Va en la misma
+        # respuesta porque el día es uno solo: tener que mirar en dos sitios
+        # para saber si el martes está libre es exactamente el problema que
+        # esto viene a resolver. Se distingue por el aspecto —hueco, en gris— y
+        # por `externo: true`, que es lo que la pantalla usa para no ofrecer
+        # editarlo: sobre esto la plataforma no manda.
+        try:
+            cals = _get_calendar_config(app)
+            if is_admin():
+                permitidas = None
+            else:
+                mios = {c['calendar_id'] for c in get_user_calendars(app, current_user.id)}
+                permitidas = {cuenta for cal_id, cuenta in _cuenta_map(cals).items()
+                              if cal_id in mios}
+            nombres = {c['calendar_id']: (c.get('name') or c['calendar_id']) for c in cals}
+            for x in _entrante.eventos(app, cuentas=permitidas):
+                respondido = x.get('mi_respuesta')
+                color = '#94a3b8' if respondido != 'declined' else '#cbd5e1'
+                result.append({
+                    'id': f"ext-{x['id']}",
+                    'title': f"↙ {x.get('titulo') or '(sin título)'}",
+                    'start': x.get('start_time'), 'end': x.get('end_time'),
+                    'allDay': bool(x.get('todo_el_dia')),
+                    'backgroundColor': color, 'borderColor': color,
+                    'editable': False,
+                    'extendedProps': {
+                        'externo': True, 'id': x['id'],
+                        'title': x.get('titulo', ''),
+                        'cuenta': x.get('cuenta_email', ''),
+                        'calendar_id': x.get('calendar_id') or '',
+                        'calendario': nombres.get(x.get('calendar_id'), ''),
+                        'organizador': x.get('organizador') or '',
+                        'organizador_nombre': x.get('organizador_nombre') or '',
+                        'lugar': x.get('lugar') or '',
+                        'meeting_link': x.get('enlace') or '',
+                        'notes': x.get('descripcion') or '',
+                        'invitados': x.get('invitados') or '',
+                        'mi_respuesta': respondido or 'needsAction',
+                        'origen': x.get('origen') or 'google',
+                        'visto': bool(x.get('visto')),
+                        'appointment_id': x.get('appointment_id') or '',
+                    },
+                })
+        except Exception as e:
+            # Que falle la agenda ajena no puede dejar sin calendario a nadie:
+            # las citas propias ya están en `result` y se devuelven igual.
+            print(f'[agenda-entrante] no se pudo añadir al calendario: {e}')
+
         return jsonify(result)
 
     # ============================================================
@@ -3644,7 +4021,7 @@ def create_app():
         apts = app.supabase.get('appointments', {'id': aid},
             select='id,title,encargado,tema,client_name,client_email,start_time,end_time,'
                    'status,calendar_id,invitados,lugar,direccion,ciudad,mapa,notes,'
-                   'meeting_link,google_event_id,google_cal_id')
+                   'meeting_link,google_event_id,google_cal_id,google_account')
         if not apts: return jsonify({'success': False})
         apt = apts[0]
         if not is_admin() and not user_has_calendar_access(app, current_user.id, apt.get('calendar_id')):
@@ -3664,17 +4041,35 @@ def create_app():
         if not claimed:
             return jsonify({'success': False, 'error': 'Esta cita ya fue procesada por otra solicitud'})
 
-        creds = get_google_creds(app)
+        all_cals = _get_calendar_config(app)
+        email_map, gcal_id_map = _make_cal_maps(all_cals)
+        cal_id  = apt.get('calendar_id')
+        cuenta  = _cuenta_map(all_cals).get(cal_id) or GOOGLE_ACCOUNT_EMAIL
+        proveedor = _proveedor_map(all_cals).get(cal_id, 'google')
+
+        # Las cuentas de Microsoft no tienen API de calendario aquí: su cita
+        # sale como invitación por correo desde su propia dirección.
+        if proveedor != 'google':
+            enviados, error = _invitaciones.enviar_invitacion(app, apt, cuenta, email_map)
+            app.supabase.update('appointments', aid,
+                {'status': 'confirmed', 'google_account': cuenta})
+            if error:
+                return jsonify({'success': True,
+                    'message': f'Aprobada, pero la invitación desde {cuenta} no salió: {error}'})
+            return jsonify({'success': True,
+                'message': f'Aprobada — invitación enviada desde {cuenta} '
+                           f'a {enviados} destinatario(s)'})
+
+        creds = get_google_creds(app, cuenta)
         if not creds:
             app.supabase.update('appointments', aid, {'status': 'confirmed'})
-            return jsonify({'success': True, 'message': 'Aprobada (sin sincronizacion Google)'})
+            return jsonify({'success': True,
+                'message': f'Aprobada, pero {cuenta} no está conectada: no se creó el '
+                           f'evento. Conéctala en /admin/cuentas.'})
         try:
             service  = build('calendar', 'v3', credentials=creds)
-            all_cals = _get_calendar_config(app)
-            email_map, gcal_id_map = _make_cal_maps(all_cals)
-            cal_id  = apt.get('calendar_id')
             gcal_id = gcal_id_map.get(cal_id, 'primary')
-            attendees = _build_attendees(apt, email_map)
+            attendees = _build_attendees(apt, email_map, cuenta)
             event = _build_google_event(apt, attendees)
             # Buscar si ya existe en Google Calendar para evitar duplicado
             existing = service.events().list(
@@ -3684,16 +4079,17 @@ def create_app():
                 # Ya existe: vincular sin reenviar notificaciones
                 gev_id = existing['items'][0]['id']
                 app.supabase.update('appointments', aid,
-                    {'status': 'confirmed', 'google_event_id': gev_id, 'google_cal_id': gcal_id})
+                    {'status': 'confirmed', 'google_event_id': gev_id,
+                     'google_cal_id': gcal_id, 'google_account': cuenta})
                 return jsonify({'success': True, 'message': 'Confirmada (evento ya existía en Google)'})
             # Nuevo evento — notificar a todos los asistentes una sola vez
             created = service.events().insert(
                 calendarId=gcal_id, body=event, sendUpdates='all').execute()
             app.supabase.update('appointments', aid,
                 {'status': 'confirmed', 'google_event_id': created.get('id'),
-                 'google_cal_id': gcal_id})
+                 'google_cal_id': gcal_id, 'google_account': cuenta})
             return jsonify({'success': True,
-                'message': f'Aprobada — {len(attendees)} invitado(s) notificado(s)'})
+                'message': f'Aprobada desde {cuenta} — {len(attendees)} invitado(s) notificado(s)'})
         except google.auth.exceptions.RefreshError:
             app.supabase.update('appointments', aid, {'status': 'confirmed'})
             return jsonify({'success': True,
@@ -3706,6 +4102,15 @@ def create_app():
             app.supabase.update('appointments', aid, {'status': 'pending'})
             return jsonify({'success': False, 'error': str(e)})
 
+    # Lo que hace falta saber de una cita para retirarla de la agenda ajena.
+    # Con Google bastaban los identificadores del evento; con una invitación
+    # por correo hay que reconstruir el .ics entero, y para eso se necesita la
+    # cita completa: sin título ni fecha, la cancelación no cuadra con nada de
+    # lo que el otro tiene apuntado y su calendario la ignora.
+    CITA_SELECT_AGENDA = ('id,title,encargado,tema,client_name,client_email,start_time,'
+                          'end_time,calendar_id,invitados,lugar,direccion,ciudad,mapa,'
+                          'notes,meeting_link,google_event_id,google_cal_id,google_account')
+
     @app.route('/calendar/api/reject/<aid>', methods=['POST'])
     @login_required
     def api_reject(aid):
@@ -3713,8 +4118,7 @@ def create_app():
         if not user_can('calendar.aprobar'):
             return jsonify({'success': False,
                             'error': 'No tienes permiso para rechazar citas.'}), 403
-        apts = app.supabase.get('appointments', {'id': aid},
-            select='id,calendar_id,google_event_id,google_cal_id')
+        apts = app.supabase.get('appointments', {'id': aid}, select=CITA_SELECT_AGENDA)
         if not apts: return jsonify({'success': False})
         apt = apts[0]
         if not is_admin() and not user_has_calendar_access(app, current_user.id, apt.get('calendar_id')):
@@ -3725,13 +4129,15 @@ def create_app():
         # llevaba días anulada.
         cambios = {'status': 'cancelled'}
         aviso = None
-        if apt.get('google_event_id'):
-            if _borrar_evento_google(app, apt):
+        de_correo = _proveedor_map(_get_calendar_config(app)).get(
+            apt.get('calendar_id'), 'google') != 'google'
+        if apt.get('google_event_id') or de_correo:
+            if retirar_de_la_agenda(app, apt):
                 cambios['google_event_id'] = None
                 cambios['google_cal_id']   = None
             else:
-                aviso = ('La cita quedó cancelada, pero no se pudo quitar del calendario '
-                         'de Google: sigue apareciendo en el correo. Revísalo.')
+                aviso = ('La cita quedó cancelada, pero no se pudo retirar del calendario '
+                         'de los invitados: les sigue apareciendo. Revísalo.')
         app.supabase.update('appointments', aid, cambios)
         return jsonify({'success': True, 'warning': aviso})
 
@@ -3741,19 +4147,18 @@ def create_app():
         if not user_can('calendar.eliminar'):
             return jsonify({'success': False,
                             'error': 'No tienes permiso para eliminar citas.'}), 403
-        apts = app.supabase.get('appointments', {'id': aid},
-            select='id,calendar_id,google_event_id,google_cal_id')
+        apts = app.supabase.get('appointments', {'id': aid}, select=CITA_SELECT_AGENDA)
         if not apts: return jsonify({'success': False})
         apt = apts[0]
         if not is_admin() and not user_has_calendar_access(app, current_user.id, apt.get('calendar_id')):
             return jsonify({'success': False, 'error': 'Sin autorizacion'})
         # Se borra también del calendario del correo, y avisando: a quien tenía
         # la cita apuntada hay que decirle que ya no la tiene.
-        quitado = _borrar_evento_google(app, apt)
+        quitado = retirar_de_la_agenda(app, apt)
         app.supabase.delete('appointments', aid)
         return jsonify({'success': True, 'warning': None if quitado else
                         'La cita se eliminó aquí, pero no se pudo quitar del calendario '
-                        'de Google: sigue apareciendo en el correo.'})
+                        'de los invitados: les sigue apareciendo.'})
 
     @app.route('/calendar/api/delete-series/<parent_id>', methods=['POST'])
     @login_required
@@ -3763,7 +4168,7 @@ def create_app():
             return jsonify({'success': False,
                             'error': 'No tienes permiso para eliminar citas.'}), 403
         all_apts = app.supabase.get('appointments',
-            select='id,calendar_id,google_event_id,google_cal_id,parent_event_id')
+            select=CITA_SELECT_AGENDA + ',parent_event_id')
         series = [a for a in all_apts
                   if a.get('parent_event_id') == parent_id or a.get('id') == parent_id]
         if not series: return jsonify({'success': False, 'error': 'Serie no encontrada'})
@@ -3772,31 +4177,42 @@ def create_app():
             return jsonify({'success': False, 'error': 'Sin autorizacion'})
         deleted = 0; quedaron = 0
         for apt in series:
-            if not _borrar_evento_google(app, apt):
+            if not retirar_de_la_agenda(app, apt):
                 quedaron += 1
             app.supabase.delete('appointments', apt['id']); deleted += 1
         return jsonify({'success': True, 'deleted': deleted,
                         'warning': None if not quedaron else
                         f'{quedaron} evento(s) no se pudieron quitar del calendario de '
-                        'Google y siguen apareciendo en el correo.'})
+                        'los invitados y les siguen apareciendo.'})
 
     @app.route('/calendar/api/sync', methods=['POST'])
     @login_required
     def api_sync():
         if not is_admin(): return jsonify({'success': False, 'error': 'Solo admin'})
-        creds = get_google_creds(app)
-        if not creds: return jsonify({'success': False, 'error': 'Google no conectado'})
         synced = 0; errors = 0; skipped = 0
         all_cals = _get_calendar_config(app)
         email_map, gcal_id_map = _make_cal_maps(all_cals)
-        service = build('calendar', 'v3', credentials=creds)
+        cuenta_map, proveedor_map = _cuenta_map(all_cals), _proveedor_map(all_cals)
+        servicios = {}          # cuenta → servicio (None = esa cuenta no responde)
+        sin_conectar = set()
         for apt in app.supabase.get('appointments',
                 select='id,title,encargado,tema,client_name,start_time,end_time,calendar_id,'
                        'invitados,direccion,ciudad,lugar,mapa,notes,meeting_link,status,google_event_id'):
             if apt.get('status') != 'confirmed' or apt.get('google_event_id'):
                 continue
+            cal_id  = apt.get('calendar_id')
+            cuenta  = cuenta_map.get(cal_id) or GOOGLE_ACCOUNT_EMAIL
+            if proveedor_map.get(cal_id, 'google') != 'google':
+                skipped += 1; continue      # las de Microsoft salen por correo
             try:
-                cal_id  = apt.get('calendar_id')
+                if cuenta not in servicios:
+                    c = get_google_creds(app, cuenta)
+                    servicios[cuenta] = build('calendar', 'v3', credentials=c) if c else None
+                    if c is None:
+                        sin_conectar.add(cuenta)
+                service = servicios[cuenta]
+                if service is None:
+                    skipped += 1; continue
                 gcal_id = gcal_id_map.get(cal_id, 'primary')
                 existing = service.events().list(
                     calendarId=gcal_id, timeMin=apt['start_time'],
@@ -3804,24 +4220,30 @@ def create_app():
                 if existing.get('items'):
                     app.supabase.update('appointments', apt['id'],
                         {'google_event_id': existing['items'][0]['id'],
-                         'google_cal_id': gcal_id})
+                         'google_cal_id': gcal_id, 'google_account': cuenta})
                     skipped += 1; continue
-                attendees = _build_attendees(apt, email_map)
+                attendees = _build_attendees(apt, email_map, cuenta)
                 event = _build_google_event(apt, attendees)
                 created = service.events().insert(calendarId=gcal_id,
                     body=event, sendUpdates='all').execute()
                 app.supabase.update('appointments', apt['id'],
-                    {'google_event_id': created.get('id'), 'google_cal_id': gcal_id})
+                    {'google_event_id': created.get('id'), 'google_cal_id': gcal_id,
+                     'google_account': cuenta})
                 synced += 1
             except google.auth.exceptions.RefreshError:
-                return jsonify({'success': False, 'synced': synced, 'skipped': skipped,
-                    'errors': errors, 'error': 'Google desconectado. Reconecta en /auth/google.'})
+                # Una cuenta caída no puede parar la sincronización de las otras
+                # seis: se apunta y se sigue.
+                servicios[cuenta] = None; sin_conectar.add(cuenta)
             except Exception as e:
                 if _is_invalid_grant(e):
-                    return jsonify({'success': False, 'synced': synced, 'skipped': skipped,
-                        'errors': errors, 'error': 'Google desconectado. Reconecta en /auth/google.'})
+                    servicios[cuenta] = None; sin_conectar.add(cuenta)
+                    continue
                 errors += 1
-        return jsonify({'success': True, 'synced': synced, 'skipped': skipped, 'errors': errors})
+        respuesta = {'success': True, 'synced': synced, 'skipped': skipped, 'errors': errors}
+        if sin_conectar:
+            respuesta['error'] = ('Sin conectar: ' + ', '.join(sorted(sin_conectar)) +
+                                  '. Conéctalas en /admin/cuentas.')
+        return jsonify(respuesta)
 
     # ============================================================
     #  RETROACTIVE FIX — patch all existing Google events with
@@ -3831,25 +4253,31 @@ def create_app():
     @login_required
     def api_fix_events():
         if not is_admin(): return jsonify({'success': False, 'error': 'Solo admin'})
-        creds = get_google_creds(app)
-        if not creds: return jsonify({'success': False, 'error': 'Google no conectado'})
         updated = 0; errors = 0; skipped = 0
         try:
-            service  = build('calendar', 'v3', credentials=creds)
             all_cals = _get_calendar_config(app)
             email_map, gcal_id_map = _make_cal_maps(all_cals)
+            servicios = {}
             apts = app.supabase.get('appointments',
                 select='id,title,encargado,tema,client_name,start_time,end_time,calendar_id,'
                        'invitados,direccion,ciudad,lugar,mapa,notes,meeting_link,status,'
-                       'google_event_id,google_cal_id')
+                       'google_event_id,google_cal_id,google_account')
             for apt in apts:
                 if apt.get('status') != 'confirmed': continue
                 gid = apt.get('google_event_id')
                 if not gid: skipped += 1; continue
                 try:
                     cal_id  = apt.get('calendar_id')
+                    # Cada evento se repara en la cuenta donde vive.
+                    cuenta = cuenta_de_la_cita(app, apt)
+                    if cuenta not in servicios:
+                        c = get_google_creds(app, cuenta)
+                        servicios[cuenta] = build('calendar', 'v3', credentials=c) if c else None
+                    service = servicios[cuenta]
+                    if service is None:
+                        skipped += 1; continue
                     gcal_id = apt.get('google_cal_id') or gcal_id_map.get(cal_id, 'primary')
-                    attendees = _build_attendees(apt, email_map)
+                    attendees = _build_attendees(apt, email_map, cuenta)
                     ev = _build_google_event(apt, attendees)
                     patch = {'description': ev['description']}
                     if ev.get('location'): patch['location'] = ev['location']
@@ -4969,18 +5397,172 @@ def create_app():
     @app.route('/api/google-status')
     @login_required
     def google_status():
+        """Estado cuenta por cuenta.
+
+        `connected` sigue existiendo y significa lo que siempre significó para
+        quien lo consulta desde la pantalla: se puede agendar. Ahora eso es
+        cierto cuando TODAS las cuentas que agendan están conectadas; `cuentas`
+        dice cuáles y en qué estado, que es lo que hace falta para arreglarlo."""
         if not is_admin():
             return jsonify({'connected': False, 'error': 'No autorizado'})
-        tokens = app.supabase.get('google_tokens', {'email': GOOGLE_ACCOUNT_EMAIL})
-        if not tokens:
-            return jsonify({'connected': False, 'message': 'No hay token. Ve a /auth/google.'})
-        t = tokens[0]
-        creds = get_google_creds(app)
-        if creds:
-            return jsonify({'connected': True, 'email': t['email'],
-                'expiry': t.get('token_expiry'), 'has_refresh_token': bool(t.get('refresh_token'))})
-        return jsonify({'connected': False, 'email': t['email'],
-            'message': 'Token invalido. Reconecta en /auth/google.'})
+        tokens = {t['email']: t for t in
+                  (app.supabase.get('google_tokens',
+                                    select='email,token_expiry,refresh_token') or [])}
+        detalle, faltan = [], []
+        for cuenta in cuentas_google_que_agendan(app):
+            t = tokens.get(cuenta)
+            viva = bool(t) and get_google_creds(app, cuenta) is not None
+            if not viva:
+                faltan.append(cuenta)
+            detalle.append({
+                'email': cuenta, 'connected': viva,
+                'expiry': (t or {}).get('token_expiry'),
+                'has_refresh_token': bool((t or {}).get('refresh_token')),
+                'message': ('' if viva else
+                            'Sin conectar.' if not t else 'Token inválido: reconecta.'),
+            })
+        return jsonify({
+            'connected': bool(detalle) and not faltan,
+            'cuentas': detalle,
+            'pendientes': faltan,
+            'message': ('' if not faltan else
+                        'Por conectar: ' + ', '.join(faltan) + '. Ve a /admin/cuentas.'),
+        })
+
+    # ============================================================
+    #  ADMIN — CUENTAS DE CORREO Y CALENDARIO
+    # ============================================================
+    @app.route('/admin/cuentas')
+    @login_required
+    def admin_cuentas():
+        """Una pantalla que dice, de un vistazo, qué cuenta agenda cada
+        calendario y cuál falta por autorizar.
+
+        Antes bastaba con «Google conectado: sí/no» porque sólo había una
+        cuenta. Con nueve, esa respuesta no sirve: lo que hace falta saber es
+        cuál de las nueve es la que no está y qué calendarios se quedan sin
+        salir por su culpa."""
+        if not is_admin():
+            flash('Solo el administrador puede ver las cuentas.', 'warning')
+            return redirect('/dashboard')
+        cals = _get_calendar_config(app)
+        cuenta_map, proveedor_map = _cuenta_map(cals), _proveedor_map(cals)
+        tokens = {t['email']: t for t in
+                  (app.supabase.get('google_tokens',
+                                    select='email,token_expiry,refresh_token') or [])}
+        ms = {t['email'].lower(): t for t in
+              (app.supabase.get('ms_tokens', select='email,token_expiry,refresh_token') or [])}
+
+        cuentas = {}
+        for c in cals:
+            correo = cuenta_map.get(c['calendar_id']) or GOOGLE_ACCOUNT_EMAIL
+            prov   = proveedor_map.get(c['calendar_id'], 'google')
+            fila = cuentas.setdefault(correo, {
+                'email': correo, 'proveedor': prov, 'calendarios': [],
+                'conectada': False, 'expiry': None, 'detalle': ''})
+            fila['calendarios'].append(c.get('name') or c['calendar_id'])
+
+        for correo, fila in cuentas.items():
+            if fila['proveedor'] == 'google':
+                t = tokens.get(correo)
+                fila['conectada'] = bool(t) and get_google_creds(app, correo) is not None
+                fila['expiry'] = (t or {}).get('token_expiry')
+                fila['detalle'] = ('Agenda con la API de Google Calendar.' if fila['conectada']
+                                   else 'Sin autorizar: sus citas se aprueban pero no llegan al calendario.')
+            else:
+                t = ms.get(correo.lower())
+                fila['conectada'] = bool(t and t.get('refresh_token'))
+                fila['expiry'] = (t or {}).get('token_expiry')
+                fila['detalle'] = ('Agenda por invitación de correo (.ics).' if fila['conectada']
+                                   else 'Sin autorizar: no puede mandar la invitación desde su dirección.')
+
+        orden = sorted(cuentas.values(), key=lambda f: (f['proveedor'] != 'google', f['email']))
+        return render_template('admin_cuentas.html', cuentas=orden,
+                               entrantes=_entrante.resumen(app))
+
+    # ------------------------------------------------------------
+    #  Autorizar una cuenta de Microsoft (código de dispositivo)
+    # ------------------------------------------------------------
+    @app.route('/admin/cuentas/microsoft/iniciar', methods=['POST'])
+    @login_required
+    def ms_auth_iniciar():
+        """Pide el código a Microsoft y lo devuelve para enseñarlo en pantalla.
+
+        No se espera aquí a que la persona lo teclee: eso son hasta quince
+        minutos y dejaría un worker de gunicorn bloqueado todo ese rato. La
+        pantalla pregunta cada pocos segundos por la otra ruta."""
+        if not is_admin():
+            return jsonify({'success': False, 'error': 'Solo admin'}), 403
+        cuenta = (request.json or {}).get('cuenta', '').strip().lower()
+        if not cuenta or '@' not in cuenta:
+            return jsonify({'success': False, 'error': 'Falta la cuenta'}), 400
+        datos, error = _invitaciones.iniciar_autorizacion(app, cuenta)
+        if error:
+            return jsonify({'success': False, 'error': error})
+        # El device_code no se le enseña a nadie: viaja en la sesión del
+        # administrador que lo pidió, que es quien va a completar el trámite.
+        session['ms_device'] = {'cuenta': cuenta, 'code': datos['device_code'],
+                                'authority': datos['authority']}
+        return jsonify({'success': True, 'user_code': datos['user_code'],
+                        'url': datos['verification_uri'],
+                        'expira_en': datos['expires_in'],
+                        'intervalo': datos['interval']})
+
+    @app.route('/admin/cuentas/microsoft/completar', methods=['POST'])
+    @login_required
+    def ms_auth_completar():
+        if not is_admin():
+            return jsonify({'success': False, 'error': 'Solo admin'}), 403
+        pendiente = session.get('ms_device')
+        if not pendiente:
+            return jsonify({'success': False, 'estado': 'error',
+                            'error': 'No hay ninguna autorización en curso'})
+        estado, error = _invitaciones.completar_autorizacion(
+            app, pendiente['cuenta'], pendiente['code'], pendiente.get('authority'))
+        if estado == 'ok':
+            session.pop('ms_device', None)
+            return jsonify({'success': True, 'estado': 'ok',
+                            'mensaje': f"{pendiente['cuenta']}: cuenta autorizada."})
+        if estado == 'pendiente':
+            return jsonify({'success': False, 'estado': 'pendiente'})
+        session.pop('ms_device', None)
+        return jsonify({'success': False, 'estado': 'error', 'error': error})
+
+    # ------------------------------------------------------------
+    #  Lo que agendan en esas cuentas
+    # ------------------------------------------------------------
+    @app.route('/calendar/api/entrantes/sync', methods=['POST'])
+    @login_required
+    def api_entrantes_sync():
+        if not is_admin():
+            return jsonify({'success': False, 'error': 'Solo admin'}), 403
+        try:
+            resultado = app.sincronizar_agenda_entrante()
+            return jsonify({'success': True, **resultado})
+        except Exception as e:
+            return jsonify({'success': False, 'error': str(e)[:200]})
+
+    @app.route('/calendar/api/entrantes/sync-cron', methods=['POST', 'GET'])
+    def api_entrantes_sync_cron():
+        """La misma pasada, para el cron externo. Mismo secreto que el resto."""
+        secreto = app.config.get('CRON_SECRET') or ''
+        recibido = request.headers.get('X-Cron-Secret') or request.args.get('secret') or ''
+        if not secreto or recibido != secreto:
+            return jsonify({'success': False, 'error': 'No autorizado'}), 401
+        try:
+            return jsonify({'success': True, **app.sincronizar_agenda_entrante()})
+        except Exception as e:
+            return jsonify({'success': False, 'error': str(e)[:200]})
+
+    @app.route('/calendar/api/entrantes/<eid>/visto', methods=['POST'])
+    @login_required
+    def api_entrante_visto(eid):
+        """«Ya lo vi». No cambia nada en la agenda de nadie: sólo deja de contar
+        en el aviso de que hay cosas nuevas sin mirar."""
+        if not user_can('calendar'):
+            return jsonify({'success': False, 'error': 'Sin acceso'}), 403
+        ok = app.supabase.update('agenda_externa', eid, {'visto': True})
+        return jsonify({'success': bool(ok)})
 
     # Trabajos de fondo (un solo worker se los queda mediante flock).
     if app.supabase:
@@ -5001,5 +5583,8 @@ def create_app():
         # Calendario de vencimientos: una revisión al día y, si hay algo fuera
         # de plazo, el correo de incumplimiento.
         _avisos.start_avisos_vencimiento(app)
+        # Lo que agendan en las nueve cuentas y no nació aquí. Sin esto el
+        # calendario sólo enseña la mitad de la agenda.
+        _entrante.arrancar_autosync(app, interval_min=15)
 
     return app

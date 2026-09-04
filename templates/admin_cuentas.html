@@ -1,0 +1,170 @@
+{% extends "base.html" %}
+{% block title %}Cuentas de agenda - calendarios-map{% endblock %}
+{% block page_title %}📮 Cuentas de agenda{% endblock %}
+{% block page_sub %}<p class="page-sub">Cada calendario agenda desde <strong>su propia cuenta</strong>: quien recibe la cita ve la dirección que corresponde, no una cuenta ajena. Y lo que agendan en esas cuentas entra al calendario de aquí.</p>{% endblock %}
+
+{% block content %}
+
+{# Lo primero que hay que poder responder en esta pantalla es «¿falta alguna
+   por conectar?». Si no falta ninguna no se dice nada: un aviso permanente en
+   verde se deja de leer a la semana. #}
+{% set pendientes = cuentas | rejectattr('conectada') | list %}
+{% if pendientes %}
+<div class="alert alert-warning">
+  ⚠️ <strong>{{ pendientes|length }}</strong> cuenta(s) sin autorizar. Las citas de sus
+  calendarios se aprueban igual, pero no llegan a ninguna agenda:
+  {{ pendientes | map(attribute='email') | join(', ') }}.
+</div>
+{% endif %}
+
+<div class="card mb-3"><div class="card-body">
+  <h6 class="section-heading">De qué cuenta sale cada calendario</h6>
+  <div class="table-responsive">
+    <table class="table table-sm align-middle">
+      <thead><tr>
+        <th>Cuenta</th><th>Cómo agenda</th><th>Calendarios</th><th>Estado</th><th></th>
+      </tr></thead>
+      <tbody>
+      {% for c in cuentas %}
+        <tr>
+          <td><strong>{{ c.email }}</strong></td>
+          <td class="small text-muted">
+            {% if c.proveedor == 'google' %}API de Google Calendar{% else %}Invitación por correo (.ics){% endif %}
+          </td>
+          <td class="small">{{ c.calendarios | join(', ') }}</td>
+          <td>
+            {% if c.conectada %}
+              <span class="badge bg-success">Conectada</span>
+            {% else %}
+              <span class="badge bg-danger">Sin autorizar</span>
+            {% endif %}
+            <div class="small text-muted">{{ c.detalle }}</div>
+          </td>
+          <td class="text-end">
+            {% if c.proveedor == 'google' %}
+              <a class="btn btn-sm {{ 'btn-outline-secondary' if c.conectada else 'btn-primary' }} rounded-pill"
+                 href="/auth/google?cuenta={{ c.email }}">
+                {{ 'Reconectar' if c.conectada else 'Conectar' }}
+              </a>
+            {% else %}
+              <button class="btn btn-sm {{ 'btn-outline-secondary' if c.conectada else 'btn-primary' }} rounded-pill"
+                      onclick="autorizarMicrosoft('{{ c.email }}')">
+                {{ 'Reconectar' if c.conectada else 'Autorizar' }}
+              </button>
+            {% endif %}
+          </td>
+        </tr>
+      {% else %}
+        <tr><td colspan="5" class="text-muted">No hay calendarios configurados.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <p class="small text-muted mb-0">
+    La cuenta de cada calendario se cambia en
+    <a href="/admin/database#sec-calendars">Catálogos → Calendarios</a>, campo <code>cuenta_email</code>.
+  </p>
+</div></div>
+
+{# ---- Autorización de Microsoft: código de dispositivo ---- #}
+<div class="card mb-3" id="cajaMs" hidden><div class="card-body">
+  <h6 class="section-heading">Autorizar <span id="msCuenta"></span></h6>
+  <p class="mb-2">Abre <a id="msUrl" href="#" target="_blank" rel="noopener">esta página de Microsoft</a>
+     y teclea este código:</p>
+  <p class="h3"><code id="msCodigo">…</code></p>
+  <p class="small text-muted mb-0" id="msEstado">Esperando a que lo confirmes…</p>
+</div></div>
+
+<div class="card"><div class="card-body">
+  <h6 class="section-heading">Lo que agendan en esas cuentas</h6>
+  <p class="mb-2">
+    <strong>{{ entrantes.total }}</strong> evento(s) traídos ·
+    <strong>{{ entrantes.proximos }}</strong> por venir ·
+    <strong>{{ entrantes.sin_ver }}</strong> sin mirar.
+  </p>
+  {% if entrantes.por_cuenta %}
+  <ul class="small text-muted">
+    {% for cuenta, n in entrantes.por_cuenta.items() %}
+    <li>{{ cuenta }} — {{ n }}</li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="small text-muted">Todavía no ha entrado nada. La revisión corre sola cada 15 minutos.</p>
+  {% endif %}
+  <button class="btn btn-sm btn-outline-primary rounded-pill" onclick="sincronizarEntrantes(this)">
+    ↙ Revisar ahora
+  </button>
+  <p class="small text-muted mt-2 mb-0">
+    De las cuentas de Google se ve toda la agenda. De las de Microsoft, las invitaciones
+    que llegan al correo: lo apuntado a mano directamente en Outlook no pasa por aquí.
+  </p>
+</div></div>
+
+<script>
+const CSRF = '{{ csrf_token() }}';
+
+async function post(url, datos) {
+  const r = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+    body: JSON.stringify(datos || {})
+  });
+  return r.json();
+}
+
+// El código de dispositivo caduca en quince minutos. Se pregunta cada pocos
+// segundos —el intervalo lo dice Microsoft— hasta que confirme o expire; el
+// servidor no espera bloqueado, que dejaría un worker colgado todo ese rato.
+async function autorizarMicrosoft(cuenta) {
+  const caja = document.getElementById('cajaMs');
+  document.getElementById('msCuenta').textContent = cuenta;
+  document.getElementById('msEstado').textContent = 'Pidiendo el código a Microsoft…';
+  caja.hidden = false;
+  caja.scrollIntoView({ behavior: 'smooth', block: 'center' });
+
+  const inicio = await post('/admin/cuentas/microsoft/iniciar', { cuenta });
+  if (!inicio.success) {
+    document.getElementById('msEstado').textContent = 'No se pudo empezar: ' + (inicio.error || '');
+    return;
+  }
+  document.getElementById('msCodigo').textContent = inicio.user_code;
+  const enlace = document.getElementById('msUrl');
+  enlace.href = inicio.url;
+  enlace.textContent = inicio.url;
+  document.getElementById('msEstado').textContent = 'Esperando a que lo confirmes…';
+
+  const cada = (inicio.intervalo || 5) * 1000;
+  const limite = Date.now() + (inicio.expira_en || 900) * 1000;
+  const timer = setInterval(async () => {
+    if (Date.now() > limite) {
+      clearInterval(timer);
+      document.getElementById('msEstado').textContent = 'El código caducó. Vuelve a empezar.';
+      return;
+    }
+    const r = await post('/admin/cuentas/microsoft/completar', {});
+    if (r.estado === 'ok') {
+      clearInterval(timer);
+      document.getElementById('msEstado').textContent = r.mensaje + ' Recargando…';
+      setTimeout(() => location.reload(), 1200);
+    } else if (r.estado === 'error') {
+      clearInterval(timer);
+      document.getElementById('msEstado').textContent = 'No se pudo autorizar: ' + (r.error || '');
+    }
+  }, cada);
+}
+
+async function sincronizarEntrantes(boton) {
+  const texto = boton.textContent;
+  boton.disabled = true;
+  boton.textContent = 'Revisando las nueve cuentas…';
+  const r = await post('/calendar/api/entrantes/sync', {});
+  boton.disabled = false;
+  boton.textContent = texto;
+  if (!r.success) { alert('No se pudo revisar: ' + (r.error || '')); return; }
+  const fallos = Object.entries(r.errores || {})
+    .map(([c, e]) => `${c}: ${e}`).join('\n');
+  alert(`Traídos ${r.traidos} evento(s).` + (fallos ? `\n\nCon problemas:\n${fallos}` : ''));
+  location.reload();
+}
+</script>
+{% endblock %}

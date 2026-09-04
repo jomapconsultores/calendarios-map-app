@@ -68,35 +68,70 @@ class SupabaseFalso:
     def get(self, tabla, filtros=None, select=None):
         return []
 
+    def update(self, tabla, id_val, data, id_col='id'):
+        return True
+
 
 class AppFalsa:
     supabase = SupabaseFalso()
 
 
+# Dos calendarios de DOS CUENTAS distintas, más uno de Microsoft: es el caso
+# que antes no existía —todo salía de la misma cuenta— y el que hay que vigilar.
 CALENDARIOS = [
     {'calendar_id': 'cal-a', 'name': 'JOMAP', 'email': 'jomap@ejemplo.com',
-     'color': '#4f46e5', 'google_cal_id': 'gcal-a'},
-    {'calendar_id': 'cal-b', 'name': 'CSCCUE', 'email': 'csccue@ejemplo.com',
-     'color': '#16a34a', 'google_cal_id': 'gcal-b'},
+     'color': '#4f46e5', 'google_cal_id': 'gcal-a',
+     'cuenta_email': 'jomap@ejemplo.com', 'proveedor': 'google'},
+    {'calendar_id': 'cal-b', 'name': 'ATLAS', 'email': 'atlas@ejemplo.com',
+     'color': '#16a34a', 'google_cal_id': 'gcal-b',
+     'cuenta_email': 'atlas@ejemplo.com', 'proveedor': 'google'},
+    {'calendar_id': 'cal-ms', 'name': 'CSCCUE', 'email': 'csccue@ejemplo.gob.ec',
+     'color': '#b91c1c', 'google_cal_id': None,
+     'cuenta_email': 'csccue@ejemplo.gob.ec', 'proveedor': 'microsoft'},
 ]
 
 CITA = {
     'id': 'cita-1', 'calendar_id': 'cal-a',
     'google_event_id': 'ev-viejo', 'google_cal_id': 'gcal-a',
+    'google_account': 'jomap@ejemplo.com',
     'status': 'confirmed', 'title': 'REUNIÓN', 'encargado': 'MARCO',
     'tema': 'Revisión anual', 'client_name': 'CLIENTE', 'client_email': 'c@ejemplo.com',
     'start_time': '2026-09-01T15:00:00+00:00', 'end_time': '2026-09-01T16:00:00+00:00',
     'invitados': 'invitado@ejemplo.com', 'lugar': 'OFICINA', 'direccion': 'Calle 1',
     'ciudad': 'CUENCA', 'mapa': '', 'notes': '', 'meeting_link': '',
+    'ics_sequence': 0,
 }
 
+# Con qué cuenta se pidió permiso en cada llamada. Es lo que distingue «se
+# agendó» de «se agendó DONDE TOCABA».
+cuentas_pedidas = []
+invitaciones_enviadas = []
 
-def preparar(falla_en=()):
+
+def preparar(falla_en=(), sin_conectar=()):
     """Enchufa el Google de mentira y devuelve su registro de llamadas."""
     reg = Registro()
-    appmod.get_google_creds = lambda app: 'credenciales-de-mentira'
+    del cuentas_pedidas[:]
+    del invitaciones_enviadas[:]
+
+    def _creds(app, email=None):
+        cuentas_pedidas.append(email)
+        return None if email in sin_conectar else 'credenciales-de-mentira'
+
+    def _invitar(app, apt, cuenta, email_map, metodo='REQUEST', secuencia=0):
+        invitaciones_enviadas.append({'cuenta': cuenta, 'metodo': metodo,
+                                      'secuencia': secuencia,
+                                      'destinos': appmod._invitaciones.destinatarios_de(
+                                          apt, email_map, cuenta)})
+        return len(invitaciones_enviadas[-1]['destinos']), None
+
+    appmod.get_google_creds = _creds
     appmod.build = lambda *a, **k: ServicioFalso(reg, falla_en)
     appmod._get_calendar_config = lambda app: CALENDARIOS
+    appmod._invitaciones.enviar_invitacion = _invitar
+    appmod._invitaciones.enviar_cancelacion = (
+        lambda app, apt, cuenta, email_map, secuencia=1:
+        _invitar(app, apt, cuenta, email_map, metodo='CANCEL', secuencia=secuencia))
     return reg
 
 
@@ -128,7 +163,10 @@ check('avisando a los invitados', reg.solo('update')[0]['sendUpdates'], 'all')
 check('no hay nada que advertir', aviso, None)
 check('no cambian los identificadores', parches, {})
 
-print('\n-- Cambiar la cita de calendario --')
+check('se pide el permiso de SU cuenta, no el de otra',
+      set(cuentas_pedidas), {'jomap@ejemplo.com'})
+
+print('\n-- Cambiar la cita de calendario (y de cuenta) --')
 reg = preparar()
 parches, aviso = appmod._reflejar_en_google(AppFalsa(), CITA, {'calendar_id': 'cal-b'})
 check('borra el del calendario anterior', len(reg.solo('delete')), 1)
@@ -136,8 +174,45 @@ check('del calendario del que salía', reg.solo('delete')[0]['calendarId'], 'gca
 check('y crea en el nuevo', reg.solo('insert')[0]['calendarId'], 'gcal-b')
 check('los dos avisando', [reg.solo('delete')[0]['sendUpdates'],
                            reg.solo('insert')[0]['sendUpdates']], ['all', 'all'])
-check('se guarda el identificador nuevo', parches,
-      {'google_event_id': 'evento-nuevo-123', 'google_cal_id': 'gcal-b'})
+check('se guarda el identificador nuevo y la cuenta donde quedó', parches,
+      {'google_event_id': 'evento-nuevo-123', 'google_cal_id': 'gcal-b',
+       'google_account': 'atlas@ejemplo.com'})
+check('se borra con la cuenta vieja y se crea con la nueva',
+      cuentas_pedidas, ['atlas@ejemplo.com', 'jomap@ejemplo.com'])
+
+print('\n-- La cuenta que convoca no se invita a sí misma --')
+reg = preparar()
+appmod._reflejar_en_google(AppFalsa(), CITA, {'start_time': '2026-09-04T15:00:00+00:00'})
+correos = [a['email'] for a in reg.solo('update')[0]['body']['attendees']]
+check('el organizador no figura como invitado', 'jomap@ejemplo.com' in correos, False)
+check('los invitados de la ficha sí', 'invitado@ejemplo.com' in correos, True)
+
+print('\n-- Una cita cuyo calendario NO es de Google --')
+CITA_MS = dict(CITA, calendar_id='cal-ms', google_event_id=None,
+               google_cal_id=None, google_account=None)
+reg = preparar()
+parches, aviso = appmod._reflejar_en_google(
+    AppFalsa(), CITA_MS, {'start_time': '2026-09-04T15:00:00+00:00'})
+check('no se toca la API de Google', len(reg.llamadas), 0)
+check('sale como invitación desde su propia cuenta',
+      [i['cuenta'] for i in invitaciones_enviadas], ['csccue@ejemplo.gob.ec'])
+check('con el número de versión subido, para que sustituya a la anterior',
+      invitaciones_enviadas[0]['secuencia'], 1)
+check('y la cuenta que convoca no se invita a sí misma',
+      'csccue@ejemplo.gob.ec' in invitaciones_enviadas[0]['destinos'], False)
+
+reg = preparar()
+check('cancelarla la retira por correo, no por Google',
+      (appmod.retirar_de_la_agenda(AppFalsa(), CITA_MS),
+       invitaciones_enviadas[0]['metodo'], len(reg.llamadas)),
+      (True, 'CANCEL', 0))
+
+print('\n-- Una cuenta caída no arrastra a las demás --')
+reg = preparar(sin_conectar={'atlas@ejemplo.com'})
+parches, aviso = appmod._reflejar_en_google(AppFalsa(), CITA, {'calendar_id': 'cal-b'})
+check('se dice qué cuenta falta, por su nombre',
+      bool(aviso and 'atlas@ejemplo.com' in aviso), True)
+check('y no se borra el evento que sigue siendo el bueno', len(reg.solo('delete')), 0)
 
 print('\n-- Cuando Google falla --')
 reg = preparar(falla_en={'update': 'boom'})
@@ -149,11 +224,12 @@ check('y no se inventan identificadores', parches, {})
 reg = preparar(falla_en={'insert': 'boom'})
 parches, aviso = appmod._reflejar_en_google(AppFalsa(), CITA, {'calendar_id': 'cal-b'})
 check('mudanza a medias: el identificador se limpia para poder repararlo',
-      parches, {'google_event_id': None, 'google_cal_id': None})
+      parches, {'google_event_id': None, 'google_cal_id': None,
+                'google_account': None})
 check('y se dice que hay que reparar', bool(aviso and 'Reparar eventos' in aviso), True)
 
 print('\n-- Sin Google conectado --')
-appmod.get_google_creds = lambda app: None
+preparar(sin_conectar={'jomap@ejemplo.com'})
 parches, aviso = appmod._reflejar_en_google(AppFalsa(), CITA, {'start_time': 'x'})
 check('se avisa de que el evento no se movió', bool(aviso and 'NO se actualizó' in aviso), True)
 
