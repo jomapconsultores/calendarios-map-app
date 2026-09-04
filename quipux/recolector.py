@@ -25,7 +25,7 @@ import re
 import traceback
 from datetime import datetime
 
-from . import archivo, documentos as docs, planificacion
+from . import almacen, archivo, documentos as docs, planificacion
 from .sesion import ErrorQuipux, Quipux
 
 # Dónde queda todo. Se puede cambiar con QUIPUX_DESTINO en el entorno.
@@ -52,7 +52,7 @@ class Recolector:
         self.fallos = []
 
     # ------------------------------------------------------------------
-    def ejecutar(self, volcar_cronograma=True):
+    def ejecutar(self, volcar_cronograma=False):
         os.makedirs(self.destino, exist_ok=True)
         estado = archivo.leer_estado(os.path.join(self.destino, ARCHIVO_ESTADO))
         inicio = datetime.now()
@@ -80,16 +80,25 @@ class Recolector:
             'segundos': round((datetime.now() - inicio).total_seconds()),
         }
 
+        # Todo se guarda AQUÍ, en el propio servidor: un archivo SQLite junto a
+        # los documentos descargados. Sin servicios de por medio, sin claves que
+        # configurar y sin migraciones que aplicar. Lo que se recogió se puede
+        # mirar aunque no haya internet, que es justo cuando más falta hace
+        # saber qué se debía para hoy.
+        almacen.guardar(self.documentos)
+        creadas, actualizadas = almacen.crear_tareas(self.documentos)
+        resumen['tareas'] = {'creadas': creadas, 'actualizadas': actualizadas}
+        almacen.apuntar_pasada(resumen)
+
+        # A la plataforma en la nube sólo se sube si alguien lo pide
+        # expresamente. Ya no es el camino: es un extra.
         if volcar_cronograma:
             db = planificacion.cliente_de_la_plataforma(self.log)
-            # Primero se publica lo recogido —para que se vea desde el servidor,
-            # el teléfono o donde sea— y después se llevan los plazos al
-            # cronograma. En ese orden: si lo segundo falla, al menos lo de
-            # mirar ya está puesto.
-            resumen['publicado'] = planificacion.publicar(db, self.documentos,
-                                                          registro=self.log)
-            resumen['cronograma'] = planificacion.volcar(db, self.documentos,
-                                                         registro=self.log)
+            if db is not None:
+                resumen['publicado'] = planificacion.publicar(db, self.documentos,
+                                                              registro=self.log)
+                resumen['cronograma'] = planificacion.volcar(db, self.documentos,
+                                                             registro=self.log)
         return resumen
 
     # ------------------------------------------------------------------
@@ -293,7 +302,7 @@ class Recolector:
         return salida
 
 
-def ejecutar(destino=None, bandejas=(), limite=None, volcar=True, registro=print):
+def ejecutar(destino=None, bandejas=(), limite=None, volcar=False, registro=print):
     """Punto de entrada. Devuelve el resumen; no lanza salvo que no se pueda
     ni entrar, que es el único caso en el que no hay nada que hacer."""
     r = Recolector(destino=destino, bandejas=bandejas, limite=limite, registro=registro)

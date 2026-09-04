@@ -1,13 +1,10 @@
 {% extends "base.html" %}
 {% block title %}Quipux — CalendarioMAP{% endblock %}
 {% block page_title %}📨 Quipux{% endblock %}
-{% block page_sub %}<p class="page-sub">Lo que llega de CuencaDOC, con sus plazos y sus adjuntos</p>{% endblock %}
+{% block page_sub %}<p class="page-sub">Lo que hay que hacer según CuencaDOC, y para cuándo</p>{% endblock %}
 
 {% block head %}
 <style>
-/* La tira de arriba es el marcador: lo primero que hay que saber no es cuántos
-   documentos hay —eso es un archivador— sino qué está vencido y qué vence esta
-   semana. Cada pastilla filtra; el número es el mando. */
 .q-row{display:flex;flex-wrap:wrap;gap:5px;align-items:center;background:#fff;
   border:1px solid #e2e8f0;border-radius:10px;padding:6px 9px;margin-bottom:10px}
 .q-item{display:inline-flex;align-items:center;gap:6px;background:#fff;color:#475569;
@@ -18,6 +15,11 @@
 .q-item .q-n{font-weight:800;font-size:var(--fs-sm)}
 .q-item.rojo .q-n{color:#b91c1c} .q-item.ambar .q-n{color:#a16207}
 
+.q-tabs{display:flex;gap:4px;margin-bottom:10px}
+.q-tab{padding:6px 16px;border:1px solid #e2e8f0;border-radius:9px;background:#fff;
+  cursor:pointer;font-size:var(--fs-sm);font-weight:600;color:#475569}
+.q-tab.on{background:var(--primary,#4f46e5);color:#fff;border-color:transparent}
+
 .q-filtros{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:10px}
 .q-filtros select,.q-filtros input{border:1px solid #e2e8f0;border-radius:8px;
   padding:5px 9px;font-size:var(--fs-xs);background:#fff;color:#334155}
@@ -25,68 +27,51 @@
 
 table.q-tabla{width:100%;border-collapse:collapse;font-size:var(--fs-sm);background:#fff}
 .q-tabla th{background:#f1f5f9;color:#334155;text-align:left;padding:7px 9px;
-  border-bottom:2px solid #e2e8f0;position:sticky;top:0;font-size:var(--fs-xs);
-  text-transform:uppercase;letter-spacing:.02em}
+  border-bottom:2px solid #e2e8f0;font-size:var(--fs-xs);text-transform:uppercase}
 .q-tabla td{padding:8px 9px;border-bottom:1px solid #f1f5f9;vertical-align:top}
 .q-tabla tr:hover td{background:#f8fafc}
 .q-plazo{font-weight:700;white-space:nowrap}
 .q-plazo.venc{color:#b91c1c} .q-plazo.pron{color:#a16207} .q-plazo.hay{color:#15803d}
 .q-plazo.no{color:#94a3b8;font-weight:400}
-.q-num{font-family:ui-monospace,Consolas,monospace;font-size:var(--fs-xs);white-space:nowrap;color:#475569}
-.q-asunto{max-width:520px}
+.q-num{font-family:ui-monospace,Consolas,monospace;font-size:var(--fs-xs);color:#475569;white-space:nowrap}
 .q-meta{color:#64748b;font-size:var(--fs-xs)}
 .q-ded{background:#fef3c7;color:#92400e;font-size:.65rem;padding:1px 6px;
   border-radius:6px;font-weight:700;margin-left:5px;white-space:nowrap}
 .q-adj{display:inline-block;background:#e0e7ff;color:#3730a3;border-radius:6px;
   padding:1px 7px;font-size:var(--fs-xs);font-weight:700}
 .q-vacio{padding:40px;text-align:center;color:#64748b}
-.q-fuente{color:#64748b;font-size:var(--fs-xs)}
-.q-fuente.viejo{color:#b45309;font-weight:600}
+.q-hecha td{opacity:.45;text-decoration:line-through}
+
+/* El acceso: se enseña sólo cuando CuencaDOC pide el texto de la imagen. */
+#cajaAcceso{background:#fff;border:2px solid #fbbf24;border-radius:12px;
+  padding:16px;margin-bottom:12px;display:none}
+#cajaAcceso img{border:1px solid #cbd5e1;border-radius:6px;vertical-align:middle}
+#txtCaptcha{border:1px solid #cbd5e1;border-radius:8px;padding:7px 11px;
+  font-size:1.1rem;width:150px;letter-spacing:.12em;text-transform:uppercase}
 </style>
 {% endblock %}
 
 {% block topbar_actions %}
-{% if en_servidor %}
-{# Desde el servidor no hay nada que pulsar: no existe el llavero de Windows ni
-   hay quien escriba el texto de la imagen. Un botón que no puede funcionar es
-   peor que ningún botón. #}
-<span class="status-pill off" title="Entrar a CuencaDOC corre en su computadora">
-  ↙ Se trae desde su PC
-</span>
-{% else %}
-<button class="btn btn-outline-primary btn-sm rounded-pill" onclick="recoger(this)"
-        title="Entrar a CuencaDOC y traer lo nuevo">↙ Traer de CuencaDOC</button>
-{% endif %}
+<button class="btn btn-primary btn-sm rounded-pill" id="btnTraer" onclick="traer()">
+  ↙ Traer de CuencaDOC
+</button>
 {% endblock %}
 
 {% block content %}
 
-{% if not fuente %}
-{# Nada que enseñar todavía. Se dice qué falta y cómo se arregla, en lugar de
-   una tabla vacía que parece que el módulo está roto. Y se dice distinto según
-   dónde esté corriendo esto: en el servidor no hay carpeta de Documentos ni
-   llavero de Windows, así que enseñar una ruta de allí sólo despista. #}
-<div class="alert alert-warning">
-  <strong>Todavía no se ha traído nada de CuencaDOC.</strong><br>
-  {% if en_servidor %}
-  Entrar a CuencaDOC necesita la credencial del llavero de Windows y, cuando el sistema
-  lo pide, que una persona escriba el texto de la imagen. Eso corre en <strong>su
-  computadora</strong>, no aquí. Ábralo allí una vez:
-  <div class="mt-2"><code>cd C:\Users\mapos\Dropbox\06_DESARROLLO\calendario</code><br>
-       <code>.\venv\Scripts\python.exe -m quipux</code></div>
-  <div class="small mt-2">
-    Los archivos quedan en esa computadora y la lista sube a la base, que es lo que
-    esta pantalla lee. Necesita aplicada la migración
-    <code>034_los_quipux_se_ven_desde_el_servidor.sql</code>.
+<div id="cajaAcceso">
+  <strong>CuencaDOC pide comprobar que hay una persona.</strong>
+  <p class="q-meta mb-2">Escriba el texto de la imagen. El servidor mantiene la sesión abierta
+     mientras tanto; no hace falta que entre usted en otra pestaña.</p>
+  <div class="d-flex align-items-center gap-2 flex-wrap">
+    <img id="imgCaptcha" alt="texto a copiar" height="46">
+    <input id="txtCaptcha" autocomplete="off" placeholder="letras"
+           onkeydown="if(event.key==='Enter')confirmarAcceso()">
+    <button class="btn btn-primary btn-sm rounded-pill" onclick="confirmarAcceso()">Entrar</button>
+    <button class="btn btn-light btn-sm rounded-pill" onclick="pedirAcceso()">Otra imagen</button>
+    <span class="q-meta" id="msgAcceso"></span>
   </div>
-  {% else %}
-  La recolección necesita la credencial del llavero de Windows y, cuando el sistema lo
-  pide, que alguien escriba el texto de la imagen. Ábrela una vez con:
-  <div class="mt-2"><code>.\venv\Scripts\python.exe -m quipux</code></div>
-  <div class="small mt-2">Lo recogido queda en <code>{{ destino }}</code> y aparece aquí.</div>
-  {% endif %}
 </div>
-{% endif %}
 
 <div class="q-row" id="marcador">
   <span class="q-item" data-ver="pendientes"><span class="q-n" id="n-abiertos">—</span> abiertos</span>
@@ -94,83 +79,191 @@ table.q-tabla{width:100%;border-collapse:collapse;font-size:var(--fs-sm);backgro
   <span class="q-item ambar" data-ver="con_plazo"><span class="q-n" id="n-plazo">—</span> con plazo</span>
   <span class="q-item" data-ver="todos"><span class="q-n" id="n-total">—</span> en total</span>
   <span style="flex:1"></span>
-  <span class="q-fuente" id="fuente"></span>
+  <span class="q-meta" id="fuente"></span>
 </div>
 
-<div class="q-filtros">
-  <select id="fArea"><option value="">Todas las áreas</option></select>
-  <select id="fBandeja"><option value="">Todas las bandejas</option></select>
-  <input id="fBusca" type="text" placeholder="Buscar por asunto, número, trámite o quien lo manda…">
+<div class="q-tabs">
+  <div class="q-tab on" data-vista="tareas" onclick="cambiarVista('tareas')">✅ Qué tengo que hacer</div>
+  <div class="q-tab" data-vista="docs" onclick="cambiarVista('docs')">🗂️ Todos los documentos</div>
 </div>
 
-<div style="overflow-x:auto">
+<div id="vistaTareas">
   <table class="q-tabla">
-    <thead><tr>
-      <th style="width:110px">Plazo</th>
-      <th style="width:95px">Fecha doc.</th>
-      <th style="width:150px">Número</th>
-      <th>Asunto</th>
-      <th style="width:170px">De</th>
-      <th style="width:60px">Adj.</th>
-      <th style="width:130px">Abrir</th>
-    </tr></thead>
-    <tbody id="cuerpo">
-      <tr><td colspan="7" class="q-vacio">Cargando…</td></tr>
-    </tbody>
+    <thead><tr><th style="width:120px">Para cuándo</th><th>Qué hay que hacer</th>
+      <th style="width:190px">Área</th><th style="width:150px">Marcar</th></tr></thead>
+    <tbody id="cuerpoTareas"><tr><td colspan="4" class="q-vacio">Cargando…</td></tr></tbody>
   </table>
+</div>
+
+<div id="vistaDocs" style="display:none">
+  <div class="q-filtros">
+    <select id="fArea"><option value="">Todas las áreas</option></select>
+    <select id="fBandeja"><option value="">Todas las bandejas</option></select>
+    <input id="fBusca" type="text" placeholder="Buscar por asunto, número, trámite o quien lo manda…">
+  </div>
+  <div style="overflow-x:auto">
+    <table class="q-tabla">
+      <thead><tr><th style="width:110px">Plazo</th><th style="width:95px">Fecha</th>
+        <th style="width:150px">Número</th><th>Asunto</th><th style="width:160px">De</th>
+        <th style="width:55px">Adj.</th><th style="width:110px">Abrir</th></tr></thead>
+      <tbody id="cuerpoDocs"><tr><td colspan="7" class="q-vacio">Cargando…</td></tr></tbody>
+    </table>
+  </div>
 </div>
 
 <script>
 const CSRF_TOKEN = document.querySelector('meta[name="csrf-token"]').content;
-let VER = 'pendientes', HOY = '';
+let VER = 'pendientes', HOY = '', VISTA = 'tareas';
 
-function esc(t){const d=document.createElement('div');d.textContent=t==null?'':String(t);return d.innerHTML;}
+const esc = t => { const d=document.createElement('div'); d.textContent = t==null?'':String(t); return d.innerHTML; };
+const post = (u,d)=>fetch(u,{method:'POST',headers:{'Content-Type':'application/json',
+  'X-CSRFToken':CSRF_TOKEN},body:JSON.stringify(d||{})}).then(r=>r.json());
 
 function claseDePlazo(f){
   if(!f) return 'no';
   if(f < HOY) return 'venc';
-  const enUnaSemana = new Date(Date.now()+7*864e5).toISOString().slice(0,10);
-  return f <= enUnaSemana ? 'pron' : 'hay';
+  const semana = new Date(Date.now()+7*864e5).toISOString().slice(0,10);
+  return f <= semana ? 'pron' : 'hay';
 }
 
-async function cargar(){
-  const p = new URLSearchParams({
-    ver: VER,
-    area: document.getElementById('fArea').value,
-    bandeja: document.getElementById('fBandeja').value,
-    q: document.getElementById('fBusca').value.trim()
-  });
-  const r = await fetch('/quipux/api/documentos?'+p).then(x=>x.json()).catch(()=>null);
-  const cuerpo = document.getElementById('cuerpo');
-  if(!r){ cuerpo.innerHTML='<tr><td colspan="7" class="q-vacio">No se pudo cargar.</td></tr>'; return; }
-  HOY = r.hoy;
+// ---------- Entrar a CuencaDOC ----------
+// El texto de la imagen lo escribe una persona: eso es lo que el control pide y
+// lo que se respeta. Lo que se evita es que además tenga que abrir otra
+// pestaña, buscar la bandeja y recorrerla a mano.
+async function pedirAcceso(){
+  document.getElementById('msgAcceso').textContent = 'pidiendo acceso…';
+  const r = await post('/quipux/api/acceso');
+  const caja = document.getElementById('cajaAcceso');
+  if(!r.success){
+    caja.style.display='block';
+    document.getElementById('msgAcceso').textContent = r.error || 'no se pudo';
+    return false;
+  }
+  if(r.estado === 'dentro'){
+    caja.style.display='none';
+    return true;
+  }
+  document.getElementById('imgCaptcha').src = r.imagen;
+  document.getElementById('txtCaptcha').value = '';
+  document.getElementById('msgAcceso').textContent = '';
+  caja.style.display='block';
+  document.getElementById('txtCaptcha').focus();
+  return false;
+}
 
-  if(!r.documentos.length){
-    cuerpo.innerHTML='<tr><td colspan="7" class="q-vacio">Nada que mostrar con este filtro.</td></tr>';
+async function confirmarAcceso(){
+  const texto = document.getElementById('txtCaptcha').value.trim();
+  if(!texto) return;
+  document.getElementById('msgAcceso').textContent = 'entrando…';
+  const r = await post('/quipux/api/acceso/confirmar', {texto});
+  if(!r.success){
+    document.getElementById('msgAcceso').textContent = r.error || 'no entró';
+    pedirAcceso();               // el texto caduca: se pide una imagen nueva
     return;
   }
-  cuerpo.innerHTML = r.documentos.map(d=>{
-    const cl = claseDePlazo(d.plazo_fecha);
-    const ded = (d.plazo_fecha && !d.plazo_seguro)
-      ? `<span class="q-ded" title="${esc(d.plazo_origen)} — confírmalo">deducido</span>` : '';
-    // La carpeta NO va como enlace: los navegadores no abren file:// desde una
-    // página web, así que sería un enlace que no hace nada. Va como algo que se
-    // copia de un clic, para pegarlo en el Explorador de Windows.
-    const carpeta = d.carpeta || '';
-    return `<tr>
-      <td class="q-plazo ${cl}">${esc(d.plazo_fecha||'—')}${ded}</td>
-      <td class="q-meta">${esc((d.fecha_doc||'').slice(0,10))}</td>
+  document.getElementById('cajaAcceso').style.display='none';
+  lanzarRecoleccion();
+}
+
+// ---------- Traer ----------
+async function traer(){
+  const b = document.getElementById('btnTraer');
+  b.disabled = true; b.textContent = 'Entrando…';
+  const dentro = await pedirAcceso();
+  if(dentro) lanzarRecoleccion();
+  else { b.disabled = false; b.textContent = '↙ Traer de CuencaDOC'; }
+}
+
+async function lanzarRecoleccion(){
+  const b = document.getElementById('btnTraer');
+  b.disabled = true; b.textContent = 'Recogiendo…';
+  const r = await post('/quipux/api/recoger');
+  if(!r.success){
+    b.disabled=false; b.textContent='↙ Traer de CuencaDOC';
+    if(r.error === 'sin_sesion'){ pedirAcceso(); return; }
+    alert('No se pudo: '+(r.error||''));
+    return;
+  }
+  vigilar();
+}
+
+// Doscientos documentos con sus adjuntos no caben en el tiempo que una página
+// espera, así que la pasada corre por detrás y aquí se pregunta cómo va.
+function vigilar(){
+  const b = document.getElementById('btnTraer');
+  const t = setInterval(async ()=>{
+    const e = await fetch('/quipux/api/recoger/estado').then(x=>x.json()).catch(()=>null);
+    if(!e) return;
+    if(e.estado === 'en curso'){ b.textContent = 'Recogiendo… ' + (e.detalle||''); return; }
+    clearInterval(t);
+    b.disabled=false; b.textContent='↙ Traer de CuencaDOC';
+    if(e.estado === 'sin sesión'){ pedirAcceso(); return; }
+    if(e.estado === 'falló'){ alert('La recolección falló: '+(e.detalle||'')); }
+    marcador(); cargar();
+  }, 2500);
+}
+
+// ---------- Las listas ----------
+function cambiarVista(v){
+  VISTA = v;
+  document.querySelectorAll('.q-tab').forEach(t=>t.classList.toggle('on', t.dataset.vista===v));
+  document.getElementById('vistaTareas').style.display = v==='tareas' ? '' : 'none';
+  document.getElementById('vistaDocs').style.display   = v==='docs'   ? '' : 'none';
+  cargar();
+}
+
+async function cargar(){ return VISTA==='tareas' ? cargarTareas() : cargarDocs(); }
+
+async function cargarTareas(){
+  const r = await fetch('/quipux/api/tareas?estado=pendiente').then(x=>x.json()).catch(()=>null);
+  const c = document.getElementById('cuerpoTareas');
+  if(!r){ c.innerHTML='<tr><td colspan="4" class="q-vacio">No se pudo cargar.</td></tr>'; return; }
+  HOY = r.hoy;
+  if(!r.tareas.length){
+    c.innerHTML = '<tr><td colspan="4" class="q-vacio">Nada pendiente. '
+                + 'Si es la primera vez, pulse «Traer de CuencaDOC».</td></tr>';
+    return;
+  }
+  c.innerHTML = r.tareas.map(t=>`<tr>
+      <td class="q-plazo ${claseDePlazo(t.vence)}">${esc(t.vence||'—')}
+          ${t.seguro?'':`<span class="q-ded" title="${esc(t.origen)} — confírmelo">deducido</span>`}</td>
+      <td>${esc(t.titulo)}<div class="q-meta">${esc(t.detalle||'')}</div></td>
+      <td class="q-meta">${esc(t.area||'')}</td>
+      <td>
+        <button class="btn btn-sm btn-outline-success rounded-pill"
+                onclick="marcar(${t.id},'hecha')">Hecha</button>
+        <button class="btn btn-sm btn-outline-secondary rounded-pill"
+                onclick="marcar(${t.id},'descartada')" title="No me corresponde">—</button>
+      </td></tr>`).join('');
+}
+
+async function marcar(id, estado){
+  await post('/quipux/api/tareas/'+id, {estado});
+  cargarTareas(); marcador();
+}
+
+async function cargarDocs(){
+  const p = new URLSearchParams({ver:VER,
+    area:document.getElementById('fArea').value,
+    bandeja:document.getElementById('fBandeja').value,
+    q:document.getElementById('fBusca').value.trim()});
+  const r = await fetch('/quipux/api/documentos?'+p).then(x=>x.json()).catch(()=>null);
+  const c = document.getElementById('cuerpoDocs');
+  if(!r){ c.innerHTML='<tr><td colspan="7" class="q-vacio">No se pudo cargar.</td></tr>'; return; }
+  HOY = r.hoy;
+  if(!r.documentos.length){
+    c.innerHTML='<tr><td colspan="7" class="q-vacio">Nada con este filtro.</td></tr>'; return;
+  }
+  c.innerHTML = r.documentos.map(d=>`<tr>
+      <td class="q-plazo ${claseDePlazo(d.plazo_fecha)}">${esc(d.plazo_fecha||'—')}
+          ${d.plazo_fecha && !d.plazo_seguro?`<span class="q-ded">deducido</span>`:''}</td>
+      <td class="q-meta">${esc(d.fecha_doc||'')}</td>
       <td class="q-num">${esc(d.numero||'')}<div class="q-meta">${esc(d.tipo||'')}</div></td>
-      <td class="q-asunto">${esc(d.asunto||'')}
-          <div class="q-meta">${esc(d.area||'')} · ${esc(d.bandeja||'')}</div></td>
-      <td class="q-meta">${esc(d.de||'')}</td>
-      <td>${d.n_adjuntos ? `<span class="q-adj">${d.n_adjuntos}</span>` : ''}</td>
-      <td class="q-meta">
-        ${carpeta ? `<a href="#" onclick="copiar(this,'${esc(carpeta).replace(/'/g,"\\'")}');return false"
-             title="Copiar la ruta para pegarla en el Explorador">copiar ruta</a> · ` : ''}
-        ${d.enlace ? `<a href="${esc(d.enlace)}" target="_blank" rel="noopener">Quipux</a>` : ''}
-      </td></tr>`;
-  }).join('');
+      <td>${esc(d.asunto||'')}<div class="q-meta">${esc(d.area||'')} · ${esc(d.bandeja||'')}</div></td>
+      <td class="q-meta">${esc(d.remitente||'')}</td>
+      <td>${d.n_adjuntos?`<span class="q-adj">${d.n_adjuntos}</span>`:''}</td>
+      <td class="q-meta">${d.enlace?`<a href="${esc(d.enlace)}" target="_blank" rel="noopener">Quipux</a>`:''}</td>
+    </tr>`).join('');
 }
 
 async function marcador(){
@@ -178,65 +271,31 @@ async function marcador(){
   if(!r) return;
   document.getElementById('n-abiertos').textContent = r.abiertos ?? 0;
   document.getElementById('n-vencidos').textContent = r.vencidos ?? 0;
-  document.getElementById('n-plazo').textContent = r.con_plazo ?? 0;
-  document.getElementById('n-total').textContent = r.total ?? 0;
-
+  document.getElementById('n-plazo').textContent    = r.con_plazo ?? 0;
+  document.getElementById('n-total').textContent    = r.total ?? 0;
   const f = document.getElementById('fuente');
-  if(r.actualizado){
-    const cuando = new Date(r.actualizado).toLocaleString('es-EC',
-      {dateStyle:'medium', timeStyle:'short'});
-    // Si lo último que se trajo no es de hoy, se dice en ámbar: mirar la lista
-    // del jueves creyendo que es la de hoy es peor que no mirar ninguna.
-    f.className = 'q-fuente' + (r.al_dia ? '' : ' viejo');
-    f.textContent = (r.al_dia ? 'Al día · ' : '⚠ No se trae desde ') + cuando
-                  + ' · desde ' + (r.fuente||'');
-  } else { f.textContent = ''; }
-
-  const area = document.getElementById('fArea'), band = document.getElementById('fBandeja');
-  if(area.options.length<=1 && r.areas) for(const a of r.areas) area.add(new Option(a,a));
-  if(band.options.length<=1 && r.bandejas) for(const b of r.bandejas) band.add(new Option(b,b));
+  f.textContent = r.ultima_pasada
+    ? (r.al_dia ? 'Al día · ' : '⚠ No se trae desde ') + r.ultima_pasada.replace('T',' ').slice(0,16)
+    : 'Todavía no se ha traído nada';
+  f.style.color = r.ultima_pasada && !r.al_dia ? '#b45309' : '';
+  const area=document.getElementById('fArea'), band=document.getElementById('fBandeja');
+  if(area.options.length<=1) (r.areas||[]).forEach(a=>area.add(new Option(a,a)));
+  if(band.options.length<=1) (r.bandejas||[]).forEach(b=>band.add(new Option(b,b)));
 }
 
 document.querySelectorAll('#marcador .q-item').forEach(el=>{
   el.addEventListener('click',()=>{
     document.querySelectorAll('#marcador .q-item').forEach(o=>o.classList.remove('on'));
-    el.classList.add('on');
-    VER = el.dataset.ver;
-    cargar();
+    el.classList.add('on'); VER = el.dataset.ver;
+    if(VISTA!=='docs') cambiarVista('docs'); else cargarDocs();
   });
 });
-['fArea','fBandeja'].forEach(id=>document.getElementById(id).addEventListener('change',cargar));
-let t; document.getElementById('fBusca').addEventListener('input',()=>{
-  clearTimeout(t); t=setTimeout(cargar,300);
+['fArea','fBandeja'].forEach(id=>document.getElementById(id).addEventListener('change',cargarDocs));
+let temporizador;
+document.getElementById('fBusca').addEventListener('input',()=>{
+  clearTimeout(temporizador); temporizador=setTimeout(cargarDocs,300);
 });
 
-async function copiar(el, ruta){
-  try{
-    await navigator.clipboard.writeText(ruta);
-    const antes = el.textContent;
-    el.textContent = '¡copiada!';
-    setTimeout(()=>{el.textContent = antes;}, 1500);
-  }catch(e){
-    // Sin permiso de portapapeles (pasa en http sin cifrar): se enseña para
-    // copiarla a mano, que es mejor que un clic que no hace nada.
-    prompt('Ruta de la carpeta:', ruta);
-  }
-}
-
-async function recoger(boton){
-  const txt = boton.textContent;
-  boton.disabled = true; boton.textContent = 'Entrando a CuencaDOC…';
-  const r = await fetch('/quipux/api/recoger',{method:'POST',
-    headers:{'Content-Type':'application/json','X-CSRFToken':CSRF_TOKEN}})
-    .then(x=>x.json()).catch(()=>({success:false,error:'sin respuesta'}));
-  boton.disabled = false; boton.textContent = txt;
-  if(!r.success){ alert('No se pudo: '+(r.error||'')); return; }
-  alert(`${r.documentos} documento(s), ${r.nuevos} nuevo(s), ${r.adjuntos} adjunto(s).`
-        + (r.fallos && r.fallos.length ? '\n\nCon problemas:\n'+r.fallos.join('\n') : ''));
-  marcador(); cargar();
-}
-
-document.querySelector('#marcador .q-item[data-ver="pendientes"]').classList.add('on');
 marcador(); cargar();
 </script>
 {% endblock %}

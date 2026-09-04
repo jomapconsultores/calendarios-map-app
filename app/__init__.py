@@ -5294,11 +5294,8 @@ def create_app():
             # Documentos de CuencaDOC ya vencidos. Es el único número que hay
             # que ver sin entrar: lo demás se mira cuando se abre el módulo.
             if is_admin() or user_can('quipux'):
-                from .quipux_web import cargar as _cargar_quipux
-                datos['quipux'] = sum(
-                    1 for d in _cargar_quipux(app)['documentos']
-                    if d.get('plazo_fecha') and d['plazo_fecha'] < hoy
-                    and (d.get('estado') or 'abierto') != 'cerrado')
+                from quipux import almacen as _almacen_quipux
+                datos['quipux'] = _almacen_quipux.resumen().get('vencidos', 0)
         except Exception:
             pass
         try:

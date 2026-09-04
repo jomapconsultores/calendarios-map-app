@@ -130,6 +130,106 @@ class Quipux:
         texto = (r.text or '').lower()
         return 'login_validar_captcha' in texto or 'captcha.php' in texto
 
+    # ------------------------------------------------------------------
+    #  Entrar en dos tiempos, para que el captcha se resuelva desde la web
+    # ------------------------------------------------------------------
+    #
+    # En el servidor no hay ninguna pantalla que abrir ni nadie sentado
+    # delante. Pero el control de CuencaDOC sólo pide una cosa —el texto de una
+    # imagen— y esa imagen se puede enseñar en la propia plataforma, que sí
+    # tiene a alguien mirándola.
+    #
+    # Así que el acceso se parte en dos: `empezar()` hace lo que no necesita a
+    # nadie y, si aparece el control, devuelve la imagen; `terminar(texto)`
+    # cierra el acceso con lo que la persona escribió. Entre los dos momentos
+    # la sesión HTTP se queda esperando, con sus cookies, que es justo lo que
+    # hace falta: el captcha va atado a esa sesión y no a otra.
+    def empezar(self):
+        """Primer tiempo. Devuelve 'dentro' o ('captcha', imagen_png)."""
+        usuario, contrasenia = credenciales.leer(self._usuario_pedido)
+        self.usuario = usuario
+
+        pagina = self.get('login.php')
+        if pagina.status_code != 200:
+            raise ErrorQuipux(f'La página de acceso no respondió (HTTP {pagina.status_code}). '
+                              'Puede ser un corte del servicio del Municipio.')
+        clave = re.search(r'public_key\s*=\s*[\'"]([^\'"]+)', pagina.text)
+        token = re.search(r'token_login\s*=\s*[\'"]([^\'"]+)', pagina.text)
+        if not clave or not token:
+            raise ErrorQuipux('La página de acceso cambió: ya no trae la clave '
+                              'pública ni el token. Hay que revisar este módulo.')
+        import base64
+        try:
+            publica = load_pem_public_key(self._pem(clave.group(1)).encode())
+            cifrado = publica.encrypt(
+                f'{token.group(1)}|{contrasenia}'.encode(), padding.PKCS1v15())
+        except Exception as e:
+            raise ErrorQuipux(f'No se pudo cifrar la contraseña: {str(e)[:150]}')
+
+        respuesta = self.post('login.php?txt_administrador=0', {
+            'krd': usuario, 'drd': '',
+            'txt_contrasenia': base64.b64encode(cifrado).decode(),
+            'Submit': 'Ingresar'})
+
+        if self._pide_imagen(respuesta):
+            imagen = self.get('js/captcha.php')
+            if imagen.status_code != 200 or not imagen.content:
+                raise ErrorQuipux('CuencaDOC pide el texto de una imagen pero no '
+                                  'entrega la imagen. Inténtalo de nuevo en un rato.')
+            return 'captcha', imagen.content
+
+        respuesta = self._seguir_saltos(respuesta)
+        if self._rechazado(respuesta):
+            raise ErrorQuipux(
+                f'CuencaDOC rechazó la credencial de «{usuario}». Revisa el usuario '
+                'y la clave, y que la cuenta no esté bloqueada por intentos fallidos.')
+        self.nombre = self._quien_soy()
+        if not self.nombre:
+            raise ErrorQuipux('Se envió la credencial pero el sistema no reconoce la sesión.')
+        return 'dentro', None
+
+    def terminar(self, texto_imagen):
+        """Segundo tiempo: se manda lo que la persona leyó en la imagen.
+
+        Los campos del usuario y la contraseña cifrada ya vienen puestos en el
+        formulario del control; se copian tal cual en vez de volver a cifrarlos,
+        porque el token con el que se cifraron era de un solo uso."""
+        pagina = self.get('login_validar_captcha.php')
+        doc = lxml_html.fromstring(pagina.text)
+        datos = {}
+        for campo in doc.xpath('//input[@name]'):
+            nombre = campo.get('name')
+            if nombre and nombre.lower() != 'submit':
+                datos[nombre] = campo.get('value') or ''
+        datos['txt_captcha'] = (texto_imagen or '').strip()
+        datos['Submit'] = 'Ingresar'
+
+        respuesta = self._seguir_saltos(
+            self.post('login_validar_captcha.php', datos))
+        if self._rechazado(respuesta) or self._pide_imagen(respuesta):
+            raise ErrorQuipux('El texto de la imagen no era correcto, o caducó. '
+                              'Vuelve a intentarlo: se pedirá una imagen nueva.')
+        self.nombre = self._quien_soy()
+        if not self.nombre:
+            raise ErrorQuipux('Se pasó el control pero el sistema no reconoce la sesión.')
+        return self.nombre
+
+    def galletas(self):
+        """La sesión, para poder guardarla entre una petición web y la siguiente."""
+        return {c.name: c.value for c in self.s.cookies}
+
+    def poner_galletas(self, galletas, dominio='dq.cuenca.gob.ec'):
+        for nombre, valor in (galletas or {}).items():
+            self.s.cookies.set(nombre, valor, domain=dominio, path='/')
+
+    def sigue_dentro(self):
+        """¿La sesión guardada todavía vale? Quipux echa la anterior cuando se
+        entra desde otro equipo, así que esto no es una formalidad."""
+        try:
+            return bool(self._quien_soy())
+        except Exception:
+            return False
+
     def _entrar_con_ayuda(self, usuario, contrasenia):
         """Cede el turno a la persona para el texto de la imagen, y recoge la
         sesión ya iniciada para seguir por HTTP."""

@@ -1,226 +1,260 @@
 # ------------------------------------------------------------
 # Desarrollado por Marco Antonio Posligua San Martín
 # ------------------------------------------------------------
-"""Módulo QUIPUX: lo que llega del Municipio, dentro de la plataforma.
+"""Módulo QUIPUX: lo que llega del Municipio, entero en el servidor.
 
-El recolector (paquete `quipux/`) entra a CuencaDOC, baja los documentos y los
-deja clasificados en el disco con su índice. Eso resuelve tenerlos; no resuelve
-MIRARLOS. Un Excel en una carpeta hay que acordarse de abrirlo, y lo que hay
-que acordarse de abrir se deja de abrir a la segunda semana.
+Todo vive aquí: la recolección corre en este servidor, los documentos se
+descargan a este disco y la lista se guarda en un SQLite junto a ellos. Nada
+depende de un servicio externo, de una clave que configurar ni de una migración
+que aplicar. El día que la nube no conteste, esto sigue enseñando qué se debe y
+para cuándo, que es exactamente el día en que más falta hace.
 
-Esta pantalla pone lo mismo donde ya se entra todos los días: al lado del
-calendario y de la planificación. Lo primero que se ve no es la lista de
-documentos —eso es un archivador— sino lo que vence y lo que está vencido, que
-es lo que cambia lo que uno hace hoy.
+Queda un paso que ningún servidor puede dar solo: CuencaDOC levanta a veces un
+control de «escriba el texto que se muestra en la imagen». Ese control no se
+rodea —está puesto para impedir precisamente que un programa entre por su
+cuenta—, pero tampoco hace falta un navegador en el servidor para pasarlo: la
+imagen se enseña en esta pantalla y la persona escribe las letras. El servidor
+mantiene la sesión abierta entre los dos momentos.
 
-De dónde salen los datos, por orden:
+De ahí que el acceso vaya en dos tiempos:
 
-  1. De la tabla `quipux_documentos`, si la base la tiene. Es lo que permite
-     mirarlo desde el teléfono o desde el servidor, sin depender de una
-     computadora encendida.
-  2. Del `INDICE.json` que el recolector deja en el disco. Funciona aunque la
-     base no conteste, que es exactamente el caso en el que uno más necesita
-     saber qué debía para hoy.
+    empezar()  → o entra directo, o devuelve la imagen a resolver
+    terminar() → con lo que la persona escribió, cierra el acceso
 
-Lo que esta pantalla NO hace es entrar a CuencaDOC. Eso corre en la máquina de
-la persona, con su credencial y, cuando el sistema lo pide, con ella tecleando
-el texto de la imagen. Desde el servidor no hay nada que se pueda hacer ahí, y
-fingir que sí lo habría acabaría en un botón que no funciona.
+Entre uno y otro la sesión HTTP se guarda en la sesión del usuario de esta
+aplicación. El captcha está atado a esas cookies concretas: usar otras sería
+resolver una imagen que ya no vale para nada.
 """
-import json
+import base64
 import os
-from datetime import date, datetime
+import threading
+from datetime import date
 
-from flask import jsonify, render_template, redirect, flash, request
+from flask import jsonify, render_template, redirect, flash, request, session
 from flask_login import login_required
 
-TABLA = 'quipux_documentos'
+# Una pasada cada vez. Dos a la vez se pisarían los archivos y, peor, se
+# echarían mutuamente de CuencaDOC: el sistema admite una sola sesión.
+_EN_CURSO = threading.Lock()
+_ULTIMA = {'estado': 'nunca', 'detalle': '', 'resumen': None}
 
-CAMPOS = ('id,numero,asunto,de,tipo,fecha_doc,tramite,referencia,categoria,'
-          'area,bandeja,estado,carpeta,enlace,n_adjuntos,plazo_fecha,'
-          'plazo_origen,plazo_seguro,actualizado')
+# La sesión de CuencaDOC a medio abrir, mientras la persona lee la imagen.
+# Vive en memoria del proceso y se referencia desde la sesión del usuario.
+_ACCESOS = {}
 
 
 def _destino():
-    """Dónde dejó el recolector su índice."""
     return (os.getenv('QUIPUX_DESTINO')
             or os.path.join(os.path.expanduser('~'), 'Documentos', 'Quipux'))
 
 
-def _desde_disco():
-    ruta = os.path.join(_destino(), 'INDICE.json')
-    try:
-        with open(ruta, encoding='utf-8') as f:
-            datos = json.load(f)
-    except Exception:
-        return None
-    salida = []
-    for d in datos.get('documentos', []):
-        plazo = d.get('plazo') or {}
-        salida.append({
-            **{k: d.get(k) for k in ('id', 'numero', 'asunto', 'de', 'tipo',
-                                     'fecha_doc', 'tramite', 'referencia',
-                                     'categoria', 'area', 'bandeja', 'estado',
-                                     'carpeta', 'enlace', 'n_adjuntos')},
-            'plazo_fecha': plazo.get('fecha') or '',
-            'plazo_origen': plazo.get('origen') or '',
-            'plazo_seguro': bool(plazo.get('seguro')),
-        })
-    return {'documentos': salida, 'actualizado': datos.get('actualizado'),
-            'fuente': 'la computadora'}
-
-
-def _desde_base(app):
-    try:
-        filas = app.supabase.get(TABLA, select=CAMPOS)
-    except Exception:
-        return None
-    if not filas:
-        return None
-    ultima = max((f.get('actualizado') or '') for f in filas) or None
-    return {'documentos': filas, 'actualizado': ultima, 'fuente': 'la base'}
-
-
-def cargar(app):
-    """Lo que hay, venga de donde venga. Se dice de dónde vino: mirar una lista
-    del jueves creyendo que es la de hoy es peor que no mirar ninguna."""
-    return (_desde_base(app) if app.supabase else None) or _desde_disco() or {
-        'documentos': [], 'actualizado': None, 'fuente': None}
-
-
-def _resumen(documentos):
-    hoy = date.today().isoformat()
-    abiertos = [d for d in documentos if (d.get('estado') or 'abierto') != 'cerrado']
-    con_plazo = [d for d in abiertos if d.get('plazo_fecha')]
-    return {
-        'total': len(documentos),
-        'abiertos': len(abiertos),
-        'con_plazo': len(con_plazo),
-        'vencidos': sum(1 for d in con_plazo if d['plazo_fecha'] < hoy),
-        'esta_semana': sum(1 for d in con_plazo if hoy <= d['plazo_fecha'] <= _fin_de_semana()),
-        'deducidos': sum(1 for d in con_plazo if not d.get('plazo_seguro')),
-        'adjuntos': sum(int(d.get('n_adjuntos') or 0) for d in documentos),
-        'areas': sorted({d.get('area') or '' for d in documentos} - {''}),
-        'bandejas': sorted({d.get('bandeja') or '' for d in documentos} - {''}),
-    }
-
-
-def _fin_de_semana():
-    hoy = date.today()
-    from datetime import timedelta
-    return (hoy + timedelta(days=6 - hoy.weekday())).isoformat()
-
-
 def registrar_quipux(app, ctx):
-    """Engancha el módulo. `ctx` trae los ayudantes de la aplicación."""
     is_admin = ctx['is_admin']
     user_can = ctx['user_can']
 
     def _permitido():
         # Es la bandeja de UNA persona en un sistema del Municipio: no es
-        # información del despacho que se reparta por roles. La ve quien tiene
-        # el módulo concedido, y el administrador.
+        # información del despacho que se reparta por roles.
         return is_admin() or user_can('quipux')
 
+    def _no(mensaje='Sin acceso', codigo=403):
+        return jsonify({'success': False, 'error': mensaje}), codigo
+
+    # ------------------------------------------------------------------
+    #  La pantalla
+    # ------------------------------------------------------------------
     @app.route('/quipux')
     @login_required
     def quipux_pantalla():
         if not _permitido():
             flash('No tienes acceso al módulo Quipux.', 'warning')
             return redirect('/dashboard')
-        datos = cargar(app)
-        return render_template('quipux.html',
-                               resumen=_resumen(datos['documentos']),
-                               actualizado=datos['actualizado'],
-                               fuente=datos['fuente'],
-                               destino=_destino(),
-                               # En el servidor no existe ninguna carpeta de
-                               # Documentos ni ningún llavero de Windows, así
-                               # que enseñar «/root/Documentos/Quipux» sólo
-                               # confunde: la ruta que importa es la de la
-                               # computadora desde la que se recoge.
-                               en_servidor=(os.name != 'nt'))
+        from quipux import almacen
+        try:
+            resumen = almacen.resumen()
+        except Exception as e:
+            resumen = {'total': 0, 'error': str(e)[:200]}
+        return render_template('quipux.html', resumen=resumen,
+                               destino=_destino(), ultima=_ULTIMA)
 
     @app.route('/quipux/api/documentos')
     @login_required
     def quipux_documentos():
         if not _permitido():
-            return jsonify({'error': 'Sin acceso'}), 403
-        datos = cargar(app)
-        docs = datos['documentos']
-
-        # Filtros. Se aplican aquí y no en el navegador porque la lista puede
-        # ser de varios cientos y el móvil no tiene por qué cargarla entera.
-        area = (request.args.get('area') or '').strip()
-        bandeja = (request.args.get('bandeja') or '').strip()
-        ver = (request.args.get('ver') or 'pendientes').strip()
-        busca = (request.args.get('q') or '').strip().lower()
-        hoy = date.today().isoformat()
-
-        if area:
-            docs = [d for d in docs if (d.get('area') or '') == area]
-        if bandeja:
-            docs = [d for d in docs if (d.get('bandeja') or '') == bandeja]
-        if ver == 'vencidos':
-            docs = [d for d in docs if d.get('plazo_fecha') and d['plazo_fecha'] < hoy
-                    and (d.get('estado') or 'abierto') != 'cerrado']
-        elif ver == 'con_plazo':
-            docs = [d for d in docs if d.get('plazo_fecha')]
-        elif ver == 'pendientes':
-            docs = [d for d in docs if (d.get('estado') or 'abierto') != 'cerrado']
-        if busca:
-            def coincide(d):
-                return any(busca in str(d.get(c) or '').lower()
-                           for c in ('asunto', 'numero', 'de', 'tramite', 'referencia'))
-            docs = [d for d in docs if coincide(d)]
-
-        # Lo que vence antes, primero; lo que no tiene plazo, al final. Ese es
-        # el orden en que hay que trabajar, no el de llegada.
-        docs = sorted(docs, key=lambda d: (d.get('plazo_fecha') or '9999-99-99',
-                                           d.get('fecha_doc') or ''))
-        return jsonify({
-            'documentos': docs[:600],
-            'total': len(docs),
-            'actualizado': datos['actualizado'],
-            'fuente': datos['fuente'],
-            'hoy': hoy,
-        })
+            return _no()
+        from quipux import almacen
+        docs = almacen.documentos(
+            ver=(request.args.get('ver') or 'pendientes'),
+            area=(request.args.get('area') or ''),
+            bandeja=(request.args.get('bandeja') or ''),
+            busca=(request.args.get('q') or '').strip())
+        return jsonify({'documentos': docs, 'total': len(docs),
+                        'hoy': date.today().isoformat()})
 
     @app.route('/quipux/api/estado')
     @login_required
     def quipux_estado():
-        """Para el contador del menú y para saber si la lista está fresca."""
         if not _permitido():
             return jsonify({'vencidos': 0})
-        datos = cargar(app)
-        r = _resumen(datos['documentos'])
-        r['actualizado'] = datos['actualizado']
-        r['fuente'] = datos['fuente']
-        r['al_dia'] = bool(datos['actualizado'] and
-                           datos['actualizado'][:10] == date.today().isoformat())
+        from quipux import almacen
+        try:
+            r = almacen.resumen()
+        except Exception:
+            r = {'vencidos': 0, 'total': 0}
+        r['pasada'] = _ULTIMA
         return jsonify(r)
 
+    # ------------------------------------------------------------------
+    #  Las tareas: qué hay que hacer y para cuándo
+    # ------------------------------------------------------------------
+    @app.route('/quipux/api/tareas')
+    @login_required
+    def quipux_tareas():
+        if not _permitido():
+            return _no()
+        from quipux import almacen
+        estado = request.args.get('estado') or 'pendiente'
+        return jsonify({'tareas': almacen.tareas(estado=estado),
+                        'hoy': date.today().isoformat()})
+
+    @app.route('/quipux/api/tareas/<int:tid>', methods=['POST'])
+    @login_required
+    def quipux_tarea_marcar(tid):
+        if not _permitido():
+            return _no()
+        nuevo = (request.json or {}).get('estado', 'hecha')
+        if nuevo not in ('pendiente', 'hecha', 'descartada'):
+            return _no('Estado no válido', 400)
+        from quipux import almacen
+        almacen.marcar_tarea(tid, nuevo)
+        return jsonify({'success': True})
+
+    # ------------------------------------------------------------------
+    #  Entrar a CuencaDOC, en dos tiempos
+    # ------------------------------------------------------------------
+    @app.route('/quipux/api/acceso', methods=['POST'])
+    @login_required
+    def quipux_acceso():
+        """Primer tiempo. O entra directo, o devuelve la imagen a resolver."""
+        if not _permitido():
+            return _no()
+        from quipux.sesion import ErrorQuipux, Quipux
+        q = Quipux(registro=lambda *a: None)
+        try:
+            estado, imagen = q.empezar()
+        except ErrorQuipux as e:
+            return jsonify({'success': False, 'error': str(e)})
+        except Exception as e:
+            return jsonify({'success': False, 'error': str(e)[:250]})
+
+        if estado == 'dentro':
+            session['quipux_cookies'] = q.galletas()
+            return jsonify({'success': True, 'estado': 'dentro', 'nombre': q.nombre})
+
+        # Hace falta la persona. Se guarda la sesión a medio abrir: el texto de
+        # la imagen sólo vale para ESTAS cookies.
+        clave = os.urandom(8).hex()
+        _ACCESOS[clave] = q
+        session['quipux_acceso'] = clave
+        return jsonify({'success': True, 'estado': 'captcha',
+                        'imagen': 'data:image/png;base64,'
+                                  + base64.b64encode(imagen).decode()})
+
+    @app.route('/quipux/api/acceso/confirmar', methods=['POST'])
+    @login_required
+    def quipux_acceso_confirmar():
+        """Segundo tiempo: lo que la persona leyó en la imagen."""
+        if not _permitido():
+            return _no()
+        clave = session.get('quipux_acceso')
+        q = _ACCESOS.get(clave)
+        if not q:
+            return jsonify({'success': False, 'error':
+                            'No hay ningún acceso a medias. Empieza de nuevo.'})
+        texto = (request.json or {}).get('texto', '').strip()
+        if not texto:
+            return jsonify({'success': False, 'error': 'Escribe el texto de la imagen.'})
+        from quipux.sesion import ErrorQuipux
+        try:
+            nombre = q.terminar(texto)
+        except ErrorQuipux as e:
+            return jsonify({'success': False, 'error': str(e)})
+        except Exception as e:
+            return jsonify({'success': False, 'error': str(e)[:250]})
+        session['quipux_cookies'] = q.galletas()
+        _ACCESOS.pop(clave, None)
+        session.pop('quipux_acceso', None)
+        return jsonify({'success': True, 'nombre': nombre})
+
+    # ------------------------------------------------------------------
+    #  La pasada
+    # ------------------------------------------------------------------
     @app.route('/quipux/api/recoger', methods=['POST'])
     @login_required
     def quipux_recoger():
-        """Lanza la pasada, y sólo si la aplicación corre en la computadora de
-        la persona: entrar a CuencaDOC necesita su credencial del llavero de
-        Windows y, cuando el sistema lo pide, que teclee el texto de la imagen.
-        Desde el servidor eso no existe, así que aquí se dice en vez de dejar un
-        botón que se queda pensando para siempre."""
+        """Recorre las áreas y las bandejas con la sesión ya abierta.
+
+        Corre en segundo plano: doscientos documentos con sus adjuntos no caben
+        en el tiempo que una página está dispuesta a esperar. La pantalla
+        pregunta cómo va."""
         if not _permitido():
-            return jsonify({'success': False, 'error': 'Sin acceso'}), 403
-        if os.name != 'nt':
+            return _no()
+        galletas = session.get('quipux_cookies')
+        if not galletas:
+            return jsonify({'success': False, 'error': 'sin_sesion'})
+        if _EN_CURSO.locked():
             return jsonify({'success': False, 'error':
-                            'La recolección corre en la computadora de la persona, '
-                            'no en el servidor. Ejecútala allí con: python -m quipux'})
-        try:
-            from quipux.recolector import ejecutar
-            r = ejecutar(registro=lambda *a: None)
-            return jsonify({'success': True, 'documentos': r['documentos'],
-                            'nuevos': r['nuevos'], 'adjuntos': r['adjuntos'],
-                            'fallos': r['fallos'][:10]})
-        except Exception as e:
-            return jsonify({'success': False, 'error': str(e)[:250]})
+                            'Ya hay una recolección en marcha.'})
+
+        def _trabajo(galletas, destino):
+            with _EN_CURSO:
+                _ULTIMA.update({'estado': 'en curso', 'detalle': 'entrando…'})
+                try:
+                    from quipux.recolector import Recolector
+                    from quipux.sesion import Quipux
+                    r = Recolector(destino=destino,
+                                   registro=lambda m: _ULTIMA.update({'detalle': str(m)[:200]}))
+                    r.q = Quipux(registro=r.log)
+                    r.q.poner_galletas(galletas)
+                    if not r.q.sigue_dentro():
+                        _ULTIMA.update({'estado': 'sin sesión',
+                                        'detalle': 'la sesión de CuencaDOC caducó'})
+                        return
+                    import os as _os
+                    _os.makedirs(r.destino, exist_ok=True)
+                    from quipux import almacen, archivo
+                    estado = archivo.leer_estado(
+                        _os.path.join(r.destino, '_estado.json'))
+                    r._recorrer_areas(estado)
+                    r._escribir_indices()
+                    almacen.guardar(r.documentos)
+                    creadas, act = almacen.crear_tareas(r.documentos)
+                    resumen = {'documentos': len(r.documentos),
+                               'nuevos': sum(1 for d in r.documentos if d.get('nuevo')),
+                               'adjuntos': sum(d.get('n_adjuntos', 0) for d in r.documentos),
+                               'segundos': 0, 'fallos': r.fallos,
+                               'tareas': {'creadas': creadas, 'actualizadas': act}}
+                    almacen.apuntar_pasada(resumen)
+                    _ULTIMA.update({'estado': 'terminada', 'resumen': resumen,
+                                    'detalle': f'{len(r.documentos)} documento(s), '
+                                               f'{creadas} tarea(s) nueva(s)'})
+                except Exception as e:
+                    _ULTIMA.update({'estado': 'falló', 'detalle': str(e)[:250]})
+                finally:
+                    try:
+                        r.q.salir()
+                    except Exception:
+                        pass
+
+        threading.Thread(target=_trabajo, args=(galletas, _destino()),
+                         name='quipux-recoger', daemon=True).start()
+        return jsonify({'success': True, 'estado': 'en curso'})
+
+    @app.route('/quipux/api/recoger/estado')
+    @login_required
+    def quipux_recoger_estado():
+        if not _permitido():
+            return _no()
+        return jsonify(_ULTIMA)
 
     return app

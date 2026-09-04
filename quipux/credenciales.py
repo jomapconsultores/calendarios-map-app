@@ -15,8 +15,12 @@ contraseñas de las cuentas de correo, así que tampoco es una pieza nueva que
 haya que aprender a cuidar.
 """
 import getpass
+import os
 
-import keyring
+try:
+    import keyring
+except Exception:                       # pragma: no cover
+    keyring = None                      # en el servidor Linux no hace falta
 
 SERVICIO = 'cuencadoc-quipux'
 # Bajo esta clave se guarda QUIÉN es el usuario, para no tener que teclearlo
@@ -34,17 +38,51 @@ def guardar(usuario, contrasenia):
     return usuario
 
 
+def _del_entorno():
+    """La vía del servidor: QUIPUX_USUARIO y QUIPUX_CLAVE en el .env.
+
+    En Linux no existe el Administrador de credenciales de Windows, y montar un
+    llavero de escritorio en un servidor sin escritorio es pelearse con algo que
+    no está pensado para eso. El `.env` ya está fuera de git y de la imagen
+    Docker, y ya guarda las claves de servicio del resto del sistema: la de
+    CuencaDOC no es más delicada que aquellas."""
+    u = (os.getenv('QUIPUX_USUARIO') or '').strip()
+    c = os.getenv('QUIPUX_CLAVE') or ''
+    return (u, c) if u and c else (None, None)
+
+
 def leer(usuario=None):
     """Devuelve (usuario, contraseña). Lanza si no hay nada dado de alta.
 
+    Se mira primero el entorno y después el llavero. Ese orden permite que la
+    MISMA aplicación funcione en el servidor —donde la credencial viene del
+    `.env`— y en la computadora de casa, sin cambiar nada ni tener dos
+    programas distintos que hagan lo mismo.
+
     El mensaje dice qué hacer, no sólo que falta algo: quien se encuentre esto
     a las siete de la mañana necesita el comando, no el diagnóstico."""
-    usuario = (usuario or keyring.get_password(SERVICIO, CLAVE_USUARIO) or '').strip()
+    del_entorno = _del_entorno()
+    if del_entorno[0] and not usuario:
+        return del_entorno
+
+    guardado = ''
+    if keyring is not None:
+        try:
+            guardado = keyring.get_password(SERVICIO, CLAVE_USUARIO) or ''
+        except Exception:
+            guardado = ''
+    usuario = (usuario or guardado).strip()
     if not usuario:
         raise RuntimeError(
-            'No hay ninguna credencial de CuencaDOC guardada.\n'
-            'Dala de alta una sola vez con:  python -m quipux alta')
-    contrasenia = keyring.get_password(SERVICIO, usuario)
+            'No hay ninguna credencial de CuencaDOC.\n'
+            '  · En el servidor: pon QUIPUX_USUARIO y QUIPUX_CLAVE en el .env.\n'
+            '  · En Windows:     python -m quipux alta')
+    contrasenia = None
+    if keyring is not None:
+        try:
+            contrasenia = keyring.get_password(SERVICIO, usuario)
+        except Exception:
+            contrasenia = None
     if not contrasenia:
         raise RuntimeError(
             f'El usuario «{usuario}» está registrado pero sin contraseña.\n'
