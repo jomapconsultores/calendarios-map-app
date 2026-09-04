@@ -26,3 +26,8 @@ python-docx>=1.1.0       # lectura de Word en la importación del directorio
 # plazos al cronograma. La clave vive en el llavero de Windows (keyring).
 keyring>=25.0            # credencial de CuencaDOC en el Administrador de credenciales
 lxml>=5.0                # lectura del HTML de las bandejas y las fichas
+# Sólo para la puerta: CuencaDOC levanta a veces un control de «escriba el texto
+# de la imagen». Eso lo resuelve la persona en una ventana del navegador; el
+# recorrido de las bandejas y las descargas siguen yendo por HTTP, que es
+# veinte veces más rápido. Usa el Chrome ya instalado, no descarga otro.
+playwright>=1.40         # ventana de acceso cuando salta el control de la imagen

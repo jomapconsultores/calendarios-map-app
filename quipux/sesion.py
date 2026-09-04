@@ -85,6 +85,63 @@ class Quipux:
         return self.s.post(self._url(ruta), data=datos, **kw)
 
     # ------------------------------------------------------------------
+    #  Las redirecciones que no son redirecciones
+    # ------------------------------------------------------------------
+    # CuencaDOC no redirige con una cabecera HTTP: contesta 200 con una línea
+    # de JavaScript —`window.location='…'` o `top.window.location='…'`— y
+    # espera que el navegador la obedezca. Un cliente HTTP no obedece nada: ve
+    # un 200 con setenta y nueve bytes dentro y da la petición por buena.
+    #
+    # Ahí se rompía el acceso. El POST de la credencial ERA correcto, y el
+    # sistema contestaba «pasa por aquí»; como nadie iba, la sesión se quedaba
+    # a medio hacer y la página siguiente respondía «no te conozco». El fallo
+    # se veía como una credencial rechazada, que es lo que más despista: la
+    # credencial estaba bien.
+    RE_SALTO = re.compile(
+        r"""(?:top\.)?(?:window\.)?location(?:\.href)?\s*=\s*['"]([^'"]+)['"]""", re.I)
+
+    def _seguir_saltos(self, r, tope=5):
+        """Obedece las redirecciones por JavaScript. Devuelve la última página."""
+        for _ in range(tope):
+            if not r.text or len(r.text) > 4000 or '<script' not in r.text.lower():
+                return r
+            m = self.RE_SALTO.search(r.text)
+            if not m:
+                return r
+            destino = m.group(1).strip()
+            if 'paginaerror' in destino.lower():
+                return r          # es un rechazo; quien llamó decide qué decir
+            r = self.get(destino if destino.startswith('http')
+                         else destino.lstrip('./'))
+        return r
+
+    @staticmethod
+    def _rechazado(r):
+        return 'paginaerror' in (r.text or '').lower()
+
+    @staticmethod
+    def _pide_imagen(r):
+        """¿Saltó el control del texto de la imagen?
+
+        Se mira el destino del salto, no el aspecto de la página: cuando
+        aparece, el sistema manda a `login_validar_captcha.php` antes de dejar
+        pasar. Es lo único fiable, porque esa página cambia de estilo con cada
+        actualización pero no de nombre."""
+        texto = (r.text or '').lower()
+        return 'login_validar_captcha' in texto or 'captcha.php' in texto
+
+    def _entrar_con_ayuda(self, usuario, contrasenia):
+        """Cede el turno a la persona para el texto de la imagen, y recoge la
+        sesión ya iniciada para seguir por HTTP."""
+        from . import navegador
+        cookies = navegador.entrar_asistido(self.base, usuario, contrasenia,
+                                            registro=self.log)
+        puestas = navegador.pasar_cookies(self.s, cookies)
+        if not puestas:
+            raise ErrorQuipux('Se completó el acceso pero no se pudo recoger la sesión.')
+        self.log(f'[quipux] sesión recogida del navegador ({puestas} cookies)')
+
+    # ------------------------------------------------------------------
     #  Entrar
     # ------------------------------------------------------------------
     @staticmethod
@@ -133,6 +190,21 @@ class Quipux:
         if respuesta.status_code != 200:
             raise ErrorQuipux(f'El acceso respondió HTTP {respuesta.status_code}.')
 
+        # El sistema contesta «pasa por aquí» en JavaScript. Hay que ir: es en
+        # esa segunda petición donde termina de montarse la sesión.
+        if self._pide_imagen(respuesta):
+            # El control de la imagen. No se lee ni se rodea: lo resuelve la
+            # persona, que es de quien es la cuenta. Sale unas veces sí y otras
+            # no, así que esto no puede ser el camino normal — sólo el desvío.
+            self._entrar_con_ayuda(usuario, contrasenia)
+        else:
+            respuesta = self._seguir_saltos(respuesta)
+            if self._rechazado(respuesta):
+                raise ErrorQuipux(
+                    f'CuencaDOC rechazó la credencial de «{usuario}». '
+                    'Comprueba usuario y clave con «python -m quipux alta», y que la '
+                    'cuenta no esté bloqueada por intentos fallidos.')
+
         texto = respuesta.text
         # Que la respuesta sea 200 no significa que se entró: un usuario o una
         # clave mal puestos devuelven la misma página de acceso, con el aviso
@@ -160,7 +232,10 @@ class Quipux:
 
     def _quien_soy(self):
         """El nombre y el área salen de la cabecera. Sirve de comprobante."""
-        r = self.get('f_top.php')
+        # La cabecera vive dentro del marco, y algunos Quipux sólo la sirven
+        # después de haber pedido la página que la contiene.
+        self._seguir_saltos(self.get('index_frames.php'))
+        r = self._seguir_saltos(self.get('f_top.php'))
         if r.status_code != 200:
             return ''
         doc = lxml_html.fromstring(r.text)
