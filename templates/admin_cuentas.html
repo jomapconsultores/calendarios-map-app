@@ -1,7 +1,47 @@
 {% extends "base.html" %}
 {% block title %}Cuentas de agenda - calendarios-map{% endblock %}
-{% block page_title %}📮 Cuentas de agenda{% endblock %}
+{% block page_title %}Cuentas de agenda{% endblock %}
 {% block page_sub %}<p class="page-sub">Cada calendario agenda desde <strong>su propia cuenta</strong>: quien recibe la cita ve la dirección que corresponde, no una cuenta ajena. Y lo que agendan en esas cuentas entra al calendario de aquí.</p>{% endblock %}
+
+{% block head %}
+<style>
+/* ===== CUENTAS DE AGENDA =====
+   Una tabla de nueve filas no necesita tarjetas ni botones de tamaño de dedo:
+   necesita que las nueve quepan a la vez y que se distinga de un vistazo cuál
+   falta por conectar. Misma escala tipográfica que el resto de la aplicación,
+   un escalón por debajo. */
+.ct{width:100%;border-collapse:collapse;background:#fff;border:1px solid var(--border);
+  border-radius:10px;overflow:hidden;margin-bottom:10px}
+.ct th{background:#f8fafc;color:#64748b;text-align:left;padding:7px 11px;
+  border-bottom:1px solid var(--border);font-size:var(--fs-3xs);
+  text-transform:uppercase;letter-spacing:.05em;font-weight:700}
+.ct td{padding:9px 11px;border-bottom:1px solid #f1f5f9;font-size:var(--fs-xs);
+  color:#334155;vertical-align:middle}
+.ct tbody tr:last-child td{border-bottom:none}
+.ct tbody tr:hover td{background:#fafbfc}
+.ct-correo{font-weight:600;color:#1e293b}
+.ct-meta{color:#94a3b8;font-size:var(--fs-3xs);margin-top:1px}
+.ct-pin{display:inline-flex;align-items:center;gap:5px;font-size:var(--fs-3xs);
+  font-weight:700;text-transform:uppercase;letter-spacing:.03em}
+.ct-pin i{width:6px;height:6px;border-radius:50%;display:block}
+.ct-pin.ok{color:#059669} .ct-pin.ok i{background:#22c55e}
+.ct-pin.no{color:#dc2626} .ct-pin.no i{background:#ef4444}
+.ct-btn{border:1px solid var(--border);background:#fff;border-radius:6px;
+  padding:3px 10px;font-size:var(--fs-3xs);font-weight:600;color:#475569;
+  cursor:pointer;text-decoration:none;display:inline-block;white-space:nowrap}
+.ct-btn:hover{background:#f8fafc;border-color:#cbd5e1;color:#334155}
+.ct-btn.pri{background:var(--primary);color:#fff;border-color:transparent}
+.ct-btn.pri:hover{background:var(--primary-dark);color:#fff}
+.ct-aviso{background:#fffbeb;border:1px solid #fcd34d;border-radius:9px;
+  padding:9px 13px;margin-bottom:10px;font-size:var(--fs-xs);color:#92400e}
+.ct-caja{background:#fff;border:1px solid var(--border);border-radius:10px;
+  padding:13px 15px;margin-bottom:10px}
+.ct-caja h6{font-size:var(--fs-sm);font-weight:700;color:#1e293b;margin:0 0 7px}
+.ct-nota{color:#94a3b8;font-size:var(--fs-3xs);line-height:1.55;margin:7px 0 0}
+.ct-cod{font-family:ui-monospace,Consolas,monospace;font-size:1.5rem;
+  font-weight:700;letter-spacing:.14em;color:#1e293b}
+</style>
+{% endblock %}
 
 {% block content %}
 
@@ -10,91 +50,75 @@
    verde se deja de leer a la semana. #}
 {% set pendientes = cuentas | rejectattr('conectada') | list %}
 {% if pendientes %}
-<div class="alert alert-warning">
-  ⚠️ <strong>{{ pendientes|length }}</strong> cuenta(s) sin autorizar. Las citas de sus
-  calendarios se aprueban igual, pero no llegan a ninguna agenda:
+<div class="ct-aviso">
+  <strong>{{ pendientes|length }} cuenta(s) sin autorizar.</strong>
+  Las citas de sus calendarios se aprueban igual, pero no llegan a ninguna agenda:
   {{ pendientes | map(attribute='email') | join(', ') }}.
 </div>
 {% endif %}
 
-<div class="card mb-3"><div class="card-body">
-  <h6 class="section-heading">De qué cuenta sale cada calendario</h6>
-  <div class="table-responsive">
-    <table class="table table-sm align-middle">
-      <thead><tr>
-        <th>Cuenta</th><th>Cómo agenda</th><th>Calendarios</th><th>Estado</th><th></th>
-      </tr></thead>
-      <tbody>
-      {% for c in cuentas %}
-        <tr>
-          <td><strong>{{ c.email }}</strong></td>
-          <td class="small text-muted">
-            {% if c.proveedor == 'google' %}API de Google Calendar{% else %}Invitación por correo (.ics){% endif %}
-          </td>
-          <td class="small">{{ c.calendarios | join(', ') }}</td>
-          <td>
-            {% if c.conectada %}
-              <span class="badge bg-success">Conectada</span>
-            {% else %}
-              <span class="badge bg-danger">Sin autorizar</span>
-            {% endif %}
-            <div class="small text-muted">{{ c.detalle }}</div>
-          </td>
-          <td class="text-end">
-            {% if c.proveedor == 'google' %}
-              <a class="btn btn-sm {{ 'btn-outline-secondary' if c.conectada else 'btn-primary' }} rounded-pill"
-                 href="/auth/google?cuenta={{ c.email }}">
-                {{ 'Reconectar' if c.conectada else 'Conectar' }}
-              </a>
-            {% else %}
-              <button class="btn btn-sm {{ 'btn-outline-secondary' if c.conectada else 'btn-primary' }} rounded-pill"
-                      onclick="autorizarMicrosoft('{{ c.email }}')">
-                {{ 'Reconectar' if c.conectada else 'Autorizar' }}
-              </button>
-            {% endif %}
-          </td>
-        </tr>
-      {% else %}
-        <tr><td colspan="5" class="text-muted">No hay calendarios configurados.</td></tr>
-      {% endfor %}
-      </tbody>
-    </table>
-  </div>
-  <p class="small text-muted mb-0">
-    La cuenta de cada calendario se cambia en
-    <a href="/admin/database#sec-calendars">Catálogos → Calendarios</a>, campo <code>cuenta_email</code>.
-  </p>
-</div></div>
+<div class="ct-caja">
+  <h6>De qué cuenta sale cada calendario</h6>
+  <table class="ct">
+    <thead><tr><th>Cuenta</th><th style="width:180px">Cómo agenda</th>
+      <th>Calendarios</th><th style="width:150px">Estado</th><th style="width:110px"></th></tr></thead>
+    <tbody>
+    {% for c in cuentas %}
+      <tr>
+        <td><div class="ct-correo">{{ c.email }}</div></td>
+        <td class="ct-meta">{% if c.proveedor == 'google' %}API de Google Calendar{% else %}Invitación .ics por correo{% endif %}</td>
+        <td class="ct-meta">{{ c.calendarios | join(', ') }}</td>
+        <td>
+          {% if c.conectada %}<span class="ct-pin ok"><i></i>conectada</span>
+          {% else %}<span class="ct-pin no"><i></i>sin autorizar</span>{% endif %}
+          <div class="ct-meta">{{ c.detalle }}</div>
+        </td>
+        <td style="text-align:right">
+          {% if c.proveedor == 'google' %}
+            <a class="ct-btn {{ '' if c.conectada else 'pri' }}" href="/auth/google?cuenta={{ c.email }}">{{ 'Reconectar' if c.conectada else 'Conectar' }}</a>
+          {% else %}
+            <button class="ct-btn {{ '' if c.conectada else 'pri' }}" onclick="autorizarMicrosoft('{{ c.email }}')">{{ 'Reconectar' if c.conectada else 'Autorizar' }}</button>
+          {% endif %}
+        </td>
+      </tr>
+    {% else %}
+      <tr><td colspan="5" class="ct-meta">No hay calendarios configurados.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <p class="ct-nota">La cuenta de cada calendario se cambia en
+    <a href="/admin/database#sec-calendars">Catálogos → Calendarios</a>, campo <code>cuenta_email</code>.</p>
+</div>
 
 {# ---- Autorización de Microsoft: código de dispositivo ---- #}
-<div class="card mb-3" id="cajaMs" hidden><div class="card-body">
-  <h6 class="section-heading">Autorizar <span id="msCuenta"></span></h6>
+<div class="ct-caja" id="cajaMs" hidden>
+  <h6>Autorizar <span id="msCuenta"></span></h6>
   <p class="mb-2">Abre <a id="msUrl" href="#" target="_blank" rel="noopener">esta página de Microsoft</a>
      y teclea este código:</p>
-  <p class="h3"><code id="msCodigo">…</code></p>
-  <p class="small text-muted mb-0" id="msEstado">Esperando a que lo confirmes…</p>
-</div></div>
+  <p><span class="ct-cod" id="msCodigo">…</span></p>
+  <p class="ct-nota" id="msEstado">Esperando a que lo confirmes…</p>
+</div>
 
-<div class="card"><div class="card-body">
-  <h6 class="section-heading">Lo que agendan en esas cuentas</h6>
-  <p class="mb-2">
+<div class="ct-caja">
+  <h6>Lo que agendan en esas cuentas</h6>
+  <p style="font-size:var(--fs-xs)">
     <strong>{{ entrantes.total }}</strong> evento(s) traídos ·
     <strong>{{ entrantes.proximos }}</strong> por venir ·
     <strong>{{ entrantes.sin_ver }}</strong> sin mirar.
   </p>
   {% if entrantes.por_cuenta %}
-  <ul class="small text-muted">
+  <ul class="ct-nota">
     {% for cuenta, n in entrantes.por_cuenta.items() %}
     <li>{{ cuenta }} — {{ n }}</li>
     {% endfor %}
   </ul>
   {% else %}
-  <p class="small text-muted">Todavía no ha entrado nada. La revisión corre sola cada 15 minutos.</p>
+  <p class="ct-nota">Todavía no ha entrado nada. La revisión corre sola cada 15 minutos.</p>
   {% endif %}
-  <button class="btn btn-sm btn-outline-primary rounded-pill" onclick="sincronizarEntrantes(this)">
+  <button class="ct-btn" onclick="sincronizarEntrantes(this)">
     ↙ Revisar ahora
   </button>
-  <p class="small text-muted mt-2 mb-0">
+  <p class="ct-nota">
     Lo que aparece en esas agendas entra al calendario como una cita más: se abre, se
     edita y lo que se cambie vuelve a salir hacia la cuenta de la que vino. Lo que se
     cancele allí se marca cancelado aquí — no se borra, para que quede el rastro.
@@ -103,7 +127,7 @@
     Una cuenta cuya agenda no deba salir en esta pantalla se apaga con
     <code>sincronizar_entrada</code> en <a href="/admin/database#sec-calendars">Catálogos → Calendarios</a>.
   </p>
-</div></div>
+</div>
 
 <script>
 const CSRF = '{{ csrf_token() }}';

@@ -191,9 +191,15 @@ class Quipux:
     def terminar(self, texto_imagen):
         """Segundo tiempo: se manda lo que la persona leyó en la imagen.
 
-        Los campos del usuario y la contraseña cifrada ya vienen puestos en el
-        formulario del control; se copian tal cual en vez de volver a cifrarlos,
-        porque el token con el que se cifraron era de un solo uso."""
+        A dónde va esto no es evidente y cuesta un fallo averiguarlo: la página
+        del control NO se envía a sí misma. Su `validar_login()` cambia el
+        destino del formulario a `login.php?txt_administrador=0` —el mismo del
+        primer paso— y manda `krd` y `txt_contrasenia` VACÍOS, porque el
+        servidor ya guardó el usuario y la contraseña en la sesión al recibirlos
+        antes. Lo único que aporta este envío es el texto de la imagen.
+
+        Mandarlo a `login_validar_captcha.php`, que es lo que parece, hace que
+        el sistema conteste que el texto no era correcto — aunque lo fuera."""
         pagina = self.get('login_validar_captcha.php')
         doc = lxml_html.fromstring(pagina.text)
         datos = {}
@@ -205,7 +211,7 @@ class Quipux:
         datos['Submit'] = 'Ingresar'
 
         respuesta = self._seguir_saltos(
-            self.post('login_validar_captcha.php', datos))
+            self.post('login.php?txt_administrador=0', datos))
         if self._rechazado(respuesta) or self._pide_imagen(respuesta):
             raise ErrorQuipux('El texto de la imagen no era correcto, o caducó. '
                               'Vuelve a intentarlo: se pedirá una imagen nueva.')

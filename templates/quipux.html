@@ -1,133 +1,197 @@
 {% extends "base.html" %}
 {% block title %}Quipux — CalendarioMAP{% endblock %}
-{% block page_title %}📨 Quipux{% endblock %}
-{% block page_sub %}<p class="page-sub">Lo que hay que hacer según CuencaDOC, y para cuándo</p>{% endblock %}
+{% block page_title %}Quipux{% endblock %}
+{% block page_sub %}<p class="page-sub">Lo que hay que entregar según CuencaDOC, y para cuándo</p>{% endblock %}
 
 {% block head %}
 <style>
-.q-row{display:flex;flex-wrap:wrap;gap:5px;align-items:center;background:#fff;
-  border:1px solid #e2e8f0;border-radius:10px;padding:6px 9px;margin-bottom:10px}
-.q-item{display:inline-flex;align-items:center;gap:6px;background:#fff;color:#475569;
-  border:1px solid #e2e8f0;border-radius:999px;padding:3px 11px;font-size:var(--fs-xs);
-  font-weight:600;cursor:pointer;transition:.15s;white-space:nowrap}
-.q-item:hover{border-color:#cbd5e1;background:#f8fafc}
-.q-item.on{box-shadow:0 2px 8px rgba(0,0,0,.10);border-color:#94a3b8}
-.q-item .q-n{font-weight:800;font-size:var(--fs-sm)}
-.q-item.rojo .q-n{color:#b91c1c} .q-item.ambar .q-n{color:#a16207}
+/* ===== QUIPUX =====
+   Densidad antes que tamaño. Esta pantalla se abre para responder una sola
+   pregunta —¿qué debo y para cuándo?— y la respuesta son veinte o treinta
+   líneas: si cada una ocupa el alto de un botón, hay que desplazarse para leer
+   lo que debería caber de un vistazo. Todo va un escalón por debajo del resto
+   de la aplicación, y la jerarquía la marca el peso y el color, no el cuerpo. */
 
-.q-tabs{display:flex;gap:4px;margin-bottom:10px}
-.q-tab{padding:6px 16px;border:1px solid #e2e8f0;border-radius:9px;background:#fff;
-  cursor:pointer;font-size:var(--fs-sm);font-weight:600;color:#475569}
-.q-tab.on{background:var(--primary,#4f46e5);color:#fff;border-color:transparent}
+.qx-barra{display:flex;flex-wrap:wrap;gap:14px;align-items:center;background:#fff;
+  border:1px solid var(--border);border-radius:10px;padding:8px 14px;margin-bottom:8px}
+.qx-cifra{display:flex;align-items:baseline;gap:5px;cursor:pointer;
+  padding:2px 0;border-bottom:2px solid transparent;transition:.12s}
+.qx-cifra:hover{border-bottom-color:#cbd5e1}
+.qx-cifra.on{border-bottom-color:var(--primary)}
+.qx-cifra b{font-size:var(--fs-lg);font-weight:700;color:#1e293b;
+  font-variant-numeric:tabular-nums;letter-spacing:-.01em}
+.qx-cifra span{font-size:var(--fs-2xs);color:#64748b;text-transform:uppercase;
+  letter-spacing:.04em;font-weight:600}
+.qx-cifra.alerta b{color:#dc2626}
+.qx-cifra.aviso  b{color:#d97706}
+.qx-sello{margin-left:auto;font-size:var(--fs-2xs);color:#94a3b8;
+  display:flex;align-items:center;gap:5px}
+.qx-sello.viejo{color:#b45309;font-weight:600}
+.qx-punto{width:6px;height:6px;border-radius:50%;background:#22c55e;flex:none}
+.qx-sello.viejo .qx-punto{background:#f59e0b}
 
-.q-filtros{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:10px}
-.q-filtros select,.q-filtros input{border:1px solid #e2e8f0;border-radius:8px;
-  padding:5px 9px;font-size:var(--fs-xs);background:#fff;color:#334155}
-.q-filtros input{flex:1;min-width:200px}
+.qx-tabs{display:flex;gap:2px;border-bottom:1px solid var(--border);margin-bottom:2px}
+.qx-tab{padding:7px 14px;font-size:var(--fs-xs);font-weight:600;color:#64748b;
+  cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px;
+  transition:.12s;white-space:nowrap}
+.qx-tab:hover{color:#334155}
+.qx-tab.on{color:var(--primary);border-bottom-color:var(--primary)}
 
-table.q-tabla{width:100%;border-collapse:collapse;font-size:var(--fs-sm);background:#fff}
-.q-tabla th{background:#f1f5f9;color:#334155;text-align:left;padding:7px 9px;
-  border-bottom:2px solid #e2e8f0;font-size:var(--fs-xs);text-transform:uppercase}
-.q-tabla td{padding:8px 9px;border-bottom:1px solid #f1f5f9;vertical-align:top}
-.q-tabla tr:hover td{background:#f8fafc}
-.q-plazo{font-weight:700;white-space:nowrap}
-.q-plazo.venc{color:#b91c1c} .q-plazo.pron{color:#a16207} .q-plazo.hay{color:#15803d}
-.q-plazo.no{color:#94a3b8;font-weight:400}
-.q-num{font-family:ui-monospace,Consolas,monospace;font-size:var(--fs-xs);color:#475569;white-space:nowrap}
-.q-meta{color:#64748b;font-size:var(--fs-xs)}
-.q-ded{background:#fef3c7;color:#92400e;font-size:.65rem;padding:1px 6px;
-  border-radius:6px;font-weight:700;margin-left:5px;white-space:nowrap}
-.q-adj{display:inline-block;background:#e0e7ff;color:#3730a3;border-radius:6px;
-  padding:1px 7px;font-size:var(--fs-xs);font-weight:700}
-.q-vacio{padding:40px;text-align:center;color:#64748b}
-.q-hecha td{opacity:.45;text-decoration:line-through}
+.qx-filtros{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin:8px 0}
+.qx-filtros select,.qx-filtros input{border:1px solid var(--border);border-radius:7px;
+  padding:4px 8px;font-size:var(--fs-2xs);background:#fff;color:#475569;height:28px}
+.qx-filtros input{flex:1;min-width:180px}
+.qx-filtros select:focus,.qx-filtros input:focus{outline:none;border-color:var(--primary)}
 
-/* El acceso: se enseña sólo cuando CuencaDOC pide el texto de la imagen. */
-#cajaAcceso{background:#fff;border:2px solid #fbbf24;border-radius:12px;
-  padding:16px;margin-bottom:12px;display:none}
-#cajaAcceso img{border:1px solid #cbd5e1;border-radius:6px;vertical-align:middle}
-#txtCaptcha{border:1px solid #cbd5e1;border-radius:8px;padding:7px 11px;
-  font-size:1.1rem;width:150px;letter-spacing:.12em;text-transform:uppercase}
+table.qx{width:100%;border-collapse:collapse;background:#fff;
+  border:1px solid var(--border);border-radius:10px;overflow:hidden}
+.qx th{background:#f8fafc;color:#64748b;text-align:left;padding:7px 10px;
+  border-bottom:1px solid var(--border);font-size:var(--fs-3xs);
+  text-transform:uppercase;letter-spacing:.05em;font-weight:700;white-space:nowrap}
+.qx td{padding:9px 10px;border-bottom:1px solid #f1f5f9;vertical-align:top;
+  font-size:var(--fs-xs);color:#334155;line-height:1.45}
+.qx tbody tr:last-child td{border-bottom:none}
+.qx tbody tr:hover td{background:#fafbfc}
+
+/* La fecha manda: va en cifras tabulares para que las columnas se alineen
+   solas, y su color es el único semáforo de la fila. */
+.qx-fecha{font-variant-numeric:tabular-nums;font-weight:700;white-space:nowrap;
+  font-size:var(--fs-xs)}
+.qx-fecha.venc{color:#dc2626} .qx-fecha.pron{color:#d97706}
+.qx-fecha.hay{color:#059669}  .qx-fecha.no{color:#cbd5e1;font-weight:500}
+.qx-dias{display:block;font-size:var(--fs-3xs);font-weight:600;color:#94a3b8;
+  text-transform:uppercase;letter-spacing:.03em;margin-top:1px}
+
+.qx-titulo{font-weight:600;color:#1e293b;font-size:var(--fs-xs)}
+.qx-meta{color:#94a3b8;font-size:var(--fs-3xs);margin-top:2px;line-height:1.4}
+.qx-num{font-family:ui-monospace,"Cascadia Mono",Consolas,monospace;
+  font-size:var(--fs-3xs);color:#475569;white-space:nowrap;letter-spacing:-.01em}
+
+/* La cita del documento: es la prueba de que el compromiso existe, así que se
+   ve, pero no compite con lo que hay que hacer. */
+.qx-cita{margin-top:4px;padding-left:8px;border-left:2px solid #e2e8f0;
+  color:#94a3b8;font-size:var(--fs-3xs);font-style:italic;line-height:1.5}
+
+.qx-tag{display:inline-block;padding:1px 6px;border-radius:4px;
+  font-size:var(--fs-3xs);font-weight:700;letter-spacing:.02em;
+  text-transform:uppercase;vertical-align:1px}
+.qx-tag.ded{background:#fef3c7;color:#92400e}
+.qx-tag.urg{background:#fee2e2;color:#991b1b}
+.qx-tag.adj{background:#eef2ff;color:#4338ca;font-variant-numeric:tabular-nums}
+
+.qx-acc{display:flex;gap:4px}
+.qx-btn{border:1px solid var(--border);background:#fff;border-radius:6px;
+  padding:3px 9px;font-size:var(--fs-3xs);font-weight:600;color:#475569;
+  cursor:pointer;white-space:nowrap;transition:.12s}
+.qx-btn:hover{background:#f8fafc;border-color:#cbd5e1}
+.qx-btn.ok:hover{background:#ecfdf5;border-color:#6ee7b7;color:#047857}
+.qx-btn.no{padding:3px 7px;color:#94a3b8}
+.qx-btn.no:hover{background:#f8fafc;color:#64748b}
+
+.qx-vacio{padding:44px 20px;text-align:center;color:#94a3b8;font-size:var(--fs-xs)}
+.qx-vacio strong{display:block;color:#475569;font-size:var(--fs-sm);
+  font-weight:600;margin-bottom:4px}
+
+/* Acceso: sólo aparece cuando CuencaDOC pide el texto de la imagen. */
+#qxAcceso{background:#fffbeb;border:1px solid #fcd34d;border-radius:10px;
+  padding:12px 14px;margin-bottom:8px;display:none}
+#qxAcceso .t{font-size:var(--fs-xs);font-weight:700;color:#92400e}
+#qxAcceso .d{font-size:var(--fs-3xs);color:#a16207;margin:2px 0 9px}
+#qxAcceso .fila{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+#imgCaptcha{border:1px solid #e2e8f0;border-radius:6px;background:#fff;height:42px}
+#txtCaptcha{border:1px solid #d1d5db;border-radius:7px;padding:6px 10px;width:120px;
+  font-size:var(--fs-md);font-weight:600;letter-spacing:.18em;text-transform:uppercase;
+  text-align:center;font-family:ui-monospace,Consolas,monospace}
+#txtCaptcha:focus{outline:none;border-color:var(--primary)}
+#msgAcceso{font-size:var(--fs-3xs);color:#a16207}
+
+.qx-accion{border:0;background:var(--primary);color:#fff;border-radius:7px;
+  padding:5px 13px;font-size:var(--fs-2xs);font-weight:600;cursor:pointer;transition:.12s}
+.qx-accion:hover{background:var(--primary-dark)}
+.qx-accion:disabled{background:#cbd5e1;cursor:default}
+.qx-accion.claro{background:#fff;color:#475569;border:1px solid var(--border)}
+.qx-accion.claro:hover{background:#f8fafc}
+
+@media (max-width:760px){
+  .qx-barra{gap:10px;padding:7px 10px}
+  .qx th:nth-child(3),.qx td:nth-child(3){display:none}
+  .qx-cita{display:none}
+}
 </style>
 {% endblock %}
 
 {% block topbar_actions %}
-<button class="btn btn-primary btn-sm rounded-pill" id="btnTraer" onclick="traer()">
-  ↙ Traer de CuencaDOC
-</button>
+<button class="qx-accion" id="btnTraer" onclick="traer()">Traer de CuencaDOC</button>
 {% endblock %}
 
 {% block content %}
 
-<div id="cajaAcceso">
-  <strong>CuencaDOC pide comprobar que hay una persona.</strong>
-  <p class="q-meta mb-2">Escriba el texto de la imagen. El servidor mantiene la sesión abierta
-     mientras tanto; no hace falta que entre usted en otra pestaña.</p>
-  <div class="d-flex align-items-center gap-2 flex-wrap">
-    <img id="imgCaptcha" alt="texto a copiar" height="46">
-    <input id="txtCaptcha" autocomplete="off" placeholder="letras"
+<div id="qxAcceso">
+  <div class="t">CuencaDOC pide comprobar que hay una persona</div>
+  <div class="d">Escriba el texto de la imagen. El servidor mantiene la sesión abierta;
+     no hace falta entrar en otra pestaña.</div>
+  <div class="fila">
+    <img id="imgCaptcha" alt="texto a copiar">
+    <input id="txtCaptcha" autocomplete="off" maxlength="10" placeholder="····"
            onkeydown="if(event.key==='Enter')confirmarAcceso()">
-    <button class="btn btn-primary btn-sm rounded-pill" onclick="confirmarAcceso()">Entrar</button>
-    <button class="btn btn-light btn-sm rounded-pill" onclick="pedirAcceso()">Otra imagen</button>
-    <span class="q-meta" id="msgAcceso"></span>
+    <button class="qx-accion" onclick="confirmarAcceso()">Entrar</button>
+    <button class="qx-accion claro" onclick="pedirAcceso()">Otra imagen</button>
+    <span id="msgAcceso"></span>
   </div>
 </div>
 
-<div class="q-row" id="marcador">
-  <span class="q-item" data-ver="pendientes"><span class="q-n" id="n-abiertos">—</span> abiertos</span>
-  <span class="q-item rojo" data-ver="vencidos"><span class="q-n" id="n-vencidos">—</span> vencidos</span>
-  <span class="q-item ambar" data-ver="con_plazo"><span class="q-n" id="n-plazo">—</span> con plazo</span>
-  <span class="q-item" data-ver="todos"><span class="q-n" id="n-total">—</span> en total</span>
-  <span style="flex:1"></span>
-  <span class="q-meta" id="fuente"></span>
+<div class="qx-barra" id="marcador">
+  <div class="qx-cifra" data-ver="pendientes"><b id="n-abiertos">—</b><span>abiertos</span></div>
+  <div class="qx-cifra alerta" data-ver="vencidos"><b id="n-vencidos">—</b><span>vencidos</span></div>
+  <div class="qx-cifra aviso" data-ver="con_plazo"><b id="n-plazo">—</b><span>con plazo</span></div>
+  <div class="qx-cifra" data-ver="todos"><b id="n-total">—</b><span>total</span></div>
+  <div class="qx-sello" id="fuente"></div>
 </div>
 
-<div class="q-tabs">
-  <div class="q-tab on" data-vista="compromisos" onclick="cambiarVista('compromisos')">📌 Qué debo entregar</div>
-  <div class="q-tab" data-vista="tareas" onclick="cambiarVista('tareas')">✅ Por documento</div>
-  <div class="q-tab" data-vista="docs" onclick="cambiarVista('docs')">🗂️ Todos los documentos</div>
+<div class="qx-tabs">
+  <div class="qx-tab on" data-vista="compromisos" onclick="cambiarVista('compromisos')">Qué debo entregar</div>
+  <div class="qx-tab" data-vista="tareas" onclick="cambiarVista('tareas')">Por documento</div>
+  <div class="qx-tab" data-vista="docs" onclick="cambiarVista('docs')">Archivo</div>
 </div>
 
-{# Lo que sale de LEER el documento, no de su asunto. Un oficio puede pedir
-   tres cosas con tres fechas; la bandeja sólo enseña una línea. Cada fila trae
-   la frase textual de la que sale, que es lo que permite comprobarlo sin abrir
-   el documento — y lo que separa «lo dice el oficio» de «lo dedujo un modelo». #}
+{# Lo que sale de LEER el documento, no de su asunto. Un oficio puede pedir tres
+   cosas con tres fechas; la bandeja sólo enseña una línea. #}
 <div id="vistaCompromisos">
-  <table class="q-tabla">
-    <thead><tr><th style="width:120px">Para cuándo</th><th>Qué hay que entregar</th>
-      <th style="width:150px">A quién</th><th style="width:150px">Documento</th>
-      <th style="width:140px">Marcar</th></tr></thead>
-    <tbody id="cuerpoCompromisos"><tr><td colspan="5" class="q-vacio">Cargando…</td></tr></tbody>
+  <table class="qx">
+    <thead><tr><th style="width:98px">Plazo</th><th>Qué hay que entregar</th>
+      <th style="width:130px">A quién</th><th style="width:130px">Documento</th>
+      <th style="width:120px"></th></tr></thead>
+    <tbody id="cuerpoCompromisos"><tr><td colspan="5" class="qx-vacio">Cargando…</td></tr></tbody>
   </table>
 </div>
 
 <div id="vistaTareas" style="display:none">
-  <table class="q-tabla">
-    <thead><tr><th style="width:120px">Para cuándo</th><th>Qué hay que hacer</th>
-      <th style="width:190px">Área</th><th style="width:150px">Marcar</th></tr></thead>
-    <tbody id="cuerpoTareas"><tr><td colspan="4" class="q-vacio">Cargando…</td></tr></tbody>
+  <table class="qx">
+    <thead><tr><th style="width:98px">Plazo</th><th>Documento</th>
+      <th style="width:170px">Área</th><th style="width:120px"></th></tr></thead>
+    <tbody id="cuerpoTareas"><tr><td colspan="4" class="qx-vacio">Cargando…</td></tr></tbody>
   </table>
 </div>
 
 <div id="vistaDocs" style="display:none">
-  <div class="q-filtros">
+  <div class="qx-filtros">
     <select id="fArea"><option value="">Todas las áreas</option></select>
     <select id="fBandeja"><option value="">Todas las bandejas</option></select>
-    <input id="fBusca" type="text" placeholder="Buscar por asunto, número, trámite o quien lo manda…">
+    <input id="fBusca" type="text" placeholder="Buscar por asunto, número, trámite o remitente…">
   </div>
   <div style="overflow-x:auto">
-    <table class="q-tabla">
-      <thead><tr><th style="width:110px">Plazo</th><th style="width:95px">Fecha</th>
-        <th style="width:150px">Número</th><th>Asunto</th><th style="width:160px">De</th>
-        <th style="width:55px">Adj.</th><th style="width:110px">Abrir</th></tr></thead>
-      <tbody id="cuerpoDocs"><tr><td colspan="7" class="q-vacio">Cargando…</td></tr></tbody>
+    <table class="qx">
+      <thead><tr><th style="width:98px">Plazo</th><th style="width:82px">Fecha</th>
+        <th style="width:140px">Número</th><th>Asunto</th><th style="width:140px">De</th>
+        <th style="width:44px">Adj</th><th style="width:60px"></th></tr></thead>
+      <tbody id="cuerpoDocs"><tr><td colspan="7" class="qx-vacio">Cargando…</td></tr></tbody>
     </table>
   </div>
 </div>
 
 <script>
 const CSRF_TOKEN = document.querySelector('meta[name="csrf-token"]').content;
-let VER = 'pendientes', HOY = '', VISTA = 'tareas';
+let VER = 'pendientes', HOY = '', VISTA = 'compromisos';
 
 const esc = t => { const d=document.createElement('div'); d.textContent = t==null?'':String(t); return d.innerHTML; };
 const post = (u,d)=>fetch(u,{method:'POST',headers:{'Content-Type':'application/json',
@@ -140,6 +204,22 @@ function claseDePlazo(f){
   return f <= semana ? 'pron' : 'hay';
 }
 
+// «vence en 3 días» se entiende de un vistazo; «2026-09-08» hay que restarlo
+// mentalmente. Van los dos: la fecha para citarla, los días para decidir.
+function cuantoFalta(f){
+  if(!f) return '';
+  const dias = Math.round((new Date(f+'T00:00:00') - new Date(HOY+'T00:00:00'))/864e5);
+  if(dias === 0)  return 'hoy';
+  if(dias === 1)  return 'mañana';
+  if(dias === -1) return 'ayer';
+  return dias < 0 ? `hace ${-dias} días` : `en ${dias} días`;
+}
+
+function celdaFecha(f, extra){
+  return `<td class="qx-fecha ${claseDePlazo(f)}">${esc(f||'sin fecha')}
+          ${f?`<span class="qx-dias">${cuantoFalta(f)}</span>`:''}${extra||''}</td>`;
+}
+
 // ---------- Entrar a CuencaDOC ----------
 // El texto de la imagen lo escribe una persona: eso es lo que el control pide y
 // lo que se respeta. Lo que se evita es que además tenga que abrir otra
@@ -147,16 +227,13 @@ function claseDePlazo(f){
 async function pedirAcceso(){
   document.getElementById('msgAcceso').textContent = 'pidiendo acceso…';
   const r = await post('/quipux/api/acceso');
-  const caja = document.getElementById('cajaAcceso');
+  const caja = document.getElementById('qxAcceso');
   if(!r.success){
     caja.style.display='block';
     document.getElementById('msgAcceso').textContent = r.error || 'no se pudo';
     return false;
   }
-  if(r.estado === 'dentro'){
-    caja.style.display='none';
-    return true;
-  }
+  if(r.estado === 'dentro'){ caja.style.display='none'; return true; }
   document.getElementById('imgCaptcha').src = r.imagen;
   document.getElementById('txtCaptcha').value = '';
   document.getElementById('msgAcceso').textContent = '';
@@ -175,17 +252,16 @@ async function confirmarAcceso(){
     pedirAcceso();               // el texto caduca: se pide una imagen nueva
     return;
   }
-  document.getElementById('cajaAcceso').style.display='none';
+  document.getElementById('qxAcceso').style.display='none';
   lanzarRecoleccion();
 }
 
-// ---------- Traer ----------
 async function traer(){
   const b = document.getElementById('btnTraer');
   b.disabled = true; b.textContent = 'Entrando…';
   const dentro = await pedirAcceso();
   if(dentro) lanzarRecoleccion();
-  else { b.disabled = false; b.textContent = '↙ Traer de CuencaDOC'; }
+  else { b.disabled = false; b.textContent = 'Traer de CuencaDOC'; }
 }
 
 async function lanzarRecoleccion(){
@@ -193,7 +269,7 @@ async function lanzarRecoleccion(){
   b.disabled = true; b.textContent = 'Recogiendo…';
   const r = await post('/quipux/api/recoger');
   if(!r.success){
-    b.disabled=false; b.textContent='↙ Traer de CuencaDOC';
+    b.disabled=false; b.textContent='Traer de CuencaDOC';
     if(r.error === 'sin_sesion'){ pedirAcceso(); return; }
     alert('No se pudo: '+(r.error||''));
     return;
@@ -208,9 +284,12 @@ function vigilar(){
   const t = setInterval(async ()=>{
     const e = await fetch('/quipux/api/recoger/estado').then(x=>x.json()).catch(()=>null);
     if(!e) return;
-    if(e.estado === 'en curso'){ b.textContent = 'Recogiendo… ' + (e.detalle||''); return; }
+    if(e.estado === 'en curso'){
+      b.textContent = 'Recogiendo… ' + (e.detalle||'').slice(0,40);
+      return;
+    }
     clearInterval(t);
-    b.disabled=false; b.textContent='↙ Traer de CuencaDOC';
+    b.disabled=false; b.textContent='Traer de CuencaDOC';
     if(e.estado === 'sin sesión'){ pedirAcceso(); return; }
     if(e.estado === 'falló'){ alert('La recolección falló: '+(e.detalle||'')); }
     marcador(); cargar();
@@ -220,7 +299,7 @@ function vigilar(){
 // ---------- Las listas ----------
 function cambiarVista(v){
   VISTA = v;
-  document.querySelectorAll('.q-tab').forEach(t=>t.classList.toggle('on', t.dataset.vista===v));
+  document.querySelectorAll('.qx-tab').forEach(t=>t.classList.toggle('on', t.dataset.vista===v));
   document.getElementById('vistaCompromisos').style.display = v==='compromisos' ? '' : 'none';
   document.getElementById('vistaTareas').style.display      = v==='tareas'      ? '' : 'none';
   document.getElementById('vistaDocs').style.display        = v==='docs'        ? '' : 'none';
@@ -232,35 +311,34 @@ async function cargar(){
   return VISTA==='tareas' ? cargarTareas() : cargarDocs();
 }
 
+const VACIO = (cols, titulo, detalle) =>
+  `<tr><td colspan="${cols}" class="qx-vacio"><strong>${titulo}</strong>${detalle}</td></tr>`;
+
 async function cargarCompromisos(){
   const r = await fetch('/quipux/api/compromisos?estado=pendiente')
     .then(x=>x.json()).catch(()=>null);
   const c = document.getElementById('cuerpoCompromisos');
-  if(!r){ c.innerHTML='<tr><td colspan="5" class="q-vacio">No se pudo cargar.</td></tr>'; return; }
+  if(!r){ c.innerHTML = VACIO(5,'No se pudo cargar',''); return; }
   HOY = r.hoy;
   if(!r.compromisos.length){
-    c.innerHTML = '<tr><td colspan="5" class="q-vacio">Nada por entregar. '
-      + 'Si es la primera vez, pulse «Traer de CuencaDOC»: se leen los documentos '
-      + 'y de ahí sale esta lista.</td></tr>';
+    c.innerHTML = VACIO(5, 'Nada por entregar',
+      'Pulse «Traer de CuencaDOC»: se leen los documentos y de ahí sale esta lista.');
     return;
   }
   c.innerHTML = r.compromisos.map(k=>`<tr>
-      <td class="q-plazo ${claseDePlazo(k.para_cuando)}">${esc(k.para_cuando||'sin fecha')}
-          ${k.urgente?'<span class="q-ded" style="background:#fee2e2;color:#991b1b">urgente</span>':''}</td>
-      <td><strong>${esc(k.que)}</strong>
-          ${k.entregable?`<div class="q-meta">Entregar: ${esc(k.entregable)}</div>`:''}
-          ${k.cita?`<div class="q-meta" style="font-style:italic;margin-top:3px">
-             «${esc(k.cita)}»</div>`:''}</td>
-      <td class="q-meta">${esc(k.a_quien||'')}</td>
-      <td class="q-num">${esc(k.numero||'')}
-          <div class="q-meta">${esc(k.area||'')}</div>
-          ${k.enlace?`<a href="${esc(k.enlace)}" target="_blank" rel="noopener">abrir</a>`:''}</td>
-      <td>
-        <button class="btn btn-sm btn-outline-success rounded-pill"
-                onclick="marcarComp(${k.id},'hecho')">Entregado</button>
-        <button class="btn btn-sm btn-outline-secondary rounded-pill"
-                onclick="marcarComp(${k.id},'descartado')" title="No me corresponde">—</button>
-      </td></tr>`).join('');
+      ${celdaFecha(k.para_cuando, k.urgente?'<span class="qx-tag urg">urgente</span>':'')}
+      <td><div class="qx-titulo">${esc(k.que)}</div>
+          ${k.entregable?`<div class="qx-meta">Entregar: ${esc(k.entregable)}</div>`:''}
+          ${k.cita?`<div class="qx-cita">${esc(k.cita)}</div>`:''}</td>
+      <td class="qx-meta">${esc(k.a_quien||'—')}</td>
+      <td><div class="qx-num">${esc(k.numero||'')}</div>
+          <div class="qx-meta">${esc(k.area||'')}</div>
+          ${k.enlace?`<a class="qx-meta" href="${esc(k.enlace)}" target="_blank" rel="noopener">abrir en Quipux</a>`:''}</td>
+      <td><div class="qx-acc">
+          <button class="qx-btn ok" onclick="marcarComp(${k.id},'hecho')">Entregado</button>
+          <button class="qx-btn no" onclick="marcarComp(${k.id},'descartado')"
+                  title="No me corresponde">✕</button></div></td>
+    </tr>`).join('');
 }
 
 async function marcarComp(id, estado){
@@ -271,24 +349,23 @@ async function marcarComp(id, estado){
 async function cargarTareas(){
   const r = await fetch('/quipux/api/tareas?estado=pendiente').then(x=>x.json()).catch(()=>null);
   const c = document.getElementById('cuerpoTareas');
-  if(!r){ c.innerHTML='<tr><td colspan="4" class="q-vacio">No se pudo cargar.</td></tr>'; return; }
+  if(!r){ c.innerHTML = VACIO(4,'No se pudo cargar',''); return; }
   HOY = r.hoy;
   if(!r.tareas.length){
-    c.innerHTML = '<tr><td colspan="4" class="q-vacio">Nada pendiente. '
-                + 'Si es la primera vez, pulse «Traer de CuencaDOC».</td></tr>';
+    c.innerHTML = VACIO(4, 'Nada pendiente', 'Pulse «Traer de CuencaDOC» para empezar.');
     return;
   }
   c.innerHTML = r.tareas.map(t=>`<tr>
-      <td class="q-plazo ${claseDePlazo(t.vence)}">${esc(t.vence||'—')}
-          ${t.seguro?'':`<span class="q-ded" title="${esc(t.origen)} — confírmelo">deducido</span>`}</td>
-      <td>${esc(t.titulo)}<div class="q-meta">${esc(t.detalle||'')}</div></td>
-      <td class="q-meta">${esc(t.area||'')}</td>
-      <td>
-        <button class="btn btn-sm btn-outline-success rounded-pill"
-                onclick="marcar(${t.id},'hecha')">Hecha</button>
-        <button class="btn btn-sm btn-outline-secondary rounded-pill"
-                onclick="marcar(${t.id},'descartada')" title="No me corresponde">—</button>
-      </td></tr>`).join('');
+      ${celdaFecha(t.vence, t.seguro?'':`<span class="qx-tag ded"
+          title="${esc(t.origen)} — confírmelo">deducido</span>`)}
+      <td><div class="qx-titulo">${esc(t.titulo)}</div>
+          ${t.detalle?`<div class="qx-meta">${esc(t.detalle)}</div>`:''}</td>
+      <td class="qx-meta">${esc(t.area||'')}</td>
+      <td><div class="qx-acc">
+          <button class="qx-btn ok" onclick="marcar(${t.id},'hecha')">Hecha</button>
+          <button class="qx-btn no" onclick="marcar(${t.id},'descartada')"
+                  title="No me corresponde">✕</button></div></td>
+    </tr>`).join('');
 }
 
 async function marcar(id, estado){
@@ -303,20 +380,23 @@ async function cargarDocs(){
     q:document.getElementById('fBusca').value.trim()});
   const r = await fetch('/quipux/api/documentos?'+p).then(x=>x.json()).catch(()=>null);
   const c = document.getElementById('cuerpoDocs');
-  if(!r){ c.innerHTML='<tr><td colspan="7" class="q-vacio">No se pudo cargar.</td></tr>'; return; }
+  if(!r){ c.innerHTML = VACIO(7,'No se pudo cargar',''); return; }
   HOY = r.hoy;
   if(!r.documentos.length){
-    c.innerHTML='<tr><td colspan="7" class="q-vacio">Nada con este filtro.</td></tr>'; return;
+    c.innerHTML = VACIO(7, 'Nada con este filtro', 'Pruebe con otra área o bandeja.');
+    return;
   }
   c.innerHTML = r.documentos.map(d=>`<tr>
-      <td class="q-plazo ${claseDePlazo(d.plazo_fecha)}">${esc(d.plazo_fecha||'—')}
-          ${d.plazo_fecha && !d.plazo_seguro?`<span class="q-ded">deducido</span>`:''}</td>
-      <td class="q-meta">${esc(d.fecha_doc||'')}</td>
-      <td class="q-num">${esc(d.numero||'')}<div class="q-meta">${esc(d.tipo||'')}</div></td>
-      <td>${esc(d.asunto||'')}<div class="q-meta">${esc(d.area||'')} · ${esc(d.bandeja||'')}</div></td>
-      <td class="q-meta">${esc(d.remitente||'')}</td>
-      <td>${d.n_adjuntos?`<span class="q-adj">${d.n_adjuntos}</span>`:''}</td>
-      <td class="q-meta">${d.enlace?`<a href="${esc(d.enlace)}" target="_blank" rel="noopener">Quipux</a>`:''}</td>
+      ${celdaFecha(d.plazo_fecha, d.plazo_fecha && !d.plazo_seguro
+          ? '<span class="qx-tag ded">deducido</span>' : '')}
+      <td class="qx-meta">${esc(d.fecha_doc||'')}</td>
+      <td><div class="qx-num">${esc(d.numero||'')}</div>
+          <div class="qx-meta">${esc(d.tipo||'')}</div></td>
+      <td><div class="qx-titulo">${esc(d.asunto||'')}</div>
+          <div class="qx-meta">${esc(d.area||'')} · ${esc(d.bandeja||'')}</div></td>
+      <td class="qx-meta">${esc(d.remitente||'')}</td>
+      <td>${d.n_adjuntos?`<span class="qx-tag adj">${d.n_adjuntos}</span>`:''}</td>
+      <td class="qx-meta">${d.enlace?`<a href="${esc(d.enlace)}" target="_blank" rel="noopener">abrir</a>`:''}</td>
     </tr>`).join('');
 }
 
@@ -327,19 +407,26 @@ async function marcador(){
   document.getElementById('n-vencidos').textContent = r.vencidos ?? 0;
   document.getElementById('n-plazo').textContent    = r.con_plazo ?? 0;
   document.getElementById('n-total').textContent    = r.total ?? 0;
+
   const f = document.getElementById('fuente');
-  f.textContent = r.ultima_pasada
-    ? (r.al_dia ? 'Al día · ' : '⚠ No se trae desde ') + r.ultima_pasada.replace('T',' ').slice(0,16)
-    : 'Todavía no se ha traído nada';
-  f.style.color = r.ultima_pasada && !r.al_dia ? '#b45309' : '';
+  if(r.ultima_pasada){
+    const cuando = r.ultima_pasada.replace('T',' ').slice(0,16);
+    f.className = 'qx-sello' + (r.al_dia ? '' : ' viejo');
+    f.innerHTML = '<span class="qx-punto"></span>'
+                + (r.al_dia ? 'al día · ' : 'sin traer desde ') + cuando;
+  } else {
+    f.className = 'qx-sello viejo';
+    f.innerHTML = '<span class="qx-punto"></span>todavía no se ha traído nada';
+  }
+
   const area=document.getElementById('fArea'), band=document.getElementById('fBandeja');
   if(area.options.length<=1) (r.areas||[]).forEach(a=>area.add(new Option(a,a)));
   if(band.options.length<=1) (r.bandejas||[]).forEach(b=>band.add(new Option(b,b)));
 }
 
-document.querySelectorAll('#marcador .q-item').forEach(el=>{
+document.querySelectorAll('#marcador .qx-cifra').forEach(el=>{
   el.addEventListener('click',()=>{
-    document.querySelectorAll('#marcador .q-item').forEach(o=>o.classList.remove('on'));
+    document.querySelectorAll('#marcador .qx-cifra').forEach(o=>o.classList.remove('on'));
     el.classList.add('on'); VER = el.dataset.ver;
     if(VISTA!=='docs') cambiarVista('docs'); else cargarDocs();
   });
