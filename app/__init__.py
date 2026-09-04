@@ -66,6 +66,7 @@ from . import browser_sync as _browser_sync
 # necesitan como parámetro), así que no se forma ciclo de importación.
 from .directorio import registrar_directorio
 from .cronograma import registrar_cronograma
+from .quipux_web import registrar_quipux
 from . import atlas_sync as _atlas
 from . import avisos as _avisos
 from . import semaforo as _semaforo
@@ -172,6 +173,10 @@ ALL_MODULES = [
     ('planning',    '📋 Planificación — proyectos y actividades'),
     ('cronograma',  '📈 Planificación — cronograma (Gantt)'),
     ('directorio',  '🗂️ Directorio de clientes'),
+    # Lo que llega del Municipio por CuencaDOC. Es la bandeja de UNA persona en
+    # un sistema ajeno, no información del despacho que se reparta: por eso
+    # existe como módulo concedible y no se abre a todo el mundo.
+    ('quipux',      '📨 Quipux — documentos de CuencaDOC'),
 ]
 
 # Niveles de rol (clasificación de negocio). Es una etiqueta/agrupación: el
@@ -5260,6 +5265,9 @@ def create_app():
     }
     registrar_directorio(app, _ctx_modulos)
     registrar_cronograma(app, _ctx_modulos)
+    # Lo que llega del Municipio por CuencaDOC. La recolección corre en la
+    # computadora de la persona; esto es sólo la pantalla donde se mira.
+    registrar_quipux(app, _ctx_modulos)
 
     # Contadores del menú. Se cachean por usuario: el navegador los pide en cada
     # pantalla y sin esto serían cuatro consultas por página vista.
@@ -5281,7 +5289,18 @@ def create_app():
 
         hoy = date.today().isoformat()
         datos = {'proyectos': 0, 'calendario': 0,
-                 'cronograma': 0, 'directorio': 0, 'usuarios': 0}
+                 'cronograma': 0, 'directorio': 0, 'usuarios': 0, 'quipux': 0}
+        try:
+            # Documentos de CuencaDOC ya vencidos. Es el único número que hay
+            # que ver sin entrar: lo demás se mira cuando se abre el módulo.
+            if is_admin() or user_can('quipux'):
+                from .quipux_web import cargar as _cargar_quipux
+                datos['quipux'] = sum(
+                    1 for d in _cargar_quipux(app)['documentos']
+                    if d.get('plazo_fecha') and d['plazo_fecha'] < hoy
+                    and (d.get('estado') or 'abierto') != 'cerrado')
+        except Exception:
+            pass
         try:
             if user_can('planning'):
                 tareas = leer_tareas(app, current_user.id,

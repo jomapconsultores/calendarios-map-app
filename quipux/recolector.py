@@ -274,6 +274,12 @@ class Recolector:
         except Exception as e:
             self.log(f'[quipux] no se pudo escribir el índice HTML: {str(e)[:120]}')
         try:
+            # El que lee la pantalla de la plataforma.
+            salida['json'] = archivo.escribir_indice_json(
+                os.path.join(self.destino, 'INDICE.json'), self.documentos)
+        except Exception as e:
+            self.log(f'[quipux] no se pudo escribir el índice para la web: {str(e)[:120]}')
+        try:
             archivo.escribir_estado(
                 os.path.join(self.destino, ARCHIVO_ESTADO), self.documentos)
         except Exception:

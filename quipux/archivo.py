@@ -282,6 +282,36 @@ texto del documento, no de un campo del sistema: confírmalo antes de fiarte.</p
     return ruta
 
 
+CAMPOS_INDICE = ('id', 'numero', 'asunto', 'de', 'tipo', 'fecha_doc', 'tramite',
+                 'referencia', 'categoria', 'ultima', 'area', 'bandeja', 'estado',
+                 'carpeta', 'enlace', 'n_adjuntos', 'plazo', 'nuevo')
+
+
+def escribir_indice_json(ruta, documentos):
+    """El mismo índice, en el formato que lee la plataforma.
+
+    El Excel es para trabajar y el HTML para mirar; esto es para que la pantalla
+    de calendarios·map pueda enseñar lo mismo sin tener que abrir un archivo de
+    Office ni depender de que la base de datos esté en pie. Es un archivo suelto
+    a propósito: lo que se recogió sigue estando aunque el servidor no conteste."""
+    datos = {
+        'actualizado': datetime.now().isoformat(timespec='seconds'),
+        'total': len(documentos),
+        'documentos': [{k: d.get(k) for k in CAMPOS_INDICE} for d in documentos],
+    }
+    with open(ruta, 'w', encoding='utf-8') as f:
+        json.dump(datos, f, ensure_ascii=False, indent=1)
+    return ruta
+
+
+def leer_indice_json(ruta):
+    try:
+        with open(ruta, encoding='utf-8') as f:
+            return json.load(f)
+    except Exception:
+        return {'actualizado': None, 'total': 0, 'documentos': []}
+
+
 def escribir_estado(ruta, documentos):
     """Lo ya descargado, para que la próxima pasada no repita el trabajo ni
     vuelva a bajar cien adjuntos que ya están en el disco."""
