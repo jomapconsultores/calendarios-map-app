@@ -111,7 +111,11 @@ def main(argv=None):
         if orden == 'muestra':
             limite = int(argv[1]) if len(argv) > 1 else 5
         return _pasada(limite=limite)
-    except ErrorQuipux as e:
+    except (ErrorQuipux, RuntimeError) as e:
+        # Sin el `RuntimeError` aquí, el aviso de «no hay credencial» —que está
+        # escrito para que se entienda y dice el comando exacto— salía sepultado
+        # bajo veinte líneas de traceback, y quien lo lee acaba pensando que el
+        # programa está roto en vez de que le falta un paso.
         print(f'\nNo se pudo: {e}', file=sys.stderr)
         return 2
     except KeyboardInterrupt:
