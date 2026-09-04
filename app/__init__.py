@@ -907,12 +907,12 @@ def _reflejar_en_google(app, apt, cambios):
             creado = service.events().insert(
                 calendarId=destino, body=cuerpo, sendUpdates='all').execute()
             return {'google_event_id': creado.get('id'), 'google_cal_id': destino,
-                    'google_account': cuenta_nueva}, None
+                    'google_account': cuenta_nueva, **marca_de_version(creado)}, None
 
-        service.events().update(
+        actualizado = service.events().update(
             calendarId=apt.get('google_cal_id') or gcal_id_map.get(viejo_cal, 'primary'),
             eventId=gid, body=cuerpo, sendUpdates='all').execute()
-        return {}, None
+        return marca_de_version(actualizado), None
     except Exception as e:
         print(f'[google] no se pudo actualizar el evento {gid}: {str(e)[:200]}')
         if cambia_de_calendario:
@@ -1240,7 +1240,7 @@ def resincronizar_citas_google(app, creds=None, limite_segundos=60):
                                              sendUpdates='all').execute()
             app.supabase.update('appointments', cita['id'], {
                 'google_event_id': creado.get('id'), 'google_cal_id': gcal_id,
-                'google_account': cuenta})
+                'google_account': cuenta, **marca_de_version(creado)})
             subidas += 1
         except Exception as e:
             if _es_avería_permanente(e):
@@ -1363,7 +1363,8 @@ def start_google_autoheal(app, interval_min=60):
 # ============================================================
 #  CALENDAR ACCESS (with caching)
 # ============================================================
-CAL_SELECT      = 'calendar_id,name,email,color,google_cal_id,cuenta_email,proveedor'
+CAL_SELECT      = ('calendar_id,name,email,color,google_cal_id,cuenta_email,'
+                   'proveedor,sincronizar_entrada')
 CAL_SELECT_BASE = 'calendar_id,name,email,color,google_cal_id'
 
 def _get_calendar_config(app):
@@ -1417,6 +1418,18 @@ def _cuenta_map(all_cals):
 def _proveedor_map(all_cals):
     """calendar_id → 'google' (API de Calendar) | 'microsoft' (invitación .ics)."""
     return {c['calendar_id']: (c.get('proveedor') or 'google') for c in all_cals}
+
+
+def marca_de_version(evento):
+    """Lo que Google contesta al crear o modificar un evento incluye su nueva
+    marca de tiempo. Guardarla es lo que impide que la siguiente pasada de
+    sincronización se crea que ese cambio vino de fuera y lo traiga de vuelta:
+    el sistema estaría discutiendo consigo mismo."""
+    marca = (evento or {}).get('updated')
+    if not marca:
+        return {}
+    return {'google_updated': marca,
+            'sincronizado_en': datetime.now(timezone.utc).isoformat()}
 
 
 def cuenta_del_calendario(app, calendar_id):
@@ -2143,16 +2156,25 @@ def create_app():
     app.obtener_creds_google = lambda cuenta: get_google_creds(app, cuenta)
 
     def _sincronizar_agenda_entrante():
-        """Trae de las nueve cuentas lo que agendaron otros.
+        """Pone al día lo que hay en las nueve cuentas.
 
-        El mapa cuenta→calendario permite pintar cada cosa del color del
-        calendario al que pertenece: una convocatoria que entra por csccue se ve
-        como CSCCUE, no como un evento suelto sin dueño."""
+        Cada cuenta entra por UN calendario de los de aquí —el suyo—, que es lo
+        que le da color, dueño y permisos a lo que se recoge: una convocatoria
+        que entra por csccue se ve como CSCCUE y la ve quien tiene CSCCUE, no
+        como un evento suelto que cualquiera se encuentra en su pantalla.
+
+        Un calendario con `sincronizar_entrada` apagado sigue pudiendo agendar;
+        lo que no hace es traerse lo que aparezca en esa agenda. Es la salida
+        para una cuenta personal cuyo día no tiene por qué salir en la pantalla
+        del despacho."""
         cals = _get_calendar_config(app)
         cuenta_map, proveedor_map = _cuenta_map(cals), _proveedor_map(cals)
+        entrada = {c['calendar_id']: c.get('sincronizar_entrada', True) for c in cals}
         cal_por_cuenta = {}
         google, microsoft = set(), set()
         for cal_id, cuenta in cuenta_map.items():
+            if not entrada.get(cal_id, True):
+                continue
             cal_por_cuenta.setdefault(cuenta, cal_id)
             (google if proveedor_map.get(cal_id, 'google') == 'google'
              else microsoft).add(cuenta)
@@ -3584,19 +3606,25 @@ def create_app():
                         'ciudad,meeting_link,google_event_id,invitados')
     # Columnas de recurrencia — requieren la migración 002. El SELECT cae al
     # base automáticamente si todavía no existen (ver _events_query abajo).
-    APPT_SELECT = APPT_SELECT_BASE + ',is_recurring,parent_event_id'
+    APPT_SELECT_REC = APPT_SELECT_BASE + ',is_recurring,parent_event_id'
+    # Y las de la 033: de dónde vino la cita y si ya la miró alguien. Mismo
+    # escalón hacia atrás, para que un despliegue sin migrar siga enseñando el
+    # calendario en vez de quedarse en blanco por una columna que aún no está.
+    APPT_SELECT = APPT_SELECT_REC + ',origen,visto,google_account'
 
     @app.route('/calendar/api/events')
     @login_required
     def api_events():
         def _events_query(fetch):
-            # fetch(select) -> lista. Intenta con columnas de recurrencia;
-            # si vuelve vacío (p.ej. columna inexistente antes de migrar),
-            # reintenta con el SELECT base para no ocultar los eventos.
-            rows = fetch(APPT_SELECT)
-            if not rows:
-                rows = fetch(APPT_SELECT_BASE)
-            return rows
+            # fetch(select) -> lista. Se intenta con todo y se va bajando: si
+            # una columna todavía no existe PostgREST devuelve error y aquí
+            # llega [], así que sin estos escalones un despliegue sin migrar se
+            # quedaría sin calendario en vez de sin una columna.
+            for sel in (APPT_SELECT, APPT_SELECT_REC, APPT_SELECT_BASE):
+                rows = fetch(sel)
+                if rows:
+                    return rows
+            return []
 
         if is_admin():
             events = _events_query(
@@ -3612,13 +3640,24 @@ def create_app():
         result = []
         for e in events:
             is_rec = e.get('is_recurring', False)
+            # Una cita recogida de fuera es una cita como las demás —se abre, se
+            # edita y lo editado vuelve a salir—, pero conviene que se note de un
+            # vistazo cuál pidió el despacho y cuál le pusieron a uno: el gris
+            # azulado las separa sin sacarlas del calendario.
+            externa = e.get('origen') == 'externo'
+            color = ('#64748b' if e.get('status') != 'cancelled' else '#ef4444') \
+                if externa else colors.get(e.get('status'), '#3b82f6')
+            marca = '↙ ' if externa else ('R ' if is_rec else '')
             result.append({
                 'id': e['id'],
-                'title': f"{'R ' if is_rec else ''}{e['title']} — {e.get('encargado', '')}",
+                'title': f"{marca}{e['title']} — {e.get('encargado', '')}",
                 'start': e['start_time'], 'end': e['end_time'],
-                'backgroundColor': colors.get(e.get('status'), '#3b82f6'),
-                'borderColor':     colors.get(e.get('status'), '#3b82f6'),
+                'backgroundColor': color,
+                'borderColor':     color,
                 'extendedProps': {
+                    'externo': externa,
+                    'visto': e.get('visto', True),
+                    'cuenta': e.get('google_account') or '',
                     'title': e.get('title', ''), 'encargado': e.get('encargado', ''),
                     'tema': e.get('tema', ''), 'client_name': e.get('client_name', ''),
                     'client_email': e.get('client_email', ''),
@@ -3637,54 +3676,6 @@ def create_app():
                     'parent_event_id': e.get('parent_event_id', ''), 'id': e['id'],
                 },
             })
-
-        # Lo que agendaron OTROS en esas mismas cuentas. Va en la misma
-        # respuesta porque el día es uno solo: tener que mirar en dos sitios
-        # para saber si el martes está libre es exactamente el problema que
-        # esto viene a resolver. Se distingue por el aspecto —hueco, en gris— y
-        # por `externo: true`, que es lo que la pantalla usa para no ofrecer
-        # editarlo: sobre esto la plataforma no manda.
-        try:
-            cals = _get_calendar_config(app)
-            if is_admin():
-                permitidas = None
-            else:
-                mios = {c['calendar_id'] for c in get_user_calendars(app, current_user.id)}
-                permitidas = {cuenta for cal_id, cuenta in _cuenta_map(cals).items()
-                              if cal_id in mios}
-            nombres = {c['calendar_id']: (c.get('name') or c['calendar_id']) for c in cals}
-            for x in _entrante.eventos(app, cuentas=permitidas):
-                respondido = x.get('mi_respuesta')
-                color = '#94a3b8' if respondido != 'declined' else '#cbd5e1'
-                result.append({
-                    'id': f"ext-{x['id']}",
-                    'title': f"↙ {x.get('titulo') or '(sin título)'}",
-                    'start': x.get('start_time'), 'end': x.get('end_time'),
-                    'allDay': bool(x.get('todo_el_dia')),
-                    'backgroundColor': color, 'borderColor': color,
-                    'editable': False,
-                    'extendedProps': {
-                        'externo': True, 'id': x['id'],
-                        'title': x.get('titulo', ''),
-                        'cuenta': x.get('cuenta_email', ''),
-                        'calendar_id': x.get('calendar_id') or '',
-                        'calendario': nombres.get(x.get('calendar_id'), ''),
-                        'organizador': x.get('organizador') or '',
-                        'organizador_nombre': x.get('organizador_nombre') or '',
-                        'lugar': x.get('lugar') or '',
-                        'meeting_link': x.get('enlace') or '',
-                        'notes': x.get('descripcion') or '',
-                        'invitados': x.get('invitados') or '',
-                        'mi_respuesta': respondido or 'needsAction',
-                        'origen': x.get('origen') or 'google',
-                        'visto': bool(x.get('visto')),
-                        'appointment_id': x.get('appointment_id') or '',
-                    },
-                })
-        except Exception as e:
-            # Que falle la agenda ajena no puede dejar sin calendario a nadie:
-            # las citas propias ya están en `result` y se devuelven igual.
-            print(f'[agenda-entrante] no se pudo añadir al calendario: {e}')
 
         return jsonify(result)
 
@@ -4087,7 +4078,8 @@ def create_app():
                 calendarId=gcal_id, body=event, sendUpdates='all').execute()
             app.supabase.update('appointments', aid,
                 {'status': 'confirmed', 'google_event_id': created.get('id'),
-                 'google_cal_id': gcal_id, 'google_account': cuenta})
+                 'google_cal_id': gcal_id, 'google_account': cuenta,
+                 **marca_de_version(created)})
             return jsonify({'success': True,
                 'message': f'Aprobada desde {cuenta} — {len(attendees)} invitado(s) notificado(s)'})
         except google.auth.exceptions.RefreshError:
@@ -4228,7 +4220,7 @@ def create_app():
                     body=event, sendUpdates='all').execute()
                 app.supabase.update('appointments', apt['id'],
                     {'google_event_id': created.get('id'), 'google_cal_id': gcal_id,
-                     'google_account': cuenta})
+                     'google_account': cuenta, **marca_de_version(created)})
                 synced += 1
             except google.auth.exceptions.RefreshError:
                 # Una cuenta caída no puede parar la sincronización de las otras
@@ -4281,8 +4273,11 @@ def create_app():
                     ev = _build_google_event(apt, attendees)
                     patch = {'description': ev['description']}
                     if ev.get('location'): patch['location'] = ev['location']
-                    service.events().patch(
+                    parcheado = service.events().patch(
                         calendarId=gcal_id, eventId=gid, body=patch).execute()
+                    marca = marca_de_version(parcheado)
+                    if marca:
+                        app.supabase.update('appointments', apt['id'], marca)
                     updated += 1
                 except Exception:
                     errors += 1
@@ -5554,14 +5549,37 @@ def create_app():
         except Exception as e:
             return jsonify({'success': False, 'error': str(e)[:200]})
 
+    @app.route('/calendar/api/entrantes/pendientes', methods=['GET'])
+    @login_required
+    def api_entrantes_pendientes():
+        """Cuántas reuniones entraron de fuera y nadie ha mirado todavía.
+
+        Sólo cuenta las de los calendarios de quien pregunta: avisar a alguien
+        de que tiene tres cosas sin mirar que no puede ver es peor que no
+        avisarle."""
+        if not user_can('calendar'):
+            return jsonify({'sin_ver': 0})
+        try:
+            filas = app.supabase.get_q(
+                'appointments',
+                {'origen': 'eq.externo', 'visto': 'is.false',
+                 'status': 'neq.cancelled'},
+                select='id,calendar_id') or []
+        except Exception:
+            return jsonify({'sin_ver': 0})
+        if not is_admin():
+            mios = {c['calendar_id'] for c in get_user_calendars(app, current_user.id)}
+            filas = [f for f in filas if f.get('calendar_id') in mios]
+        return jsonify({'sin_ver': len(filas)})
+
     @app.route('/calendar/api/entrantes/<eid>/visto', methods=['POST'])
     @login_required
     def api_entrante_visto(eid):
-        """«Ya lo vi». No cambia nada en la agenda de nadie: sólo deja de contar
-        en el aviso de que hay cosas nuevas sin mirar."""
+        """«Ya lo vi». No cambia nada en la agenda de nadie ni sale hacia fuera:
+        sólo deja de contar en el aviso de que hay cosas nuevas sin mirar."""
         if not user_can('calendar'):
             return jsonify({'success': False, 'error': 'Sin acceso'}), 403
-        ok = app.supabase.update('agenda_externa', eid, {'visto': True})
+        ok = app.supabase.update('appointments', eid, {'visto': True})
         return jsonify({'success': bool(ok)})
 
     # Trabajos de fondo (un solo worker se los queda mediante flock).

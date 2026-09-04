@@ -14,10 +14,15 @@
 {# Puente con ATLAS: sólo afecta al calendario ATLAS, en los dos sentidos. #}
 <button class="btn btn-sm rounded-pill fw-bold" id="btnAtlas" style="background:#EA4335;color:#fff;border:0"
         onclick="sincronizarAtlas()" title="Traer y llevar reuniones con la agenda de ATLAS">🎓 ATLAS</button>
+{# Trae lo que se haya agendado en cualquiera de las cuentas desde la última
+   pasada. Corre solo cada cuarto de hora; el botón es para no esperar. #}
+<button class="btn btn-outline-primary btn-sm rounded-pill" onclick="traerAgenda(this)"
+        title="Traer lo que se agendó en las cuentas conectadas">↙ Traer agenda</button>
+<span class="status-pill off" id="chipEntrantes" hidden></span>
 {% if google_connected_global %}
-<span class="status-pill on">✅ Google</span>
+<span class="status-pill on">✅ Agendas</span>
 {% else %}
-<a href="/auth/google" class="status-pill off">🔗 Conectar Google</a>
+<a href="/admin/cuentas" class="status-pill off">🔗 Conectar {{ google_cuentas_pendientes|length }} cuenta(s)</a>
 {% endif %}
 {% endif %}
 {% endblock %}
@@ -57,6 +62,12 @@
       </div>
       <div class="modal-body">
         <input type="hidden" id="fEditId">
+
+        {# Sale sólo en las reuniones que entraron de fuera. Se lee antes que
+           nada porque cambia el sentido de lo que se va a hacer: mover una cita
+           propia es reprogramar; mover una a la que a uno le convocaron es
+           pedirle al que convoca que la cambie. #}
+        <div class="alert alert-secondary py-2 small" id="avisoExterno" hidden></div>
 
         <!-- Fila 1: Título y Calendario -->
         <div class="row mb-3">
@@ -318,28 +329,6 @@
   </div>
 </div>
 
-{# Lo que agendaron otros. Es una ficha de LECTURA a propósito: se puede mirar y
-   se puede dar por visto, pero no editar ni borrar, porque el evento no vive
-   aquí — vive en la agenda de quien lo convocó. #}
-<div class="modal fade" id="externoModal" tabindex="-1">
-  <div class="modal-dialog">
-    <div class="modal-content border-0 shadow">
-      <div class="modal-header" style="background:linear-gradient(135deg,#64748b,#94a3b8);color:#fff">
-        <h6 class="modal-title">↙ Te agendaron esto</h6>
-        <button class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
-      </div>
-      <div class="modal-body">
-        <h5 id="exTitulo" class="mb-2"></h5>
-        <table class="table table-sm mb-2"><tbody id="exDatos"></tbody></table>
-        <div id="exNotas" class="small text-muted" style="white-space:pre-wrap"></div>
-      </div>
-      <div class="modal-footer">
-        <button class="btn btn-light" data-bs-dismiss="modal">Cerrar</button>
-        <button class="btn btn-outline-primary btn-sm" id="exVisto" onclick="marcarVisto()">Dar por visto</button>
-      </div>
-    </div>
-  </div>
-</div>
 {% endblock %}
 
 {% block scripts %}
@@ -348,8 +337,7 @@
 <script src='https://cdn.jsdelivr.net/npm/fullcalendar@5.11.3/locales/es.js'></script>
 
 <script>
-let cal, modal, clientModal, externoModal, clientsData = [], editId = null, editParentId = null;
-let externoActual = null;
+let cal, modal, clientModal, clientsData = [], editId = null, editParentId = null;
 const CSRF_TOKEN = document.querySelector('meta[name="csrf-token"]').content;
 const DEFAULTS_T = ['REUNIÓN','WEBINAR','CAPACITACIÓN','CONSULTA','ENTREVISTA','ASESORÍA','TALLER','VISITA'];
 const DEFAULTS_E = ['MAP'];
@@ -375,7 +363,6 @@ document.addEventListener('DOMContentLoaded', function () {
 
   modal = new bootstrap.Modal(document.getElementById('myModal'));
   clientModal = new bootstrap.Modal(document.getElementById('clientModal'));
-  externoModal = new bootstrap.Modal(document.getElementById('externoModal'));
   document.getElementById('fDate').min = new Date().toISOString().split('T')[0];
 
   setupAutocomplete('fTitle', 'sugTitle', '/calendar/api/titles', DEFAULTS_T);
@@ -384,6 +371,7 @@ document.addEventListener('DOMContentLoaded', function () {
   loadPending();
   loadCiudades();
   loadHolidayMap();
+  cargarBadgeEntrantes();
 
   // Day picker toggle
   document.querySelectorAll('.day-btn').forEach(function (btn) {
@@ -667,6 +655,7 @@ function openModal(calId) {
   document.getElementById('modalTitle').textContent = '📝 Nueva cita';
   document.getElementById('btnDelete').style.display = 'none';
   document.getElementById('btnDeleteSeries').style.display = 'none';
+  marcarProcedencia(null);
   clearForm();
   if (calId) document.getElementById('fCalendar').value = calId;
   loadCiudades();
@@ -675,63 +664,71 @@ function openModal(calId) {
 
 function quickBook(calId) { openModal(calId); }
 
-// ---- Lo que agendaron otros: ficha de lectura ----
-const RESPUESTAS = {
-  accepted: 'Aceptada', declined: 'Rechazada',
-  tentative: 'Provisional', needsAction: 'Sin responder'
-};
+// ---- De dónde vino esta cita ----
+// El aviso vive dentro del propio formulario de edición y no en una ventana
+// aparte: lo que hace falta saber al mover una reunión es si la pidió el
+// despacho o si a uno le convocaron, y eso se necesita MIENTRAS se edita.
+function marcarProcedencia(p) {
+  const caja = document.getElementById('avisoExterno');
+  if (!caja) return;
+  if (!p || !p.externo) { caja.hidden = true; return; }
 
-function verEventoExterno(evento, p) {
-  externoActual = p.id;
-  document.getElementById('exTitulo').textContent = p.title || '(sin título)';
+  caja.textContent = 'Esta reunión no la pidió el despacho: entró por '
+    + (p.cuenta || 'una de las cuentas conectadas')
+    + '. Lo que cambies aquí vuelve a salir hacia esa agenda.';
+  caja.hidden = false;
 
-  const cuando = evento.start
-    ? evento.start.toLocaleString('es-EC', { dateStyle: 'full', timeStyle: 'short' })
-    : '';
-  const filas = [
-    ['Cuándo', cuando],
-    ['Convoca', p.organizador_nombre || p.organizador],
-    ['Entró por', p.cuenta + (p.calendario ? ' · ' + p.calendario : '')],
-    ['Dónde', p.lugar],
-    ['Enlace', p.meeting_link],
-    ['Invitados', p.invitados],
-    ['Tu respuesta', RESPUESTAS[p.mi_respuesta] || p.mi_respuesta],
-  ];
-  document.getElementById('exDatos').innerHTML = filas
-    .filter(([, v]) => v)
-    .map(([k, v]) => {
-      const valor = (k === 'Enlace')
-        ? `<a href="${v}" target="_blank" rel="noopener">${v}</a>`
-        : escapeHtml(v);
-      return `<tr><td class="text-muted" style="width:35%">${k}</td><td>${valor}</td></tr>`;
-    }).join('');
-  document.getElementById('exNotas').textContent = p.notes || '';
-
-  const btn = document.getElementById('exVisto');
-  btn.disabled = !!p.visto;
-  btn.textContent = p.visto ? 'Ya visto' : 'Dar por visto';
-  externoModal.show();
+  // Abrirla ya cuenta como haberla mirado: pedir además un clic en «visto»
+  // sería hacer trámite de algo que acaba de ocurrir a la vista.
+  if (!p.visto) darPorVisto(p.id);
 }
 
-function escapeHtml(t) {
-  const d = document.createElement('div');
-  d.textContent = t == null ? '' : String(t);
-  return d.innerHTML;
-}
-
-async function marcarVisto() {
-  if (!externoActual) return;
-  const r = await fetch(`/calendar/api/entrantes/${externoActual}/visto`, {
+async function darPorVisto(id) {
+  if (!id) return;
+  const r = await fetch(`/calendar/api/entrantes/${id}/visto`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF_TOKEN }
   }).then(x => x.json()).catch(() => ({ success: false }));
-  if (r.success) {
-    document.getElementById('exVisto').disabled = true;
-    document.getElementById('exVisto').textContent = 'Ya visto';
-    cal.refetchEvents();
-  } else {
-    showToast('No se pudo marcar como visto', 'warning');
-  }
+  if (r.success) cargarBadgeEntrantes();
+}
+
+// El número de cosas que entraron y nadie ha mirado todavía.
+async function cargarBadgeEntrantes() {
+  const chip = document.getElementById('chipEntrantes');
+  if (!chip) return;
+  const r = await fetch('/calendar/api/entrantes/pendientes')
+    .then(x => x.json()).catch(() => null);
+  if (!r || !r.sin_ver) { chip.hidden = true; return; }
+  chip.textContent = `↙ ${r.sin_ver} sin mirar`;
+  chip.hidden = false;
+}
+
+// Una pasada a mano por las cuentas, sin esperar a la de cada cuarto de hora.
+async function traerAgenda(boton) {
+  const texto = boton.textContent;
+  boton.disabled = true;
+  boton.textContent = 'Revisando las cuentas…';
+  const r = await fetch('/calendar/api/entrantes/sync', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF_TOKEN }
+  }).then(x => x.json()).catch(() => ({ success: false, error: 'sin respuesta' }));
+  boton.disabled = false;
+  boton.textContent = texto;
+
+  if (!r.success) { showToast('No se pudo revisar: ' + (r.error || ''), 'danger'); return; }
+  cal.refetchEvents();
+  cargarBadgeEntrantes();
+
+  const partes = [];
+  if (r.nuevas)       partes.push(`${r.nuevas} nueva(s)`);
+  if (r.actualizadas) partes.push(`${r.actualizadas} cambiada(s)`);
+  if (r.canceladas)   partes.push(`${r.canceladas} cancelada(s)`);
+  const fallos = Object.entries(r.errores || {}).map(([c, e]) => `${c}: ${e}`);
+  // Los fallos se enseñan siempre, aunque haya entrado algo: «todo bien» con
+  // dos cuentas caídas es la clase de silencio que hace perder una audiencia.
+  if (fallos.length) showToast('Con problemas — ' + fallos.join(' · '), 'warning');
+  showToast(partes.length ? 'Agenda al día: ' + partes.join(', ')
+                          : 'No había nada nuevo', 'info');
 }
 
 function editAppt(info) {
@@ -744,13 +741,11 @@ function editAppt(info) {
     showToast(ambito + ': ' + p.nombre + ' — ' + ver + real, p.verificado ? 'info' : 'warning');
     return;
   }
-  // Lo que agendaron OTROS. No se edita desde aquí: sobre esto la plataforma no
-  // manda, y abrir el formulario de citas daría a entender que sí. Se enseña
-  // quién convoca y desde qué cuenta entró, que es lo que hace falta saber.
-  if (p && p.externo) {
-    verEventoExterno(info.event, p);
-    return;
-  }
+  // Una cita recogida de fuera se abre y se edita como cualquier otra —lo que
+  // se cambie aquí vuelve a salir hacia su cuenta—, pero se dice de dónde vino:
+  // no es lo mismo mover una reunión que pidió el despacho que mover una a la
+  // que a uno le convocaron. Y abrirla cuenta como haberla mirado.
+  marcarProcedencia(p);
   editId = info.event.id;
   editParentId = p.parent_event_id || null;
   document.getElementById('fEditId').value = editId;

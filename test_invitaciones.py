@@ -136,28 +136,27 @@ ICS_QUE_LLEGA = '\r\n'.join([
     'END:VEVENT', 'END:VCALENDAR'])
 
 print('\n-- Lo que llega a la bandeja --')
-fila = ent._fila_desde_mensaje(correo_con_invitacion(ICS_QUE_LLEGA), CUENTA, 'cal-ms')
-check('se reconoce como algo agendado', bool(fila), True)
+lectura = ent.leer_invitacion(correo_con_invitacion(ICS_QUE_LLEGA), CUENTA, 'cal-ms')
+check('se reconoce como algo agendado', bool(lectura), True)
 check('con su identificador, para no duplicarlo en cada pasada',
-      fila['event_id'], 'convocatoria-123@otro.sistema')
-check('el título llega entero', fila['titulo'], 'Sesión ordinaria del pleno')
-check('la coma del lugar se desescapa', fila['lugar'], 'Sala 3, segundo piso')
+      lectura['uid'], 'convocatoria-123@otro.sistema')
+cita = lectura['cita']
+check('el título llega entero', cita['title'], 'Sesión ordinaria del pleno')
+check('la coma del lugar se desescapa', cita['lugar'], 'Sala 3, segundo piso')
 check('el salto de línea de la descripción también',
-      fila['descripcion'], 'Primer punto\nSegundo punto')
-check('se sabe quién convoca', fila['organizador'], 'secretaria@ejemplo.gob.ec')
-check('y en qué cuenta entró', (fila['cuenta_email'], fila['calendar_id']),
-      (CUENTA, 'cal-ms'))
+      cita['notes'], 'Primer punto\nSegundo punto')
+check('se sabe quién convoca', cita['encargado'], 'secretaria@ejemplo.gob.ec')
+check('y a qué calendario de aquí entra', cita['calendar_id'], 'cal-ms')
 check('la fecha se guarda en formato comparable',
-      fila['start_time'].startswith('2026-09-15T13:00:00'), True)
-check('está vigente', fila['estado'], 'activo')
+      cita['start_time'].startswith('2026-09-15T13:00:00'), True)
+check('está vigente', lectura['cancelado'], False)
 
 print('\n-- Una cancelación que llega --')
 cancelada = ICS_QUE_LLEGA.replace('METHOD:REQUEST', 'METHOD:CANCEL')
-fila_c = ent._fila_desde_mensaje(correo_con_invitacion(cancelada), CUENTA, 'cal-ms')
-check('se marca como cancelada, no se borra en silencio',
-      fila_c['estado'], 'cancelado')
-check('sobre el mismo identificador, para que sustituya a la que había',
-      fila_c['event_id'], 'convocatoria-123@otro.sistema')
+lec_c = ent.leer_invitacion(correo_con_invitacion(cancelada), CUENTA, 'cal-ms')
+check('se reconoce como cancelación', lec_c['cancelado'], True)
+check('sobre el mismo identificador, para que alcance a la que había',
+      lec_c['uid'], 'convocatoria-123@otro.sistema')
 
 print('\n-- Lo que no es una invitación --')
 from email.message import EmailMessage
@@ -165,12 +164,12 @@ suelto = EmailMessage()
 suelto['From'] = 'alguien@ejemplo.com'
 suelto.set_content('Buenos días, ¿tiene un rato el martes?')
 check('un correo normal no entra en la agenda',
-      ent._fila_desde_mensaje(suelto, CUENTA, 'cal-ms'), None)
+      ent.leer_invitacion(suelto, CUENTA, 'cal-ms'), None)
 
 propia = correo_con_invitacion(ICS_QUE_LLEGA.replace(
     'mailto:secretaria@ejemplo.gob.ec', f'mailto:{CUENTA}'), de=CUENTA)
 check('lo que uno mismo convoca no vuelve como «me lo agendaron»',
-      ent._fila_desde_mensaje(propia, CUENTA, 'cal-ms'), None)
+      ent.leer_invitacion(propia, CUENTA, 'cal-ms'), None)
 
 print('\n-- Una cita vieja cuyo calendario cambió de cuenta --')
 # Se creó cuando ese calendario agendaba por Google: el evento EXISTE allí. Que
@@ -207,10 +206,10 @@ print('\n-- Fechas de día completo --')
 todo_el_dia = ICS_QUE_LLEGA.replace(
     'DTSTART:20260915T130000Z', 'DTSTART;VALUE=DATE:20260915').replace(
     'DTEND:20260915T140000Z', 'DTEND;VALUE=DATE:20260916')
-fila_d = ent._fila_desde_mensaje(correo_con_invitacion(todo_el_dia), CUENTA, 'cal-ms')
-check('se reconocen como tales', fila_d['todo_el_dia'], True)
+lec_d = ent.leer_invitacion(correo_con_invitacion(todo_el_dia), CUENTA, 'cal-ms')
+check('se reconocen como tales', lec_d['todo_el_dia'], True)
 check('y ocupan el día entero, no una hora suelta',
-      fila_d['start_time'].startswith('2026-09-15T00:00:00'), True)
+      lec_d['cita']['start_time'].startswith('2026-09-15T00:00:00'), True)
 
 print('\n' + ('TODO CORRECTO' if not fallos else
               '%d FALLO(S): %s' % (len(fallos), ', '.join(fallos))))

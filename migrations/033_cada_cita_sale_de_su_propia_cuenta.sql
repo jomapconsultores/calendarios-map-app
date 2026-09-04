@@ -1,30 +1,38 @@
 -- ============================================================
---  Cada cita sale de la cuenta que le corresponde, y lo que agendan entra
+--  Una sola agenda, que entra y sale por donde haga falta
 --  Ejecutar en: https://supabase.com/dashboard/project/lqdpirsfzodmbeyoivww/sql
 -- ============================================================
 --
--- Hasta ahora TODAS las citas nacían en una sola cuenta de Google
+-- Dos cosas estaban mal, y son la misma cosa vista por sus dos lados.
+--
+-- La primera: TODAS las citas nacían en una sola cuenta de Google
 -- (mposligua0000@gmail.com) y a la cuenta que de verdad correspondía —jomap,
 -- atlas, csccue, hotmail— se le mandaba una invitación como si fuera un
--- asistente más. Eso tiene dos consecuencias que se notan del otro lado:
+-- asistente más. Quien recibía la cita veía una cuenta personal donde esperaba
+-- al despacho o a la institución.
 --
---   1. El que recibe la cita ve que se la manda mposligua0000, no el despacho
---      ni la institución. El remitente es parte del mensaje.
---   2. Sólo funciona hacia afuera. Lo que a esas cuentas les agendan a ELLAS
---      —un cliente que propone una reunión, una convocatoria del CSCCUE— no
---      existe para la plataforma, porque la plataforma no mira esas cuentas.
+-- La segunda, y la que más duele: sólo funcionaba de salida. Google era el
+-- sitio donde de verdad vivían los eventos y la plataforma un emisor que no
+-- escuchaba. Mover una cita desde el móvil, aceptar una convocatoria en
+-- Outlook o apuntar una reunión directamente en el calendario no llegaba aquí
+-- nunca. La plataforma decía que el martes estaba libre y el martes había
+-- audiencia.
 --
--- Esta migración pone las tres piezas que hacen falta para lo uno y lo otro:
+-- Lo que se arregla: el programa pasa a ser el sitio donde está la agenda
+-- entera, y los eventos entran y salen por donde toque —Google, correo, o la
+-- propia pantalla—. Todo va a `appointments`, no a una lista aparte de sólo
+-- lectura: una cita que no se puede tocar desde donde se mira no es una agenda,
+-- es una fotografía.
 --
---   calendar_config.cuenta_email   de qué cuenta sale ese calendario
---   appointments.google_account    en qué cuenta quedó el evento de esta cita
---   agenda_externa                 lo que agendan en esas cuentas y no nació aquí
---
--- `google_account` se guarda EN LA CITA, no se deduce del calendario, y es a
--- propósito: si mañana un calendario cambia de cuenta, el evento viejo sigue
--- estando donde se creó, y para borrarlo o moverlo hay que ir a esa cuenta, no
--- a la que ahora figura en la configuración. Deducirlo sería dejar eventos
--- huérfanos en calendarios que nadie vuelve a mirar.
+--   calendar_config.cuenta_email        de qué cuenta sale ese calendario
+--   calendar_config.proveedor           google (API) | microsoft (invitación)
+--   calendar_config.sincronizar_entrada si además se trae lo que aparezca allí
+--   appointments.google_account         en qué cuenta vive el evento
+--   appointments.origen                 nació aquí, o se recogió de fuera
+--   appointments.google_updated         qué versión de fuera se conoce ya
+--   appointments.external_uid           el UID del .ics, cuando entra por correo
+--   appointments.ics_sequence           versión de la invitación por correo
+--   appointments.visto                  lo de fuera, ¿ya lo miró alguien?
 
 
 -- ------------------------------------------------------------
@@ -72,11 +80,46 @@ UPDATE calendar_config
        END
  WHERE proveedor IS NULL OR btrim(proveedor) = '';
 
+-- Traer lo que aparezca en esa agenda se puede apagar calendario por
+-- calendario. Por defecto está encendido —el objetivo es ver el día entero—,
+-- pero una cuenta personal cuya agenda no tiene por qué salir en la pantalla
+-- del despacho se apaga aquí sin dejar de poder agendar EN ella.
+ALTER TABLE calendar_config
+  ADD COLUMN IF NOT EXISTS sincronizar_entrada boolean NOT NULL DEFAULT true;
+
 
 -- ------------------------------------------------------------
---  2. En qué cuenta quedó el evento de cada cita
+--  2. Dónde vive cada cita, y qué versión de ella conocemos
 -- ------------------------------------------------------------
 ALTER TABLE appointments ADD COLUMN IF NOT EXISTS google_account text;
+
+-- Se guarda EN LA CITA y no se deduce del calendario, a propósito: si mañana
+-- un calendario cambia de cuenta, el evento viejo sigue estando donde se creó,
+-- y para borrarlo o moverlo hay que ir a esa cuenta. Deducirlo dejaría eventos
+-- huérfanos en calendarios que nadie vuelve a mirar.
+UPDATE appointments
+   SET google_account = 'mposligua0000@gmail.com'
+ WHERE google_event_id IS NOT NULL
+   AND (google_account IS NULL OR btrim(google_account) = '');
+
+-- Nació aquí, o se recogió de fuera. No es una etiqueta decorativa: decide si
+-- la cita pasa por el circuito de aprobación del despacho (lo que se pide aquí
+-- se aprueba aquí) o entra ya confirmada porque el compromiso lo adquirió otro.
+ALTER TABLE appointments
+  ADD COLUMN IF NOT EXISTS origen text NOT NULL DEFAULT 'plataforma';
+
+-- La marca de tiempo que Google le pone al evento. Es lo que permite saber de
+-- qué lado vino un cambio: si lo que hay en Google es más nuevo que la última
+-- versión que conocemos, el cambio se hizo allí y hay que traerlo; si coincide,
+-- el cambio salió de aquí y no hay nada que hacer. Sin esto, cada pasada
+-- «traería» lo que la propia plataforma acababa de escribir, y a la larga un
+-- cambio hecho aquí se pisaría con su propio eco.
+ALTER TABLE appointments ADD COLUMN IF NOT EXISTS google_updated  timestamptz;
+ALTER TABLE appointments ADD COLUMN IF NOT EXISTS sincronizado_en timestamptz;
+
+-- El identificador del evento cuando entra por correo (.ics) en vez de por la
+-- API: las cuentas de Microsoft no tienen id de Google, tienen UID de iCalendar.
+ALTER TABLE appointments ADD COLUMN IF NOT EXISTS external_uid text;
 
 -- Número de versión de la invitación por correo. Un calendario sólo acepta una
 -- modificación si viene con un número MAYOR que el que ya tiene apuntado:
@@ -84,74 +127,33 @@ ALTER TABLE appointments ADD COLUMN IF NOT EXISTS google_account text;
 -- vieja y sin ninguna señal de que algo cambió.
 ALTER TABLE appointments ADD COLUMN IF NOT EXISTS ics_sequence integer DEFAULT 0;
 
--- Todo lo sincronizado hasta hoy está en la cuenta histórica. Sin este
--- relleno, mover o cancelar una cita vieja buscaría su evento en la cuenta
--- equivocada y no lo encontraría: el calendario del cliente se quedaría con la
--- versión anterior sin que nadie se entere.
-UPDATE appointments
-   SET google_account = 'mposligua0000@gmail.com'
- WHERE google_event_id IS NOT NULL
-   AND (google_account IS NULL OR btrim(google_account) = '');
+-- Lo que entra de fuera empieza sin mirar. Lo que nace aquí ya lo vio quien lo
+-- creó, así que no tiene sentido reclamarle que lo mire.
+ALTER TABLE appointments ADD COLUMN IF NOT EXISTS visto boolean NOT NULL DEFAULT true;
 
 
 -- ------------------------------------------------------------
---  3. Lo que agendan en esas cuentas y no nació aquí
+--  3. Que el mismo evento no entre dos veces
 -- ------------------------------------------------------------
---
--- Esta tabla NO es la de citas. Son dos cosas distintas y mezclarlas sería un
--- error: una cita de `appointments` es un compromiso del despacho, que alguien
--- pidió, alguien aprobó y de la que se responde. Esto de aquí es lo que otros
--- pusieron en la agenda —una convocatoria, una reunión a la que le invitaron—,
--- sobre lo que la plataforma no manda: sólo lo enseña, para que al mirar el
--- calendario esté TODO lo que ocupa el día y no sólo la mitad que salió de
--- aquí. Si algo de esto merece convertirse en cita del despacho, se convierte,
--- y `appointment_id` deja constancia de que ya se hizo.
-CREATE TABLE IF NOT EXISTS agenda_externa (
-  id              uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+-- La sincronización pasa cada cuarto de hora y vuelve a ver lo mismo. Sin esto,
+-- la misma reunión se acumularía una vez por pasada hasta llenar el día.
+-- Parciales (WHERE ... IS NOT NULL) porque la inmensa mayoría de las citas no
+-- tienen todavía identificador externo, y varios NULL no pueden chocar entre sí.
+CREATE UNIQUE INDEX IF NOT EXISTS appointments_evento_google_unico
+  ON appointments (google_account, google_event_id)
+  WHERE google_event_id IS NOT NULL;
 
-  -- De dónde salió
-  cuenta_email    text NOT NULL,          -- la cuenta en cuya agenda apareció
-  origen          text NOT NULL DEFAULT 'google',   -- 'google' | 'correo'
-  event_id        text NOT NULL,          -- id del evento en Google, o UID del .ics
-  gcal_id         text,                   -- calendario de origen dentro de esa cuenta
-  calendar_id     text,                   -- nuestro slug, si la cuenta mapea a uno
+CREATE UNIQUE INDEX IF NOT EXISTS appointments_uid_externo_unico
+  ON appointments (external_uid)
+  WHERE external_uid IS NOT NULL;
 
-  -- Qué es
-  titulo          text,
-  descripcion     text,
-  start_time      timestamptz,
-  end_time        timestamptz,
-  todo_el_dia     boolean DEFAULT false,
-  lugar           text,
-  enlace          text,                   -- Meet, Teams, Zoom…
+-- La consulta de cada pasada: «de esta cuenta, ¿qué tengo ya?».
+CREATE INDEX IF NOT EXISTS appointments_cuenta_idx
+  ON appointments (google_account) WHERE google_account IS NOT NULL;
 
-  -- Quién
-  organizador       text,                 -- correo de quien lo convocó
-  organizador_nombre text,
-  invitados       text,
-
-  -- En qué quedó
-  mi_respuesta    text,                   -- accepted | declined | tentative | needsAction
-  estado          text DEFAULT 'activo',  -- activo | cancelado
-  visto           boolean DEFAULT false,  -- ya lo miró alguien en la plataforma
-  appointment_id  uuid,                   -- se convirtió en cita del despacho
-
-  actualizado_en  timestamptz DEFAULT now(),
-  creado_en       timestamptz DEFAULT now()
-);
-
--- El mismo evento visto dos veces es el mismo evento: la sincronización lo
--- vuelve a traer en cada pasada y tiene que ACTUALIZAR, no acumular copias.
-CREATE UNIQUE INDEX IF NOT EXISTS agenda_externa_unico
-  ON agenda_externa (cuenta_email, event_id);
-
--- La consulta del calendario: qué hay entre estas dos fechas.
-CREATE INDEX IF NOT EXISTS agenda_externa_fecha_idx
-  ON agenda_externa (start_time);
-
--- El aviso de "te agendaron algo y no lo has mirado".
-CREATE INDEX IF NOT EXISTS agenda_externa_sin_ver_idx
-  ON agenda_externa (visto, start_time) WHERE estado = 'activo';
+-- El aviso de «te agendaron algo y no lo has mirado».
+CREATE INDEX IF NOT EXISTS appointments_sin_ver_idx
+  ON appointments (visto, start_time) WHERE visto = false;
 
 
 -- ------------------------------------------------------------
@@ -177,5 +179,4 @@ CREATE UNIQUE INDEX IF NOT EXISTS ms_tokens_email_unico ON ms_tokens (lower(emai
 
 -- Igual que el resto del sistema (ver 022): el servidor entra con la clave de
 -- servicio y filtra por permisos en la aplicación.
-ALTER TABLE agenda_externa DISABLE ROW LEVEL SECURITY;
-ALTER TABLE ms_tokens      DISABLE ROW LEVEL SECURITY;
+ALTER TABLE ms_tokens DISABLE ROW LEVEL SECURITY;

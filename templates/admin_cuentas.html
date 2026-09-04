@@ -95,8 +95,13 @@
     ↙ Revisar ahora
   </button>
   <p class="small text-muted mt-2 mb-0">
-    De las cuentas de Google se ve toda la agenda. De las de Microsoft, las invitaciones
+    Lo que aparece en esas agendas entra al calendario como una cita más: se abre, se
+    edita y lo que se cambie vuelve a salir hacia la cuenta de la que vino. Lo que se
+    cancele allí se marca cancelado aquí — no se borra, para que quede el rastro.
+    De las cuentas de Google se ve toda la agenda; de las de Microsoft, las invitaciones
     que llegan al correo: lo apuntado a mano directamente en Outlook no pasa por aquí.
+    Una cuenta cuya agenda no deba salir en esta pantalla se apaga con
+    <code>sincronizar_entrada</code> en <a href="/admin/database#sec-calendars">Catálogos → Calendarios</a>.
   </p>
 </div></div>
 
@@ -161,9 +166,12 @@ async function sincronizarEntrantes(boton) {
   boton.disabled = false;
   boton.textContent = texto;
   if (!r.success) { alert('No se pudo revisar: ' + (r.error || '')); return; }
+
   const fallos = Object.entries(r.errores || {})
     .map(([c, e]) => `${c}: ${e}`).join('\n');
-  alert(`Traídos ${r.traidos} evento(s).` + (fallos ? `\n\nCon problemas:\n${fallos}` : ''));
+  alert(`Entraron ${r.nuevas}, cambiaron ${r.actualizadas}, `
+        + `se cancelaron ${r.canceladas}.`
+        + (fallos ? `\n\nCon problemas:\n${fallos}` : ''));
   location.reload();
 }
 </script>
