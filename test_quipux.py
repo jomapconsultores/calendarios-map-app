@@ -76,6 +76,40 @@ check('la fecha del documento', uno['fecha_doc'], '2026-09-03 00:00:00')
 check('se ve que lleva adjuntos', uno['tiene_anexos'], True)
 check('y que el segundo no', filas[1]['tiene_anexos'], False)
 
+print('\n-- La bandeja de Reasignados: la que trae el plazo de verdad --')
+# Es la bandeja donde el sistema avisa de los vencidos, y su columna de plazo no
+# se llama «vencimiento» sino «Fecha Max. de Respuesta». Si ese nombre no se
+# reconoce, el plazo bueno se pierde y todo pasa por «deducido del texto»: la
+# lista sale igual, con la mitad de la confianza que merece y sin que se note.
+REASIGNADOS = """
+<html><body><table>
+<tr><th></th><th>Fecha Documento</th><th>Reasignado a</th><th>Comentario</th>
+    <th>Fecha Reasignación</th><th>Fecha Max. de Respuesta</th><th>De</th>
+    <th>Para</th><th>Asunto</th><th>Número Documento</th><th>Tipo Documento</th>
+    <th>Nro. Trámite</th><th>Estado</th></tr>
+<tr>
+  <td><img src="/img/anexo.gif"></td>
+  <td>2026-09-04 00:00:00</td><td>Xavier Barrera Vidal</td>
+  <td>Estimado señor Director remito la informacion solicitada</td>
+  <td>2026-09-04 16:05:50</td><td>2026-09-08</td>
+  <td>Xavier Barrera Vidal</td><td>Daniel Marcelo Garcia Pineda</td>
+  <td><a href='javascript:mostrar_documento("20260009991136999991","CSC-GPP-2026-116-TEMP","6")'>SOLICITUD DE INFORMACION DE INVERSIONES</a></td>
+  <td>CSC-GPP-2026-116-TEMP</td><td>Oficio</td><td>IMC-2026-72348</td>
+  <td>En Tramite</td>
+</tr>
+</table></body></html>
+"""
+rea = docs.leer_bandeja(REASIGNADOS, BASE)
+check('se lee la fila de Reasignados', len(rea), 1)
+check('con el plazo que da el sistema', rea[0].get('vence'), '2026-09-08')
+check('y con quien la reasigno', rea[0].get('reasignado'), 'Xavier Barrera Vidal')
+check('y la instruccion que traia',
+      'remito la informacion' in (rea[0].get('comentario') or ''), True)
+_f, _o, _seguro = docs.deducir_plazo(rea[0])
+check('el plazo sale del sistema, no del texto', _f, date(2026, 9, 8))
+check('y por eso cuenta como confirmado', _seguro, True)
+
+
 print('\n-- La tabla cambia de orden --')
 # El mismo contenido con las columnas movidas. Si se leyera por posición, el
 # asunto vendría a parar al campo del tipo y nadie se enteraría.

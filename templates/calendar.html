@@ -741,6 +741,20 @@ function editAppt(info) {
     showToast(ambito + ': ' + p.nombre + ' — ' + ver + real, p.verificado ? 'info' : 'warning');
     return;
   }
+  // Un plazo de CuencaDOC no es una cita: es una fecha que puso el Municipio y
+  // que aquí no se mueve. Se enseña qué hay que hacer y se ofrece ir al módulo,
+  // que es donde sí se puede marcar como hecho.
+  if (p && p.esQuipux) {
+    const cuando = info.event.start
+      ? info.event.start.toLocaleDateString('es-EC', {dateStyle:'full'}) : '';
+    const aviso = p.seguro ? '' : `\n\n⚠ Plazo DEDUCIDO del texto (${p.origen_plazo}). Confírmalo.`;
+    if (confirm(`${p.titulo}\n\n${p.vencido ? '⛔ VENCIDO el ' : 'Para el '}${cuando}`
+                + `\n${p.area || ''}${aviso}\n\n¿Abrir el módulo Quipux?`)) {
+      window.location = '/quipux';
+    }
+    return;
+  }
+
   // Una cita recogida de fuera se abre y se edita como cualquier otra —lo que
   // se cambie aquí vuelve a salir hacia su cuenta—, pero se dice de dónde vino:
   // no es lo mismo mover una reunión que pidió el despacho que mover una a la

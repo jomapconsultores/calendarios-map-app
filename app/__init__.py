@@ -3682,6 +3682,46 @@ def create_app():
                 },
             })
 
+        # Los plazos de CuencaDOC, en el mismo calendario. Tenerlos en su propia
+        # pantalla no basta: el día es uno solo, y una agenda que enseña las
+        # citas del despacho pero no la fecha en que hay que contestar un oficio
+        # deja agendar una reunión encima del plazo. Van como día completo
+        # —un plazo no ocupa una hora, ocupa el día— y sin poder editarse desde
+        # aquí: la fecha la puso el Municipio, no nosotros.
+        try:
+            if is_admin() or user_can('quipux'):
+                from quipux import almacen as _almacen_quipux
+                hoy_iso = date.today().isoformat()
+                for t in _almacen_quipux.tareas(estado='pendiente'):
+                    if not t.get('vence'):
+                        continue
+                    vencido = t['vence'] < hoy_iso
+                    color = '#b91c1c' if vencido else (
+                        '#d97706' if t['vence'] <= (date.today() + timedelta(days=7)).isoformat()
+                        else '#7c3aed')
+                    result.append({
+                        'id': f"quipux-{t['id']}",
+                        'title': ('⚠ ' if vencido else '📨 ') + (t.get('titulo') or ''),
+                        'start': t['vence'],
+                        'allDay': True,
+                        'display': 'block',
+                        'editable': False,
+                        'backgroundColor': color, 'borderColor': color,
+                        'extendedProps': {
+                            'esQuipux': True, 'id': t['id'],
+                            'titulo': t.get('titulo', ''),
+                            'area': t.get('area', ''),
+                            'detalle': t.get('detalle', ''),
+                            'origen_plazo': t.get('origen', ''),
+                            'seguro': bool(t.get('seguro')),
+                            'vencido': vencido,
+                        },
+                    })
+        except Exception as e:
+            # Que falle el módulo del Municipio no puede dejar sin calendario a
+            # nadie: las citas propias ya están en `result` y se devuelven igual.
+            print(f'[quipux] no se pudo añadir los plazos al calendario: {str(e)[:150]}')
+
         return jsonify(result)
 
     # ============================================================

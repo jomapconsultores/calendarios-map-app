@@ -45,7 +45,22 @@ COLUMNAS = {
     'anterior':    ('usuario anterior',),
     'categoria':   ('categoria', 'categoría'),
     'ultima':      ('fecha ultima accion', 'fecha última acción', 'ultima accion'),
-    'vence':       ('fecha vencimiento', 'vencimiento', 'fecha maxima', 'fecha límite'),
+    # EL plazo. En la bandeja de Reasignados —la que de verdad manda, porque es
+    # donde el sistema avisa de los vencidos— la columna se llama «Fecha Max.
+    # de Respuesta». Sin este nombre exacto, el plazo que el sistema da por
+    # bueno no se leería y TODOS los plazos acabarían marcados como deducidos
+    # del texto: la lista seguiría saliendo, con la mitad de la confianza que
+    # merece y sin que nada lo delatara.
+    'vence':       ('fecha max. de respuesta', 'fecha max de respuesta',
+                    'fecha maxima de respuesta', 'fecha máxima de respuesta',
+                    'fecha vencimiento', 'vencimiento', 'fecha maxima',
+                    'fecha límite', 'fecha limite'),
+    # De Reasignados también sale a quién se le pasó y con qué instrucción: es
+    # lo que convierte «un documento» en «lo que me pidieron que haga».
+    'reasignado':  ('reasignado a', 'reasignado'),
+    'comentario':  ('comentario', 'comentarios'),
+    'para':        ('para',),
+    'estado_doc':  ('estado',),
 }
 
 # Extensiones que se dan por buenas al bajar un adjunto. No es una lista de
