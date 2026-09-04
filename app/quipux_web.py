@@ -48,6 +48,20 @@ def _destino():
             or os.path.join(os.path.expanduser('~'), 'Documentos', 'Quipux'))
 
 
+def _guardar_sesion_compartida(q):
+    """Deja la sesión de CuencaDOC donde la encuentre la sincronización de fondo.
+
+    Sin esto, entrar desde la pantalla serviría para una sola pasada: media hora
+    después el proceso de fondo no tendría con qué entrar y volvería a pedir el
+    texto de la imagen. Guardada, se reutiliza mientras el sistema la dé por
+    buena — que es lo que convierte esto en algo que se sincroniza solo."""
+    try:
+        from quipux import almacen
+        almacen.guardar_sesion(q.galletas())
+    except Exception as e:
+        print(f'[quipux] no se pudo guardar la sesión: {str(e)[:120]}')
+
+
 def registrar_quipux(app, ctx):
     is_admin = ctx['is_admin']
     user_can = ctx['user_can']
@@ -129,6 +143,34 @@ def registrar_quipux(app, ctx):
         almacen.marcar_tarea(tid, nuevo)
         return jsonify({'success': True})
 
+    @app.route('/quipux/api/compromisos')
+    @login_required
+    def quipux_compromisos():
+        """Lo que hay que ENTREGAR según el texto de los documentos.
+
+        No es lo mismo que la lista de documentos: un oficio puede pedir tres
+        cosas con tres fechas, y la bandeja sólo enseña una línea. Cada
+        compromiso viaja con la frase textual de la que sale, para poder
+        comprobarlo sin abrir el documento."""
+        if not _permitido():
+            return _no()
+        from quipux import almacen
+        estado = request.args.get('estado') or 'pendiente'
+        return jsonify({'compromisos': almacen.compromisos(estado=estado),
+                        'hoy': date.today().isoformat()})
+
+    @app.route('/quipux/api/compromisos/<int:cid>', methods=['POST'])
+    @login_required
+    def quipux_compromiso_marcar(cid):
+        if not _permitido():
+            return _no()
+        nuevo = (request.json or {}).get('estado', 'hecho')
+        if nuevo not in ('pendiente', 'hecho', 'descartado'):
+            return _no('Estado no válido', 400)
+        from quipux import almacen
+        almacen.marcar_compromiso(cid, nuevo)
+        return jsonify({'success': True})
+
     # ------------------------------------------------------------------
     #  Entrar a CuencaDOC, en dos tiempos
     # ------------------------------------------------------------------
@@ -149,6 +191,7 @@ def registrar_quipux(app, ctx):
 
         if estado == 'dentro':
             session['quipux_cookies'] = q.galletas()
+            _guardar_sesion_compartida(q)
             return jsonify({'success': True, 'estado': 'dentro', 'nombre': q.nombre})
 
         # Hace falta la persona. Se guarda la sesión a medio abrir: el texto de
@@ -182,6 +225,7 @@ def registrar_quipux(app, ctx):
         except Exception as e:
             return jsonify({'success': False, 'error': str(e)[:250]})
         session['quipux_cookies'] = q.galletas()
+        _guardar_sesion_compartida(q)
         _ACCESOS.pop(clave, None)
         session.pop('quipux_acceso', None)
         return jsonify({'success': True, 'nombre': nombre})

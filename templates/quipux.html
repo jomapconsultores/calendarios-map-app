@@ -83,11 +83,25 @@ table.q-tabla{width:100%;border-collapse:collapse;font-size:var(--fs-sm);backgro
 </div>
 
 <div class="q-tabs">
-  <div class="q-tab on" data-vista="tareas" onclick="cambiarVista('tareas')">✅ Qué tengo que hacer</div>
+  <div class="q-tab on" data-vista="compromisos" onclick="cambiarVista('compromisos')">📌 Qué debo entregar</div>
+  <div class="q-tab" data-vista="tareas" onclick="cambiarVista('tareas')">✅ Por documento</div>
   <div class="q-tab" data-vista="docs" onclick="cambiarVista('docs')">🗂️ Todos los documentos</div>
 </div>
 
-<div id="vistaTareas">
+{# Lo que sale de LEER el documento, no de su asunto. Un oficio puede pedir
+   tres cosas con tres fechas; la bandeja sólo enseña una línea. Cada fila trae
+   la frase textual de la que sale, que es lo que permite comprobarlo sin abrir
+   el documento — y lo que separa «lo dice el oficio» de «lo dedujo un modelo». #}
+<div id="vistaCompromisos">
+  <table class="q-tabla">
+    <thead><tr><th style="width:120px">Para cuándo</th><th>Qué hay que entregar</th>
+      <th style="width:150px">A quién</th><th style="width:150px">Documento</th>
+      <th style="width:140px">Marcar</th></tr></thead>
+    <tbody id="cuerpoCompromisos"><tr><td colspan="5" class="q-vacio">Cargando…</td></tr></tbody>
+  </table>
+</div>
+
+<div id="vistaTareas" style="display:none">
   <table class="q-tabla">
     <thead><tr><th style="width:120px">Para cuándo</th><th>Qué hay que hacer</th>
       <th style="width:190px">Área</th><th style="width:150px">Marcar</th></tr></thead>
@@ -207,12 +221,52 @@ function vigilar(){
 function cambiarVista(v){
   VISTA = v;
   document.querySelectorAll('.q-tab').forEach(t=>t.classList.toggle('on', t.dataset.vista===v));
-  document.getElementById('vistaTareas').style.display = v==='tareas' ? '' : 'none';
-  document.getElementById('vistaDocs').style.display   = v==='docs'   ? '' : 'none';
+  document.getElementById('vistaCompromisos').style.display = v==='compromisos' ? '' : 'none';
+  document.getElementById('vistaTareas').style.display      = v==='tareas'      ? '' : 'none';
+  document.getElementById('vistaDocs').style.display        = v==='docs'        ? '' : 'none';
   cargar();
 }
 
-async function cargar(){ return VISTA==='tareas' ? cargarTareas() : cargarDocs(); }
+async function cargar(){
+  if(VISTA==='compromisos') return cargarCompromisos();
+  return VISTA==='tareas' ? cargarTareas() : cargarDocs();
+}
+
+async function cargarCompromisos(){
+  const r = await fetch('/quipux/api/compromisos?estado=pendiente')
+    .then(x=>x.json()).catch(()=>null);
+  const c = document.getElementById('cuerpoCompromisos');
+  if(!r){ c.innerHTML='<tr><td colspan="5" class="q-vacio">No se pudo cargar.</td></tr>'; return; }
+  HOY = r.hoy;
+  if(!r.compromisos.length){
+    c.innerHTML = '<tr><td colspan="5" class="q-vacio">Nada por entregar. '
+      + 'Si es la primera vez, pulse «Traer de CuencaDOC»: se leen los documentos '
+      + 'y de ahí sale esta lista.</td></tr>';
+    return;
+  }
+  c.innerHTML = r.compromisos.map(k=>`<tr>
+      <td class="q-plazo ${claseDePlazo(k.para_cuando)}">${esc(k.para_cuando||'sin fecha')}
+          ${k.urgente?'<span class="q-ded" style="background:#fee2e2;color:#991b1b">urgente</span>':''}</td>
+      <td><strong>${esc(k.que)}</strong>
+          ${k.entregable?`<div class="q-meta">Entregar: ${esc(k.entregable)}</div>`:''}
+          ${k.cita?`<div class="q-meta" style="font-style:italic;margin-top:3px">
+             «${esc(k.cita)}»</div>`:''}</td>
+      <td class="q-meta">${esc(k.a_quien||'')}</td>
+      <td class="q-num">${esc(k.numero||'')}
+          <div class="q-meta">${esc(k.area||'')}</div>
+          ${k.enlace?`<a href="${esc(k.enlace)}" target="_blank" rel="noopener">abrir</a>`:''}</td>
+      <td>
+        <button class="btn btn-sm btn-outline-success rounded-pill"
+                onclick="marcarComp(${k.id},'hecho')">Entregado</button>
+        <button class="btn btn-sm btn-outline-secondary rounded-pill"
+                onclick="marcarComp(${k.id},'descartado')" title="No me corresponde">—</button>
+      </td></tr>`).join('');
+}
+
+async function marcarComp(id, estado){
+  await post('/quipux/api/compromisos/'+id, {estado});
+  cargarCompromisos();
+}
 
 async function cargarTareas(){
   const r = await fetch('/quipux/api/tareas?estado=pendiente').then(x=>x.json()).catch(()=>null);
@@ -296,6 +350,7 @@ document.getElementById('fBusca').addEventListener('input',()=>{
   clearTimeout(temporizador); temporizador=setTimeout(cargarDocs,300);
 });
 
-marcador(); cargar();
+cambiarVista('compromisos');
+marcador();
 </script>
 {% endblock %}

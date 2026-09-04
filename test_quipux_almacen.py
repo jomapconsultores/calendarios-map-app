@@ -141,6 +141,59 @@ nueva = os.path.join(tempfile.mkdtemp(prefix='quipux2_'), 'sub', 'otra.db')
 check('se crea sola, sin migraciones que aplicar',
       (almacen.resumen(nueva)['total'], os.path.exists(nueva)), (0, True))
 
+
+# ============================================================
+#  Lo que dice el TEXTO del documento
+# ============================================================
+print('\n-- Los compromisos que salen de leer el documento --')
+COMPROMISOS = [
+    {'que': 'Remitir la matriz de requerimientos ciudadanos priorizados actualizada',
+     'entregable': 'Matriz en Excel', 'para_cuando': PRONTO,
+     'a_quien': 'Dirección de Gestión de Planificación',
+     'cita': 'solicito remitir hasta el 8 de septiembre la matriz actualizada',
+     'es_para_mi': True, 'urgente': True},
+    {'que': 'Designar un delegado para la mesa técnica',
+     'entregable': '', 'para_cuando': '', 'a_quien': 'Secretaría',
+     'cita': 'sírvase designar un delegado', 'es_para_mi': True, 'urgente': False},
+    # Éste NO es suyo: se descarta al guardar.
+    {'que': 'Archivar el expediente', 'entregable': '', 'para_cuando': '',
+     'a_quien': '', 'cita': 'para conocimiento de la unidad',
+     'es_para_mi': False, 'urgente': False},
+]
+
+check('no se ha leído todavía', almacen.ya_leido('101', BD), False)
+check('se guardan sólo los que le tocan a él',
+      almacen.guardar_compromisos('101', COMPROMISOS, None, BD), 2)
+check('y queda constancia de que ya se leyó', almacen.ya_leido('101', BD), True)
+
+lista = almacen.compromisos(BD)
+check('salen los dos', len(lista), 2)
+check('el que tiene fecha va primero', lista[0]['para_cuando'], PRONTO)
+check('con la frase textual que lo respalda',
+      'hasta el 8 de septiembre' in (lista[0]['cita'] or ''), True)
+check('y con el documento del que sale', lista[0]['numero'], 'DGPG-2050-2026')
+check('se sabe qué hay que entregar', lista[0]['entregable'], 'Matriz en Excel')
+
+check('leer otra vez no duplica',
+      (almacen.guardar_compromisos('101', COMPROMISOS, None, BD),
+       len(almacen.compromisos(BD))), (0, 2))
+
+almacen.marcar_compromiso(lista[0]['id'], 'hecho', BD)
+check('marcado como hecho, sale de la lista', len(almacen.compromisos(BD)), 1)
+check('pero no se pierde', len(almacen.compromisos(BD, estado='hecho')), 1)
+check('y volver a leer el documento no lo resucita',
+      (almacen.guardar_compromisos('101', COMPROMISOS, None, BD),
+       len(almacen.compromisos(BD))), (0, 1))
+
+print('\n-- La sesión que permite sincronizar sin molestar a nadie --')
+check('al principio no hay ninguna', almacen.leer_sesion(BD)[0], None)
+almacen.guardar_sesion({'PHPSESSID': 'abc123', 'EDOCID': 'xyz'}, BD)
+guardada, cuando = almacen.leer_sesion(BD)
+check('se guarda', guardada, {'PHPSESSID': 'abc123', 'EDOCID': 'xyz'})
+check('con la hora en que se abrió', bool(cuando), True)
+almacen.olvidar_sesion(BD)
+check('y se puede olvidar cuando caduca', almacen.leer_sesion(BD)[0], None)
+
 print('\n' + ('TODO CORRECTO' if not fallos else
               '%d FALLO(S): %s' % (len(fallos), ', '.join(fallos))))
 sys.exit(1 if fallos else 0)

@@ -25,7 +25,7 @@ import re
 import traceback
 from datetime import datetime
 
-from . import almacen, archivo, documentos as docs, planificacion
+from . import almacen, archivo, documentos as docs, lectura, planificacion
 from .sesion import ErrorQuipux, Quipux
 
 # Dónde queda todo. Se puede cambiar con QUIPUX_DESTINO en el entorno.
@@ -41,32 +41,59 @@ ARCHIVO_ESTADO = '_estado.json'
 
 class Recolector:
     def __init__(self, destino=None, bandejas=BANDEJAS_POR_DEFECTO,
-                 registro=print, limite=None, con_texto=True):
+                 registro=print, limite=None, con_texto=True, leer_texto=True):
         self.destino = destino or os.getenv('QUIPUX_DESTINO') or DESTINO_POR_DEFECTO
         self.bandejas = tuple(b.lower() for b in (bandejas or ()))
         self.log = registro
         self.limite = limite            # tope de documentos, para probar sin bajarlo todo
         self.con_texto = con_texto
+        # Leer el documento con IA para saber qué hay que entregar. Se puede
+        # apagar: sin clave de IA no pasa nada grave —el plazo que da el propio
+        # sistema se sigue leyendo—, lo que se pierde es el detalle.
+        self.leer_texto = leer_texto and lectura.disponible()
         self.q = None
         self.documentos = []
         self.fallos = []
 
     # ------------------------------------------------------------------
-    def ejecutar(self, volcar_cronograma=False):
+    def ejecutar(self, volcar_cronograma=False, entrar_si_hace_falta=True):
         os.makedirs(self.destino, exist_ok=True)
         estado = archivo.leer_estado(os.path.join(self.destino, ARCHIVO_ESTADO))
         inicio = datetime.now()
 
         self.q = Quipux(registro=self.log)
-        self.q.entrar()
+        # Si hay una sesión guardada y sigue valiendo, se aprovecha: entrar de
+        # nuevo echaría la que hay (CuencaDOC admite una sola) y, cuando salta
+        # el control de la imagen, exigiría a una persona. La sincronización
+        # continua vive de esto.
+        galletas, _ = almacen.leer_sesion()
+        if galletas:
+            self.q.poner_galletas(galletas)
+            if self.q.sigue_dentro():
+                self.log('[quipux] se aprovecha la sesión ya abierta')
+            else:
+                almacen.olvidar_sesion()
+                if not entrar_si_hace_falta:
+                    return {'sin_sesion': True, 'documentos': 0, 'nuevos': 0,
+                            'adjuntos': 0, 'con_plazo': 0, 'fallos': [],
+                            'indices': {}, 'destino': self.destino, 'segundos': 0}
+                self.q = Quipux(registro=self.log)
+                self.q.entrar()
+                almacen.guardar_sesion(self.q.galletas())
+        else:
+            if not entrar_si_hace_falta:
+                return {'sin_sesion': True, 'documentos': 0, 'nuevos': 0,
+                        'adjuntos': 0, 'con_plazo': 0, 'fallos': [],
+                        'indices': {}, 'destino': self.destino, 'segundos': 0}
+            self.q.entrar()
+            almacen.guardar_sesion(self.q.galletas())
 
-        try:
-            self._recorrer_areas(estado)
-        finally:
-            try:
-                self.q.salir()
-            except Exception:
-                pass
+        # La sesión NO se cierra: se deja abierta para la próxima pasada.
+        # Cerrarla obligaría a entrar otra vez dentro de un cuarto de hora y,
+        # si el sistema levanta el control de la imagen, a molestar a alguien
+        # para algo que ya estaba resuelto.
+        self._recorrer_areas(estado)
+        almacen.guardar_sesion(self.q.galletas())
 
         indices = self._escribir_indices()
         resumen = {
@@ -217,7 +244,36 @@ class Recolector:
         os.makedirs(carpeta, exist_ok=True)
         archivo.escribir_ficha(carpeta, registro, plazo, self.q.base, texto)
         registro['n_adjuntos'] = self._bajar_anexos(carpeta, anexos, registro)
+        self._leer_lo_que_pide(registro, texto)
         self.documentos.append(registro)
+
+    def _leer_lo_que_pide(self, registro, texto):
+        """Lee el texto del documento para saber QUÉ hay que entregar.
+
+        La bandeja dice el asunto y a veces una fecha; el asunto no dice qué
+        hacer. «ACTUALIZACIÓN MATRIZ DE REQUERIMIENTOS, CORTE AGOSTO» no aclara
+        si hay que llenarla, revisarla o remitirla, ni a quién, ni en qué
+        formato. Eso está en el párrafo de adentro.
+
+        Sólo se lee UNA VEZ por documento: son doscientos y pico, y volver a
+        mandarlos al modelo en cada pasada sería pagar todos los días por el
+        mismo resultado."""
+        if not texto or not self.leer_texto:
+            return
+        try:
+            if almacen.ya_leido(registro['id']):
+                return
+            compromisos, aviso = lectura.leer_compromisos(registro, texto)
+            almacen.guardar_compromisos(registro['id'], compromisos, aviso)
+            if compromisos:
+                registro['compromisos'] = len(compromisos)
+                self.log(f"[quipux]   {registro.get('numero')}: "
+                         f'{len(compromisos)} cosa(s) que entregar')
+        except Exception as e:
+            # Que la IA falle no puede costar el documento: ya está descargado,
+            # clasificado y con su plazo del sistema. Lo que se pierde es el
+            # detalle, y se apunta para poder reintentarlo.
+            self.fallos.append(f"{registro.get('numero')}: no se pudo leer ({str(e)[:90]})")
 
     def _abrir_ficha(self, registro):
         """La pantalla del documento. Se prueban las rutas que usa Quipux para
@@ -302,12 +358,67 @@ class Recolector:
         return salida
 
 
-def ejecutar(destino=None, bandejas=(), limite=None, volcar=False, registro=print):
+def arrancar_autosync(app=None, interval_min=30, registro=print):
+    """Mantiene la agenda al día sola, mientras la sesión aguante.
+
+    La sesión de CuencaDOC se guarda y se reutiliza: mientras el sistema la dé
+    por buena, cada pasada entra sin pedir nada a nadie. Cuando caduque —y
+    caducará— la siguiente intentará entrar de nuevo; si el sistema levanta el
+    control de la imagen, se para y lo dice en la pantalla, que es donde alguien
+    puede resolverlo en cinco segundos. Lo que NO hace es reintentar el acceso
+    en bucle: eso bloquearía la cuenta.
+
+    Media hora, no cinco minutos: son dos áreas, siete bandejas y un servidor
+    público del municipio. Lo que cambia en la bandeja de un coordinador entre
+    las 9:00 y las 9:30 casi nunca es algo que se resuelva antes de las 9:30."""
+    try:
+        import fcntl
+    except Exception:
+        registro('[quipux] fcntl no disponible: la sincronización automática '
+                 'queda desactivada (usa el botón de la pantalla)')
+        return
+    try:
+        import tempfile
+        ruta = os.path.join(tempfile.gettempdir(), 'quipux_autosync.lock')
+        archivo_lock = open(ruta, 'w')
+        fcntl.flock(archivo_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        if app is not None:
+            app._quipux_lock = archivo_lock
+    except Exception:
+        return                      # otro worker ya se lo quedó
+
+    import threading
+    import time as _time
+
+    def _bucle():
+        _time.sleep(240)            # que termine de levantar el despliegue
+        while True:
+            try:
+                galletas, _ = almacen.leer_sesion()
+                if not galletas:
+                    registro('[quipux] sin sesión guardada: esperando a que '
+                             'alguien entre desde la pantalla')
+                else:
+                    r = ejecutar(registro=registro, entrar_si_hace_falta=False)
+                    if r.get('sin_sesion'):
+                        registro('[quipux] la sesión de CuencaDOC caducó; '
+                                 'hay que volver a entrar desde /quipux')
+            except Exception as e:
+                registro(f'[quipux] sincronización: {str(e)[:200]}')
+            _time.sleep(interval_min * 60)
+
+    threading.Thread(target=_bucle, name='quipux-sync', daemon=True).start()
+    registro(f'[quipux] sincronización automática activa (cada {interval_min} min)')
+
+
+def ejecutar(destino=None, bandejas=(), limite=None, volcar=False, registro=print,
+             entrar_si_hace_falta=True):
     """Punto de entrada. Devuelve el resumen; no lanza salvo que no se pueda
     ni entrar, que es el único caso en el que no hay nada que hacer."""
     r = Recolector(destino=destino, bandejas=bandejas, limite=limite, registro=registro)
     try:
-        return r.ejecutar(volcar_cronograma=volcar)
+        return r.ejecutar(volcar_cronograma=volcar,
+                          entrar_si_hace_falta=entrar_si_hace_falta)
     except ErrorQuipux:
         raise
     except Exception as e:

@@ -5660,5 +5660,15 @@ def create_app():
         # Lo que agendan en las nueve cuentas y no nació aquí. Sin esto el
         # calendario sólo enseña la mitad de la agenda.
         _entrante.arrancar_autosync(app, interval_min=15)
+        # Los quipux del Municipio. Mientras la sesión de CuencaDOC aguante, la
+        # agenda se pone al día sola; cuando caduque se para y lo dice en la
+        # pantalla, que es donde alguien puede volver a entrar en cinco
+        # segundos. Lo que no hace es reintentar el acceso en bucle: eso
+        # bloquearía la cuenta.
+        try:
+            from quipux.recolector import arrancar_autosync as _quipux_autosync
+            _quipux_autosync(app, interval_min=30)
+        except Exception as e:
+            print(f'[quipux] sincronización no disponible: {str(e)[:120]}')
 
     return app

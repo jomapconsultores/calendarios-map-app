@@ -76,6 +76,47 @@ CREATE TABLE IF NOT EXISTS tareas (
 );
 CREATE INDEX IF NOT EXISTS tarea_vence ON tareas (vence, estado);
 
+-- Lo que hay que ENTREGAR según el texto del documento, no según su asunto.
+-- Un oficio puede pedir tres cosas con tres fechas distintas; la bandeja sólo
+-- enseña una línea. `cita` guarda la frase literal de la que sale cada
+-- compromiso: es lo que permite comprobarlo en dos segundos sin abrir el
+-- documento, y lo que separa «lo dice el oficio» de «lo dedujo un modelo».
+CREATE TABLE IF NOT EXISTS compromisos (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  documento_id  TEXT NOT NULL,
+  que           TEXT NOT NULL,      -- la acción, en infinitivo
+  entregable    TEXT,               -- informe, matriz, certificación…
+  para_cuando   TEXT,               -- AAAA-MM-DD, o vacío si el documento no lo dice
+  a_quien       TEXT,
+  cita          TEXT,               -- la frase textual del documento
+  urgente       INTEGER DEFAULT 0,
+  estado        TEXT DEFAULT 'pendiente',
+  hecho_en      TEXT,
+  creado_en     TEXT,
+  UNIQUE(documento_id, que)
+);
+CREATE INDEX IF NOT EXISTS comp_fecha ON compromisos (para_cuando, estado);
+
+-- Si ya se leyó el documento con IA, y qué pasó. Sin esto, cada pasada
+-- volvería a mandar los mismos doscientos documentos al modelo: caro, lento y
+-- para obtener exactamente lo mismo.
+CREATE TABLE IF NOT EXISTS lecturas (
+  documento_id  TEXT PRIMARY KEY,
+  cuando        TEXT,
+  n_compromisos INTEGER DEFAULT 0,
+  aviso         TEXT
+);
+
+-- La sesión de CuencaDOC. Guardarla es lo que permite que la sincronización
+-- siga sola: mientras el sistema la dé por buena no hay que volver a entrar ni
+-- a escribir el texto de ninguna imagen.
+CREATE TABLE IF NOT EXISTS sesion (
+  id            INTEGER PRIMARY KEY CHECK (id = 1),
+  galletas      TEXT,
+  abierta_en    TEXT,
+  usada_en      TEXT
+);
+
 -- Una línea por pasada: cuándo se trajo, qué entró y qué falló.
 CREATE TABLE IF NOT EXISTS pasadas (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -263,6 +304,99 @@ def marcar_tarea(tarea_id, estado, ruta=None):
         con.execute('UPDATE tareas SET estado = ?, hecha_en = ? WHERE id = ?',
                     (estado, ahora, tarea_id))
     return True
+
+
+# ============================================================
+#  COMPROMISOS — lo que dice el TEXTO del documento
+# ============================================================
+def ya_leido(documento_id, ruta=None):
+    """¿Se pasó ya este documento por la IA? Evita repetir el gasto."""
+    with abrir(ruta) as con:
+        return con.execute('SELECT 1 FROM lecturas WHERE documento_id = ?',
+                           (str(documento_id),)).fetchone() is not None
+
+
+def guardar_compromisos(documento_id, compromisos, aviso=None, ruta=None):
+    """Guarda lo que la IA sacó del documento y deja constancia de la lectura.
+
+    Los que ya estaban no se tocan: si una persona marcó un compromiso como
+    hecho, volver a leer el documento no puede resucitarlo."""
+    ahora = datetime.now().isoformat(timespec='seconds')
+    nuevos = 0
+    with abrir(ruta) as con:
+        for c in compromisos or []:
+            if not c.get('es_para_mi', True):
+                continue
+            cur = con.execute(
+                'INSERT OR IGNORE INTO compromisos (documento_id,que,entregable,'
+                'para_cuando,a_quien,cita,urgente,estado,creado_en) '
+                'VALUES (?,?,?,?,?,?,?,?,?)',
+                (str(documento_id), c['que'], c.get('entregable'),
+                 c.get('para_cuando') or None, c.get('a_quien'), c.get('cita'),
+                 1 if c.get('urgente') else 0, 'pendiente', ahora))
+            nuevos += cur.rowcount or 0
+        con.execute('INSERT INTO lecturas (documento_id,cuando,n_compromisos,aviso) '
+                    'VALUES (?,?,?,?) ON CONFLICT(documento_id) DO UPDATE SET '
+                    'cuando=excluded.cuando, n_compromisos=excluded.n_compromisos, '
+                    'aviso=excluded.aviso',
+                    (str(documento_id), ahora, len(compromisos or []), aviso))
+    return nuevos
+
+
+def compromisos(ruta=None, estado='pendiente', tope=400):
+    """Lo que hay que entregar, con el documento del que sale."""
+    sql = """SELECT c.*, d.numero, d.asunto, d.area, d.bandeja, d.enlace, d.carpeta,
+                    d.tipo, d.remitente
+               FROM compromisos c LEFT JOIN documentos d ON d.id = c.documento_id"""
+    params = []
+    if estado and estado != 'todos':
+        sql += ' WHERE c.estado = ?'; params.append(estado)
+    sql += " ORDER BY COALESCE(NULLIF(c.para_cuando,''),'9999-99-99'), c.urgente DESC LIMIT ?"
+    params.append(tope)
+    with abrir(ruta) as con:
+        return [dict(f) for f in con.execute(sql, params)]
+
+
+def marcar_compromiso(cid, estado, ruta=None):
+    ahora = datetime.now().isoformat(timespec='seconds') if estado == 'hecho' else None
+    with abrir(ruta) as con:
+        con.execute('UPDATE compromisos SET estado = ?, hecho_en = ? WHERE id = ?',
+                    (estado, ahora, cid))
+    return True
+
+
+# ============================================================
+#  LA SESIÓN DE CUENCADOC
+# ============================================================
+def guardar_sesion(galletas, ruta=None):
+    """Guarda la sesión abierta. Es lo que permite que la sincronización siga
+    sola sin volver a pedirle a nadie el texto de una imagen."""
+    import json as _json
+    ahora = datetime.now().isoformat(timespec='seconds')
+    with abrir(ruta) as con:
+        con.execute('INSERT INTO sesion (id,galletas,abierta_en,usada_en) '
+                    'VALUES (1,?,?,?) ON CONFLICT(id) DO UPDATE SET '
+                    'galletas=excluded.galletas, abierta_en=excluded.abierta_en, '
+                    'usada_en=excluded.usada_en',
+                    (_json.dumps(galletas), ahora, ahora))
+    return True
+
+
+def leer_sesion(ruta=None):
+    import json as _json
+    with abrir(ruta) as con:
+        fila = con.execute('SELECT galletas, abierta_en FROM sesion WHERE id = 1').fetchone()
+    if not fila or not fila['galletas']:
+        return None, None
+    try:
+        return _json.loads(fila['galletas']), fila['abierta_en']
+    except Exception:
+        return None, None
+
+
+def olvidar_sesion(ruta=None):
+    with abrir(ruta) as con:
+        con.execute('DELETE FROM sesion WHERE id = 1')
 
 
 def apuntar_pasada(resumen_pasada, ruta=None):
