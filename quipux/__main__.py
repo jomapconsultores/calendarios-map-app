@@ -22,6 +22,29 @@ from .sesion import ErrorQuipux, Quipux
 URL = 'https://dq.cuenca.gob.ec/index_frames.php'
 
 
+def _consola_en_utf8():
+    """La consola de Windows va en cp1252 y no sabe escribir «á» ni «→».
+
+    Todo lo que dice este programa está en español, así que sin esto cualquier
+    mensaje con una tilde puede tumbarlo con un UnicodeEncodeError — y lo tumba
+    justo al imprimir, es decir, cuando estaba a punto de decir algo. Con
+    `errors='replace'` una consola vieja enseñará un signo raro en lugar de una
+    tilde, que es infinitamente mejor que un volcado de error."""
+    for flujo in (sys.stdout, sys.stderr):
+        try:
+            # `line_buffering` no es un detalle: sin él, Python guarda la salida
+            # en memoria cuando no escribe a una consola de verdad —al arrancar
+            # desde el acceso directo, o con la salida redirigida— y no la
+            # suelta hasta el final. El aviso de «escribe el texto de la imagen»
+            # aparecería DESPUÉS de haberse agotado la espera, que es lo mismo
+            # que no aparecer: la persona se queda mirando una ventana sin saber
+            # qué se espera de ella.
+            flujo.reconfigure(encoding='utf-8', errors='replace',
+                              line_buffering=True)
+        except Exception:
+            pass
+
+
 def _alta():
     return 0 if credenciales.pedir_por_consola() else 1
 
@@ -96,6 +119,7 @@ def _instalar():
 
 
 def main(argv=None):
+    _consola_en_utf8()
     argv = argv if argv is not None else sys.argv[1:]
     orden = (argv[0].lower() if argv else '')
     try:

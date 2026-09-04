@@ -61,12 +61,16 @@ def entrar_asistido(base, usuario, contrasenia, registro=print,
             'Falta Playwright. Instálalo con:\n'
             '    .\\venv\\Scripts\\python.exe -m pip install playwright')
 
+    # Sin caracteres de dibujo: la consola de Windows va en cp1252 y un marco
+    # de rayitas la hace reventar con UnicodeEncodeError. Reventar AL PEDIR
+    # AYUDA es el peor sitio donde reventar — deja a la persona con un volcado
+    # de error en lugar de con la instrucción que necesitaba.
     registro('')
-    registro('  ┌────────────────────────────────────────────────────────┐')
-    registro('  │  CuencaDOC pide el texto de la imagen.                 │')
-    registro('  │  Se abre el navegador con tu usuario y clave puestos:  │')
-    registro('  │  escribe sólo el texto de la imagen y pulsa Ingresar.  │')
-    registro('  └────────────────────────────────────────────────────────┘')
+    registro('  ' + '-' * 58)
+    registro('  CuencaDOC pide el texto de la imagen.')
+    registro('  Se abre el navegador con tu usuario y clave ya puestos:')
+    registro('  escribe SOLO el texto de la imagen y pulsa Ingresar.')
+    registro('  ' + '-' * 58)
     registro('')
 
     with sync_playwright() as p:

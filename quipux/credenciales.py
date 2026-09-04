@@ -73,12 +73,28 @@ def hay_credencial():
         return False
 
 
+def usuario_guardado():
+    """Quién está dado de alta, sin tocar la contraseña."""
+    try:
+        return keyring.get_password(SERVICIO, CLAVE_USUARIO) or ''
+    except Exception:
+        return ''
+
+
 def pedir_por_consola():
     """Alta interactiva. La contraseña NO se ve al teclearla ni queda en el
     historial de la consola, que es la otra forma habitual de que se escape."""
     print('Alta de la credencial de CuencaDOC (https://dq.cuenca.gob.ec)')
     print('Se guarda cifrada en el Administrador de credenciales de Windows.\n')
-    usuario = input('Usuario: ').strip()
+    # Se enseña el usuario que ya está puesto. Cuando algo no entra, la primera
+    # duda es si el usuario es el que uno cree; verlo escrito ahorra la mitad de
+    # las veces tener que teclearlo otra vez, y en la otra mitad delata el fallo.
+    actual = usuario_guardado()
+    if actual:
+        print(f'Ahora mismo está guardado el usuario: {actual}')
+        usuario = input('Usuario (Enter para dejar el mismo): ').strip() or actual
+    else:
+        usuario = input('Usuario: ').strip()
     contrasenia = getpass.getpass('Contraseña (no se muestra): ')
     if not usuario or not contrasenia:
         print('\nCancelado: hacen falta las dos cosas.')
