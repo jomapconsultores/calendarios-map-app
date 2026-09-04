@@ -46,22 +46,45 @@ table.q-tabla{width:100%;border-collapse:collapse;font-size:var(--fs-sm);backgro
 {% endblock %}
 
 {% block topbar_actions %}
+{% if en_servidor %}
+{# Desde el servidor no hay nada que pulsar: no existe el llavero de Windows ni
+   hay quien escriba el texto de la imagen. Un botón que no puede funcionar es
+   peor que ningún botón. #}
+<span class="status-pill off" title="Entrar a CuencaDOC corre en su computadora">
+  ↙ Se trae desde su PC
+</span>
+{% else %}
 <button class="btn btn-outline-primary btn-sm rounded-pill" onclick="recoger(this)"
         title="Entrar a CuencaDOC y traer lo nuevo">↙ Traer de CuencaDOC</button>
+{% endif %}
 {% endblock %}
 
 {% block content %}
 
 {% if not fuente %}
 {# Nada que enseñar todavía. Se dice qué falta y cómo se arregla, en lugar de
-   una tabla vacía que parece que el módulo está roto. #}
+   una tabla vacía que parece que el módulo está roto. Y se dice distinto según
+   dónde esté corriendo esto: en el servidor no hay carpeta de Documentos ni
+   llavero de Windows, así que enseñar una ruta de allí sólo despista. #}
 <div class="alert alert-warning">
   <strong>Todavía no se ha traído nada de CuencaDOC.</strong><br>
-  La recolección corre en la computadora, porque necesita la credencial del llavero de
-  Windows y, cuando el sistema lo pide, que alguien escriba el texto de la imagen.
-  Ábrela una vez con:
-  <div class="mt-2"><code>python -m quipux</code></div>
+  {% if en_servidor %}
+  Entrar a CuencaDOC necesita la credencial del llavero de Windows y, cuando el sistema
+  lo pide, que una persona escriba el texto de la imagen. Eso corre en <strong>su
+  computadora</strong>, no aquí. Ábralo allí una vez:
+  <div class="mt-2"><code>cd C:\Users\mapos\Dropbox\06_DESARROLLO\calendario</code><br>
+       <code>.\venv\Scripts\python.exe -m quipux</code></div>
+  <div class="small mt-2">
+    Los archivos quedan en esa computadora y la lista sube a la base, que es lo que
+    esta pantalla lee. Necesita aplicada la migración
+    <code>034_los_quipux_se_ven_desde_el_servidor.sql</code>.
+  </div>
+  {% else %}
+  La recolección necesita la credencial del llavero de Windows y, cuando el sistema lo
+  pide, que alguien escriba el texto de la imagen. Ábrela una vez con:
+  <div class="mt-2"><code>.\venv\Scripts\python.exe -m quipux</code></div>
   <div class="small mt-2">Lo recogido queda en <code>{{ destino }}</code> y aparece aquí.</div>
+  {% endif %}
 </div>
 {% endif %}
 
@@ -130,7 +153,10 @@ async function cargar(){
     const cl = claseDePlazo(d.plazo_fecha);
     const ded = (d.plazo_fecha && !d.plazo_seguro)
       ? `<span class="q-ded" title="${esc(d.plazo_origen)} — confírmalo">deducido</span>` : '';
-    const carpeta = (d.carpeta||'').replace(/\\/g,'/');
+    // La carpeta NO va como enlace: los navegadores no abren file:// desde una
+    // página web, así que sería un enlace que no hace nada. Va como algo que se
+    // copia de un clic, para pegarlo en el Explorador de Windows.
+    const carpeta = d.carpeta || '';
     return `<tr>
       <td class="q-plazo ${cl}">${esc(d.plazo_fecha||'—')}${ded}</td>
       <td class="q-meta">${esc((d.fecha_doc||'').slice(0,10))}</td>
@@ -140,7 +166,8 @@ async function cargar(){
       <td class="q-meta">${esc(d.de||'')}</td>
       <td>${d.n_adjuntos ? `<span class="q-adj">${d.n_adjuntos}</span>` : ''}</td>
       <td class="q-meta">
-        ${carpeta ? `<a href="file:///${esc(carpeta)}">carpeta</a> · ` : ''}
+        ${carpeta ? `<a href="#" onclick="copiar(this,'${esc(carpeta).replace(/'/g,"\\'")}');return false"
+             title="Copiar la ruta para pegarla en el Explorador">copiar ruta</a> · ` : ''}
         ${d.enlace ? `<a href="${esc(d.enlace)}" target="_blank" rel="noopener">Quipux</a>` : ''}
       </td></tr>`;
   }).join('');
@@ -182,6 +209,19 @@ document.querySelectorAll('#marcador .q-item').forEach(el=>{
 let t; document.getElementById('fBusca').addEventListener('input',()=>{
   clearTimeout(t); t=setTimeout(cargar,300);
 });
+
+async function copiar(el, ruta){
+  try{
+    await navigator.clipboard.writeText(ruta);
+    const antes = el.textContent;
+    el.textContent = '¡copiada!';
+    setTimeout(()=>{el.textContent = antes;}, 1500);
+  }catch(e){
+    // Sin permiso de portapapeles (pasa en http sin cifrar): se enseña para
+    // copiarla a mano, que es mejor que un clic que no hace nada.
+    prompt('Ruta de la carpeta:', ruta);
+  }
+}
 
 async function recoger(boton){
   const txt = boton.textContent;

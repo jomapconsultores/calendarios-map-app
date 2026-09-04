@@ -133,7 +133,13 @@ def registrar_quipux(app, ctx):
                                resumen=_resumen(datos['documentos']),
                                actualizado=datos['actualizado'],
                                fuente=datos['fuente'],
-                               destino=_destino())
+                               destino=_destino(),
+                               # En el servidor no existe ninguna carpeta de
+                               # Documentos ni ningún llavero de Windows, así
+                               # que enseñar «/root/Documentos/Quipux» sólo
+                               # confunde: la ruta que importa es la de la
+                               # computadora desde la que se recoge.
+                               en_servidor=(os.name != 'nt'))
 
     @app.route('/quipux/api/documentos')
     @login_required

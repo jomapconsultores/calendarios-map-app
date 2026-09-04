@@ -160,6 +160,67 @@ def volcar(db, documentos, responsable='Marco Antonio Posligua San Martin',
     return resumen
 
 
+TABLA_DOCUMENTOS = 'quipux_documentos'
+
+
+def publicar(db, documentos, registro=print):
+    """Sube lo recogido a la base, para que se pueda mirar desde cualquier parte.
+
+    La recolección corre en la computadora de la persona y no se puede mover a
+    un servidor: entrar a CuencaDOC necesita su credencial del llavero y, a
+    veces, que ella escriba el texto de una imagen. Pero MIRAR lo recogido sí
+    tiene que poder hacerse desde el teléfono o desde la plataforma desplegada,
+    y ahí un archivo en el disco de una computadora no sirve de nada.
+
+    Es una foto de lo que dice CuencaDOC, no una copia de trabajo: lo que se
+    hace con cada documento vive en el cronograma. Dos sitios para lo mismo
+    acaban siempre en que ninguno de los dos es el bueno."""
+    resumen = {'subidos': 0, 'error': None}
+    if db is None:
+        resumen['error'] = 'no hay conexión con la base de la plataforma'
+        return resumen
+    from datetime import datetime, timezone
+    ahora = datetime.now(timezone.utc).isoformat()
+
+    filas = []
+    for d in documentos:
+        if not d.get('id'):
+            continue
+        plazo = d.get('plazo') or {}
+        filas.append({
+            'id': str(d['id']),
+            'numero': d.get('numero'), 'asunto': d.get('asunto'),
+            'remitente': d.get('de'), 'tipo': d.get('tipo'),
+            'fecha_doc': (d.get('fecha_doc') or '')[:10] or None,
+            'tramite': d.get('tramite'), 'referencia': d.get('referencia'),
+            'categoria': d.get('categoria'),
+            'area': d.get('area'), 'bandeja': d.get('bandeja'),
+            'estado': d.get('estado') or 'abierto',
+            'carpeta': d.get('carpeta'), 'enlace': d.get('enlace'),
+            'n_adjuntos': int(d.get('n_adjuntos') or 0),
+            'plazo_fecha': plazo.get('fecha') or None,
+            'plazo_origen': plazo.get('origen') or None,
+            'plazo_seguro': bool(plazo.get('seguro')),
+            'actualizado': ahora,
+        })
+    if not filas:
+        return resumen
+
+    # De cien en cien: una sola petición con doscientas filas se pasa del
+    # tiempo límite en frío y se pierde la pasada entera por el último documento.
+    for i in range(0, len(filas), 100):
+        lote = filas[i:i + 100]
+        if db.upsert(TABLA_DOCUMENTOS, lote, 'id'):
+            resumen['subidos'] += len(lote)
+        else:
+            resumen['error'] = ('no se pudo subir a la base; ¿está aplicada la '
+                                'migración 034?')
+            break
+    if resumen['subidos']:
+        registro(f"[quipux] {resumen['subidos']} documento(s) publicados en la plataforma")
+    return resumen
+
+
 def cliente_de_la_plataforma(registro=print):
     """El cliente de Supabase que usa la aplicación, con su misma configuración.
 

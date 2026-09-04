@@ -82,6 +82,12 @@ class Recolector:
 
         if volcar_cronograma:
             db = planificacion.cliente_de_la_plataforma(self.log)
+            # Primero se publica lo recogido —para que se vea desde el servidor,
+            # el teléfono o donde sea— y después se llevan los plazos al
+            # cronograma. En ese orden: si lo segundo falla, al menos lo de
+            # mirar ya está puesto.
+            resumen['publicado'] = planificacion.publicar(db, self.documentos,
+                                                          registro=self.log)
             resumen['cronograma'] = planificacion.volcar(db, self.documentos,
                                                          registro=self.log)
         return resumen
