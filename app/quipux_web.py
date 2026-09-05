@@ -48,6 +48,107 @@ def _destino():
             or os.path.join(os.path.expanduser('~'), 'Documentos', 'Quipux'))
 
 
+#  DE DÓNDE SE LEE
+#
+#  Hay dos almacenes y hasta ahora sólo se miraba uno. La recolección corre en
+#  la computadora de la persona —entrar a CuencaDOC necesita su credencial del
+#  llavero y, a veces, que escriba el texto de una imagen— y apunta lo recogido
+#  en un SQLite que vive en ESE disco. En el servidor ese archivo nace vacío,
+#  así que la pantalla enseñaba ceros sin un solo error: indistinguible de «no
+#  hay nada pendiente». Por eso no se veía la integración.
+#
+#  La migración 034 creó `quipux_documentos` justo para esto: la computadora
+#  recoge y publica, el servidor enseña. Se lee del SQLite cuando tiene algo
+#  (es la máquina que recolecta, y ahí es la fuente inmediata) y de la base
+#  cuando no (el servidor, o cualquier teléfono).
+
+def _hay_base(app):
+    return getattr(app, 'supabase', None) is not None
+
+
+def _docs_de_la_base(app, ver='pendientes', area='', bandeja='', busca='', tope=800):
+    """Los documentos publicados en la plataforma, con los mismos filtros que
+    aplica el almacén local, para que las dos rutas se comporten igual."""
+    hoy = date.today().isoformat()
+    # `get` sólo sabe filtrar por igualdad, así que lo que necesita
+    # comparaciones (el plazo vencido, el estado distinto de cerrado) se
+    # resuelve aquí. Son un par de cientos de documentos: cabe de sobra, y
+    # evita inventar un método de consulta nuevo para este único caso.
+    filtros = {}
+    if area:
+        filtros['area'] = area
+    if bandeja:
+        filtros['bandeja'] = bandeja
+    docs = app.supabase.get('quipux_documentos', filters=filtros or None) or []
+
+    def abierto(d):
+        return (d.get('estado') or 'abierto') != 'cerrado'
+
+    if ver == 'vencidos':
+        docs = [d for d in docs if d.get('plazo_fecha') and d['plazo_fecha'] < hoy and abierto(d)]
+    elif ver == 'con_plazo':
+        docs = [d for d in docs if d.get('plazo_fecha')]
+    elif ver == 'pendientes':
+        docs = [d for d in docs if abierto(d)]
+
+    if busca:
+        b = busca.lower()
+        docs = [d for d in docs
+                if any(b in str(d.get(c) or '').lower()
+                       for c in ('asunto', 'numero', 'remitente', 'tramite', 'referencia'))]
+
+    # El mismo orden que el almacén local: lo que vence antes va primero y lo
+    # que no tiene plazo, al final.
+    docs.sort(key=lambda d: (d.get('plazo_fecha') or '9999-99-99',
+                             '' if d.get('fecha_doc') is None else str(d['fecha_doc'])))
+    return docs[:tope]
+
+
+def _resumen_de_la_base(app):
+    """El marcador (total, abiertos, con plazo, vencidos) contado sobre la base."""
+    hoy = date.today().isoformat()
+    docs = app.supabase.get('quipux_documentos', select='estado,plazo_fecha') or []
+    abiertos = [d for d in docs if (d.get('estado') or 'abierto') != 'cerrado']
+    return {
+        'total': len(docs),
+        'abiertos': len(abiertos),
+        'con_plazo': len([d for d in abiertos if d.get('plazo_fecha')]),
+        'vencidos': len([d for d in abiertos
+                         if d.get('plazo_fecha') and d['plazo_fecha'] < hoy]),
+        'origen': 'plataforma',
+    }
+
+
+def _resumen_mejor(app):
+    """El resumen del SQLite si tiene algo; si no, el de la base.
+
+    Y si no hay nada en ninguno de los dos, lo dice con esas palabras en vez de
+    pintar ceros: «vacío» y «aquí nunca se ha recogido nada» son dos cosas muy
+    distintas, y confundirlas es lo que hacía parecer que el módulo no iba."""
+    local = {}
+    try:
+        from quipux import almacen
+        local = almacen.resumen()
+    except Exception as e:
+        local = {'total': 0, 'error': str(e)[:200]}
+    if local.get('total'):
+        local['origen'] = 'esta computadora'
+        return local
+    if _hay_base(app):
+        try:
+            r = _resumen_de_la_base(app)
+            if r.get('total'):
+                return r
+            r['sin_recoger'] = True
+            return r
+        except Exception as e:
+            local['error'] = str(e)[:200]
+    local.setdefault('total', 0)
+    local['sin_recoger'] = True
+    local.setdefault('origen', 'esta computadora')
+    return local
+
+
 def _guardar_sesion_compartida(q):
     """Deja la sesión de CuencaDOC donde la encuentre la sincronización de fondo.
 
@@ -83,11 +184,7 @@ def registrar_quipux(app, ctx):
         if not _permitido():
             flash('No tienes acceso al módulo Quipux.', 'warning')
             return redirect('/dashboard')
-        from quipux import almacen
-        try:
-            resumen = almacen.resumen()
-        except Exception as e:
-            resumen = {'total': 0, 'error': str(e)[:200]}
+        resumen = _resumen_mejor(app)
         return render_template('quipux.html', resumen=resumen,
                                destino=_destino(), ultima=_ULTIMA)
 
@@ -97,11 +194,22 @@ def registrar_quipux(app, ctx):
         if not _permitido():
             return _no()
         from quipux import almacen
-        docs = almacen.documentos(
+        filtros = dict(
             ver=(request.args.get('ver') or 'pendientes'),
             area=(request.args.get('area') or ''),
             bandeja=(request.args.get('bandeja') or ''),
             busca=(request.args.get('q') or '').strip())
+        try:
+            docs = almacen.documentos(**filtros)
+        except Exception:
+            docs = []
+        # En el servidor el SQLite está vacío: lo recogido vive en la tabla que
+        # publica la computadora. Sin esto la pantalla salía siempre en blanco.
+        if not docs and _hay_base(app):
+            try:
+                docs = _docs_de_la_base(app, **filtros)
+            except Exception as e:
+                print(f'[quipux] no se pudo leer de la plataforma: {str(e)[:120]}')
         return jsonify({'documentos': docs, 'total': len(docs),
                         'hoy': date.today().isoformat()})
 
@@ -110,11 +218,7 @@ def registrar_quipux(app, ctx):
     def quipux_estado():
         if not _permitido():
             return jsonify({'vencidos': 0})
-        from quipux import almacen
-        try:
-            r = almacen.resumen()
-        except Exception:
-            r = {'vencidos': 0, 'total': 0}
+        r = _resumen_mejor(app)
         r['pasada'] = _ULTIMA
         return jsonify(r)
 
@@ -279,6 +383,17 @@ def registrar_quipux(app, ctx):
                                'segundos': 0, 'fallos': r.fallos,
                                'tareas': {'creadas': creadas, 'actualizadas': act}}
                     almacen.apuntar_pasada(resumen)
+                    # Y se publica en la plataforma. Sin este paso lo recogido
+                    # se quedaba en el disco de esta computadora: la migración
+                    # 034 creó la tabla puente, pero nadie la llenaba, así que
+                    # desde el servidor o el teléfono no se veía absolutamente
+                    # nada. Si falla, se dice en el estado, no en silencio.
+                    if _hay_base(app):
+                        from quipux import planificacion
+                        pub = planificacion.publicar(app.supabase, r.documentos)
+                        resumen['publicados'] = pub.get('subidos', 0)
+                        if pub.get('error'):
+                            resumen['publicar_error'] = pub['error']
                     _ULTIMA.update({'estado': 'terminada', 'resumen': resumen,
                                     'detalle': f'{len(r.documentos)} documento(s), '
                                                f'{creadas} tarea(s) nueva(s)'})

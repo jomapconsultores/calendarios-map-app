@@ -1068,6 +1068,34 @@ def cuentas_google_que_agendan(app):
     return sorted(cuentas)
 
 
+def cuentas_microsoft_que_agendan(app):
+    """Las cuentas de Microsoft de las que sale algún calendario.
+
+    Existía la de Google y no ésta, así que el menú podía anunciar «✅ Agendas»
+    —todo conectado— mientras hotmail y csccue estaban sin autorizar y sus
+    citas no salían ni entraban. Un contador que no cuenta la mitad de las
+    cuentas es peor que no tener contador."""
+    cals = _get_calendar_config(app)
+    proveedores = _proveedor_map(cals)
+    cuentas = {c for cal_id, c in _cuenta_map(cals).items()
+               if proveedores.get(cal_id, 'google') == 'microsoft'}
+    return sorted(cuentas)
+
+
+def cuentas_microsoft_pendientes(app):
+    """De las de Microsoft, las que aún no tienen permiso guardado."""
+    esperadas = cuentas_microsoft_que_agendan(app)
+    if not esperadas:
+        return []
+    try:
+        con_token = {(t.get('email') or '').strip().lower()
+                     for t in (app.supabase.get('ms_tokens', select='email,refresh_token') or [])
+                     if t.get('refresh_token')}
+    except Exception:
+        return []
+    return [c for c in esperadas if c.strip().lower() not in con_token]
+
+
 # ============================================================
 #  RECONEXIÓN AUTOMÁTICA CON GOOGLE CALENDAR
 #
@@ -1368,9 +1396,13 @@ def start_google_autoheal(app, interval_min=60):
 # ============================================================
 #  CALENDAR ACCESS (with caching)
 # ============================================================
-CAL_SELECT      = ('calendar_id,name,email,color,google_cal_id,cuenta_email,'
+# `id` va el primero y no es un adorno: la pantalla de Catálogos escribe la
+# clave primaria en un campo oculto para poder guardar y borrar. Sin ella el
+# formulario viajaba con id vacío, PostgREST rechazaba el PATCH y la pantalla
+# anunciaba «Registro actualizado» sin haber guardado nada.
+CAL_SELECT      = ('id,calendar_id,name,email,color,google_cal_id,cuenta_email,'
                    'proveedor,sincronizar_entrada')
-CAL_SELECT_BASE = 'calendar_id,name,email,color,google_cal_id'
+CAL_SELECT_BASE = 'id,calendar_id,name,email,color,google_cal_id'
 
 def _get_calendar_config(app):
     """Cached calendar_config (5 min).
@@ -2313,6 +2345,12 @@ def create_app():
                                               if get_google_creds(app, c) is None]
                     else:
                         cuentas_pendientes = [c for c in esperadas if c not in tokens]
+                    # Las de Microsoft cuentan igual: son cuentas de las que
+                    # sale un calendario, y si les falta el permiso sus citas
+                    # tampoco salen. Dejarlas fuera hacía que el menú dijera
+                    # que estaba todo conectado con dos cuentas muertas.
+                    cuentas_pendientes = cuentas_pendientes + cuentas_microsoft_pendientes(app)
+                    esperadas = list(esperadas) + cuentas_microsoft_que_agendan(app)
                     connected = bool(esperadas) and not cuentas_pendientes
                     needs_reauth = bool(cuentas_pendientes) and current_user.role == 'admin'
                     _google_cache.set(cache_key, (connected, needs_reauth, cuentas_pendientes))
@@ -2347,7 +2385,10 @@ def create_app():
             atlas_activo = _atlas.disponible()
         except Exception:
             atlas_activo = False
+        # `cuentas_pendientes` ya incluye las de Microsoft; el nombre viejo se
+        # mantiene como alias para no romper ninguna plantilla que aún lo use.
         return {'google_connected_global': connected, 'google_needs_reauth': needs_reauth,
+                'cuentas_pendientes': cuentas_pendientes,
                 'google_cuentas_pendientes': cuentas_pendientes,
                 'google_health': google_health, 'atlas_activo': atlas_activo,
                 'user_roles_list': user_roles_list, 'active_role_id': active_role_id,
@@ -3229,6 +3270,31 @@ def create_app():
             appointments = app.supabase.get('appointments'),
             calendarios  = _get_calendar_config(app))
 
+    #  Campos del formulario que NUNCA son columnas de una tabla. El
+    #  `csrf_token` es el importante: iba dentro del PATCH, PostgREST
+    #  respondía «Could not find the 'csrf_token' column» con un 400 y así
+    #  llevaba fallando TODO guardado de esta pantalla, en todas las tablas,
+    #  mientras el aviso verde decía que se había guardado.
+    _NO_SON_COLUMNAS = ('table', 'id', 'csrf_token')
+
+    def _datos_del_formulario(table):
+        """Los campos del formulario, listos para mandarlos a la base."""
+        data = {k: v for k, v in request.form.items() if k not in _NO_SON_COLUMNAS}
+        if table == 'calendar_config':
+            # La casilla de «traer lo que haya en esa agenda» llega como texto
+            # ('true'/'false') y la columna es booleana. Sin convertirla, la
+            # cadena 'false' entraría como verdadera.
+            if 'sincronizar_entrada' in data:
+                data['sincronizar_entrada'] = str(data['sincronizar_entrada']).strip().lower() in ('1', 'true', 'on', 'sí', 'si')
+            # Un correo con una mayúscula deja la cuenta «Sin autorizar» para
+            # siempre, porque el permiso se busca por igualdad exacta.
+            if data.get('cuenta_email'):
+                data['cuenta_email'] = data['cuenta_email'].strip().lower()
+            if 'proveedor' in data:
+                prov = (data['proveedor'] or '').strip().lower()
+                data['proveedor'] = prov if prov in ('google', 'microsoft') else 'google'
+        return data
+
     @app.route('/admin/database/update', methods=['POST'])
     @login_required
     @csrf_protect
@@ -3238,12 +3304,21 @@ def create_app():
         if table not in ADMIN_DB_TABLES:
             flash('Tabla no permitida.', 'danger')
             return redirect('/admin/database')
-        data = {k: v for k, v in request.form.items() if k not in ['table', 'id']}
-        if data: app.supabase.update(table, record_id, data)
+        data = _datos_del_formulario(table)
+        if not record_id:
+            flash('Ese registro no traía identificador: recarga la página e inténtalo de nuevo.', 'danger')
+            return redirect('/admin/database')
+        ok = app.supabase.update(table, record_id, data) if data else False
         if table == 'calendar_config':
             _cal_cache.invalidate('all')
             _user_cal_cache.invalidate_prefix('')
-        flash('Registro actualizado', 'success')
+        # Decir «guardado» sin mirar si se guardó es peor que no decir nada: la
+        # pantalla llevaba anunciando en verde ediciones que PostgREST estaba
+        # rechazando. Ahora el mensaje dice lo que de verdad pasó.
+        if ok:
+            flash('Registro actualizado', 'success')
+        else:
+            flash('No se pudo guardar. El cambio NO quedó registrado.', 'danger')
         return redirect('/admin/database')
 
     @app.route('/admin/database/delete', methods=['POST'])
@@ -3278,14 +3353,17 @@ def create_app():
         if table not in ADMIN_DB_TABLES:
             flash('Tabla no permitida.', 'danger')
             return redirect('/admin/database')
-        data = {k: v for k, v in request.form.items() if k not in ['table']}
+        data = _datos_del_formulario(table)
         if table == 'users' and data.get('password_hash'):
             data['password_hash'] = generate_password_hash(data['password_hash'])
-        if data: app.supabase.insert(table, data)
+        ok = app.supabase.insert(table, data) if data else False
         if table == 'calendar_config':
             _cal_cache.invalidate('all')
             _user_cal_cache.invalidate_prefix('')
-        flash('Registro creado', 'success')
+        if ok:
+            flash('Registro creado', 'success')
+        else:
+            flash('No se pudo crear el registro. NO quedó guardado.', 'danger')
         return redirect('/admin/database')
 
     # ============================================================

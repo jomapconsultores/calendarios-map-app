@@ -349,11 +349,22 @@ def _cuando_legible(apt):
 # ============================================================
 #  MANDARLA
 # ============================================================
-def destinatarios_de(apt, email_map, organizador):
+def destinatarios_de(apt, email_map, organizador, incluir_organizador=False):
     """A quién va la invitación: el contacto del calendario y los invitados de
-    la ficha, menos la propia cuenta que convoca."""
-    vistos = {(organizador or '').strip().lower()}
+    la ficha, menos la propia cuenta que convoca.
+
+    Salvo en Microsoft, donde el correo es el ÚNICO canal de entrega. En Google
+    el evento nace dentro de la cuenta por la API y mandárselo sería duplicarlo;
+    pero hotmail y csccue no agendan por API, así que excluir al organizador
+    dejaba las citas sin invitados con CERO destinatarios: se aprobaban y no
+    llegaban a ninguna parte, ni siquiera al calendario de su propia cuenta."""
+    vistos = set() if incluir_organizador else {(organizador or '').strip().lower()}
     salida = []
+    if incluir_organizador:
+        org = (organizador or '').strip()
+        if org and '@' in org:
+            vistos.add(org.lower())
+            salida.append(org)
     def _add(correo):
         c = (correo or '').strip()
         if c and '@' in c and c.lower() not in vistos:
@@ -381,13 +392,18 @@ def _conectar_smtp(app, cuenta):
         return None, f'no se pudo entrar en {cuenta}: {str(e)[:180]}'
 
 
-def enviar_invitacion(app, apt, cuenta, email_map, metodo='REQUEST', secuencia=0):
+def enviar_invitacion(app, apt, cuenta, email_map, metodo='REQUEST', secuencia=0,
+                      incluir_organizador=True):
     """Manda la cita como invitación desde `cuenta`. Devuelve (nº destinatarios, error).
 
     Nunca lanza excepción: que falle el correo no puede tumbar la aprobación de
     la cita, que ya está guardada. Lo que sí hace es DECIR que falló, para que
     quien aprobó sepa que el otro no se ha enterado."""
-    destinos = destinatarios_de(apt, email_map, cuenta)
+    # Esta vía es la de las cuentas que NO agendan por API (Microsoft): el
+    # correo es su único canal, así que la cuenta que convoca va también como
+    # destinataria — es la forma de que la cita entre en SU calendario.
+    destinos = destinatarios_de(apt, email_map, cuenta,
+                                incluir_organizador=incluir_organizador)
     if not destinos:
         return 0, 'la cita no tiene a quién invitar'
 

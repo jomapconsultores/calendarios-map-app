@@ -22,7 +22,7 @@
 {% if google_connected_global %}
 <span class="status-pill on">✅ Agendas</span>
 {% else %}
-<a href="/admin/cuentas" class="status-pill off">🔗 Conectar {{ google_cuentas_pendientes|length }} cuenta(s)</a>
+<a href="/admin/cuentas" class="status-pill off">🔗 Conectar {{ cuentas_pendientes|length }} cuenta(s)</a>
 {% endif %}
 {% endif %}
 {% endblock %}

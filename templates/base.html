@@ -139,7 +139,7 @@
         {% else %}
         <a href="/admin/cuentas" class="rail-btn {{ 'active' if ns.active_key == 'cuentas' }}" data-panel="integraciones" data-group title="Integraciones — Hay cuentas de agenda por conectar">
           <span class="rail-ic">🔗</span><span class="rail-label">Integraciones</span>
-          <span class="nav-badge tono-aviso">{{ google_cuentas_pendientes|length or '' }}</span>
+          <span class="nav-badge tono-aviso">{{ cuentas_pendientes|length or '' }}</span>
         </a>
         {% endif %}
         {% endif %}
@@ -219,7 +219,12 @@
         <section class="panel-page {{ 'active' if ns.active_key == 'quipux' }}" data-page="quipux">
           <div class="panel-head"><span class="panel-head-ic">📨</span><span><span class="panel-title">Quipux</span><span class="panel-sub">Lo que llega de CuencaDOC</span></span></div>
           <ul class="panel-links">
-            <li><a href="/quipux"><span class="pl-t">📨 Pendientes <span class="nav-badge tono-aviso" data-badge="quipux"></span></span><span class="pl-d">Lo abierto, por orden de plazo</span></a></li>
+            {# Cada entrada abre algo distinto de verdad: sin parámetro, la
+               vista de compromisos (qué hay que entregar); con ?ver=, la lista
+               de documentos ya filtrada. Antes las tres caían en la misma
+               pantalla con el mismo filtro. #}
+            <li><a href="/quipux"><span class="pl-t">📌 Qué debo entregar <span class="nav-badge tono-aviso" data-badge="quipux"></span></span><span class="pl-d">Compromisos sacados del texto de cada oficio</span></a></li>
+            <li><a href="/quipux?ver=pendientes"><span class="pl-t">📨 Pendientes</span><span class="pl-d">Lo abierto, por orden de plazo</span></a></li>
             <li><a href="/quipux?ver=vencidos"><span class="pl-t">⏰ Vencidos</span><span class="pl-d">Lo que ya pasó de fecha</span></a></li>
             <li><a href="/quipux?ver=todos"><span class="pl-t">🗃️ Todo el archivo</span><span class="pl-d">Incluido lo archivado</span></a></li>
           </ul>
@@ -279,13 +284,17 @@
         </section>
         {% endif %}
 
-        <section class="panel-page" data-page="integraciones">
+        {# La ruta /admin/cuentas fija active_key='cuentas' y esta sección se
+           llama 'integraciones': sin esta condición, entrar en la pantalla de
+           las cuentas dejaba la 2ª columna completamente en blanco — el menú
+           de la propia pantalla de integraciones era el que no servía. #}
+        <section class="panel-page {{ 'active' if ns.active_key == 'cuentas' }}" data-page="integraciones">
           <div class="panel-head"><span class="panel-head-ic">🔗</span><span><span class="panel-title">Integraciones</span><span class="panel-sub">Servicios externos conectados</span></span></div>
           <ul class="panel-links">
             {% if google_connected_global %}
             <li><a href="/admin/cuentas" class="pill-link"><span class="pl-t">📮 Cuentas de agenda <span class="nav-pill" style="background:#dcfce7;color:#166534">Todas</span></span><span class="pl-d">Cada calendario agenda desde su cuenta</span></a></li>
             {% else %}
-            <li><a href="/admin/cuentas" class="pill-link"><span class="pl-t">📮 Cuentas de agenda <span class="nav-pill" style="background:#fee2e2;color:#991b1b">Faltan {{ google_cuentas_pendientes|length }}</span></span><span class="pl-d">{{ google_cuentas_pendientes | join(', ') }}</span></a></li>
+            <li><a href="/admin/cuentas" class="pill-link"><span class="pl-t">📮 Cuentas de agenda <span class="nav-pill" style="background:#fee2e2;color:#991b1b">Faltan {{ cuentas_pendientes|length }}</span></span><span class="pl-d">{{ cuentas_pendientes | join(', ') }}</span></a></li>
             {% endif %}
             {# El puente con ATLAS existe y funciona, pero no figuraba en ningún
                menú: sólo se llegaba a él por un botón dentro del calendario. #}
@@ -324,7 +333,7 @@
           {% if google_connected_global %}
           <span class="status-pill on">✅ Agendas</span>
           {% else %}
-          <a href="/admin/cuentas" class="status-pill off" title="{{ google_cuentas_pendientes | join(', ') }}">🔗 Conectar {{ google_cuentas_pendientes|length }} cuenta(s)</a>
+          <a href="/admin/cuentas" class="status-pill off" title="{{ cuentas_pendientes | join(', ') }}">🔗 Conectar {{ cuentas_pendientes|length }} cuenta(s)</a>
           {% endif %}
         {% endif %}
         {% endblock %}
@@ -414,8 +423,12 @@
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 <script>
-// Sidebar de 2 columnas: al pulsar un ícono del riel (con submenú) se fija
-// su panel en la 2ª columna, sin navegar. Los ítems sin submenú navegan normal.
+// Sidebar de 2 columnas. El ícono del riel NAVEGA, como cualquier enlace: la
+// 2ª columna está siempre a la vista en pantalla ancha, así que cancelar el
+// click dejaba siete íconos —Calendario, Planificación, Directorio, Quipux,
+// Usuarios, Catálogos e Integraciones— sin ningún efecto visible al pulsarlos.
+// Para mirar el submenú de otra sección sin salir de ésta basta pasar el ratón
+// por encima: se fija su panel, y el click lleva al módulo.
 (function(){
   function activatePanel(key){
     document.querySelectorAll('.panel-page').forEach(function(p){
@@ -426,8 +439,7 @@
     });
   }
   document.querySelectorAll('.rail-btn[data-group]').forEach(function(btn){
-    btn.addEventListener('click', function(e){
-      e.preventDefault();          // no navega: solo fija el panel
+    btn.addEventListener('mouseenter', function(){
       activatePanel(btn.dataset.panel);
     });
   });

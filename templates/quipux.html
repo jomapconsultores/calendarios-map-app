@@ -413,10 +413,34 @@ async function marcador(){
     const cuando = r.ultima_pasada.replace('T',' ').slice(0,16);
     f.className = 'qx-sello' + (r.al_dia ? '' : ' viejo');
     f.innerHTML = '<span class="qx-punto"></span>'
-                + (r.al_dia ? 'al día · ' : 'sin traer desde ') + cuando;
+                + (r.al_dia ? 'al día · ' : 'sin traer desde ') + cuando
+                + (r.origen ? ' · ' + r.origen : '');
   } else {
     f.className = 'qx-sello viejo';
     f.innerHTML = '<span class="qx-punto"></span>todavía no se ha traído nada';
+  }
+
+  // Cero documentos y ninguna pasada no es «no hay nada pendiente»: es que
+  // aquí todavía no se ha recogido. Decirlo con esas palabras evita mirar una
+  // pantalla vacía sin saber si el módulo funciona o está roto.
+  if(r.sin_recoger){
+    let aviso = document.getElementById('qx-sin-recoger');
+    if(!aviso){
+      aviso = document.createElement('div');
+      aviso.id = 'qx-sin-recoger';
+      aviso.className = 'alert alert-warning';
+      aviso.style.cssText = 'margin:12px 0;font-size:.9rem';
+      aviso.innerHTML = '<b>Aquí todavía no hay nada recogido.</b> '
+        + 'La recolección de CuencaDOC corre en la computadora de la oficina '
+        + '(necesita tu credencial y, a veces, escribir el texto de una imagen), '
+        + 'y desde ahí publica lo recogido para que se vea en esta pantalla '
+        + 'y en el teléfono. Para lanzarla, abre <code>quipux\\ALTA.cmd</code> '
+        + 'en esa computadora, o pulsa «Traer ahora» si estás en ella.';
+      document.getElementById('marcador').insertAdjacentElement('afterend', aviso);
+    }
+  } else {
+    const viejo = document.getElementById('qx-sin-recoger');
+    if(viejo) viejo.remove();
   }
 
   const area=document.getElementById('fArea'), band=document.getElementById('fBandeja');
@@ -437,7 +461,23 @@ document.getElementById('fBusca').addEventListener('input',()=>{
   clearTimeout(temporizador); temporizador=setTimeout(cargarDocs,300);
 });
 
-cambiarVista('compromisos');
+// Los tres enlaces del menú (Pendientes, Vencidos, Todo el archivo) sólo se
+// diferencian en el ?ver= de la URL. Nadie lo leía, así que dos de las tres
+// entradas eran clones exactas de la primera: se pulsaban y no cambiaba nada.
+(function(){
+  const pedido = new URLSearchParams(location.search).get('ver');
+  if (['pendientes','vencidos','con_plazo','todos'].includes(pedido)) {
+    VER = pedido;
+    const pastilla = document.querySelector('#marcador .qx-cifra[data-ver="'+pedido+'"]');
+    if (pastilla) {
+      document.querySelectorAll('#marcador .qx-cifra').forEach(o=>o.classList.remove('on'));
+      pastilla.classList.add('on');
+    }
+    cambiarVista('docs');      // quien pide un filtro quiere ver los documentos
+  } else {
+    cambiarVista('compromisos');
+  }
+})();
 marcador();
 </script>
 {% endblock %}
