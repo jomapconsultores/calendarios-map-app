@@ -249,11 +249,11 @@ async function abrirPermisos(uid, nombre) {
       ? '<input class="form-check-input" type="checkbox" checked disabled ' +
           'title="Se lo da su rol. Para quitárselo, edita el rol.">' +
         '<label class="form-check-label fw-bold small ms-1">' + m.etiqueta +
-          ' <span class="badge bg-primary bg-opacity-25 text-primary" style="font-size:.6rem">por su rol</span></label>'
+          ' <span class="badge bg-primary bg-opacity-25 text-primary" style="font-size: var(--fs-3xs)">por su rol</span></label>'
       : '<input class="form-check-input mod-chk" type="checkbox" value="' + m.modulo + '" ' +
           'id="' + idMod + '" ' + (m.suelto ? 'checked' : '') + ' onchange="pintarModulo(this)">' +
         '<label class="form-check-label fw-bold small ms-1" for="' + idMod + '">' + m.etiqueta +
-          (m.suelto ? ' <span class="badge bg-success bg-opacity-25 text-success" style="font-size:.6rem">concedido a esta persona</span>' : '') +
+          (m.suelto ? ' <span class="badge bg-success bg-opacity-25 text-success" style="font-size: var(--fs-3xs)">concedido a esta persona</span>' : '') +
         '</label>';
 
     const acciones = m.acciones.map(function (a) {
@@ -264,8 +264,8 @@ async function abrirPermisos(uid, nombre) {
           'id="' + id + '" ' + marcado +
           (a.sensible ? '' : ' disabled title="Viene incluida con el módulo"') + '>' +
         '<label class="form-check-label small" for="' + id + '">' +
-          a.nombre + (a.sensible ? ' <span class="badge bg-warning text-dark" style="font-size:.6rem">delicada</span>'
-                                 : ' <span class="text-muted" style="font-size:.68rem">(incluida)</span>') +
+          a.nombre + (a.sensible ? ' <span class="badge bg-warning text-dark" style="font-size: var(--fs-3xs)">delicada</span>'
+                                 : ' <span class="text-muted" style="font-size: var(--fs-2xs)">(incluida)</span>') +
         '</label></div>';
     }).join('');
 
@@ -308,8 +308,8 @@ function pintarRecursos(destino, lista, clase, vacio) {
       '<label class="form-check-label small ms-1" for="' + id + '">' +
         punto + '<strong>' + esc(it.nombre) + '</strong>' +
         (it.detalle ? ' <span class="text-muted">· ' + esc(it.detalle) + '</span>' : '') +
-        (it.por_rol ? ' <span class="badge bg-primary bg-opacity-25 text-primary" style="font-size:.6rem">por su rol</span>' : '') +
-        (!it.por_rol && it.suelto ? ' <span class="badge bg-success bg-opacity-25 text-success" style="font-size:.6rem">concedido a esta persona</span>' : '') +
+        (it.por_rol ? ' <span class="badge bg-primary bg-opacity-25 text-primary" style="font-size: var(--fs-3xs)">por su rol</span>' : '') +
+        (!it.por_rol && it.suelto ? ' <span class="badge bg-success bg-opacity-25 text-success" style="font-size: var(--fs-3xs)">concedido a esta persona</span>' : '') +
       '</label></div>';
   }).join('');
 }

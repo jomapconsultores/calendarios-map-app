@@ -35,7 +35,7 @@
 /* Punto de semáforo: el mismo lenguaje en pestañas, filas y cabeceras */
 .sem-dot{display:inline-block;width:9px;height:9px;border-radius:50%;flex-shrink:0}
 .sem-chip{display:inline-flex;align-items:center;gap:5px;padding:2px 9px;border-radius:20px;
-  font-size:.7rem;font-weight:700;white-space:nowrap}
+  font-size: var(--fs-2xs);font-weight:700;white-space:nowrap}
 
 /* Barra de cumplimiento: cuánto se cerró a tiempo, no cuánto se cerró */
 .sem-bar{display:flex;height:8px;border-radius:5px;overflow:hidden;background:#f1f5f9;min-width:120px}
@@ -54,14 +54,14 @@
 .prog-bar{width:80px;height:6px;background:#e2e8f0;border-radius:3px;overflow:hidden;display:inline-block;vertical-align:middle}
 .prog-bar-fill{height:100%;border-radius:3px;transition:.3s}
 
-.badge-status{display:inline-block;padding:3px 10px;border-radius:20px;font-size:.72rem;font-weight:700;white-space:nowrap}
+.badge-status{display:inline-block;padding:3px 10px;border-radius:20px;font-size: var(--fs-2xs);font-weight:700;white-space:nowrap}
 .bs-pending{background:#fef3c7;color:#92400e}
 .bs-in_progress{background:#dbeafe;color:#1e40af}
 .bs-review{background:#ede9fe;color:#5b21b6}
 .bs-done{background:#d1fae5;color:#065f46}
 .bs-blocked{background:#fee2e2;color:#991b1b}
 
-.badge-prio{display:inline-block;padding:2px 8px;border-radius:20px;font-size:.7rem;font-weight:700}
+.badge-prio{display:inline-block;padding:2px 8px;border-radius:20px;font-size: var(--fs-2xs);font-weight:700}
 .bp-high{background:#fef2f2;color:#991b1b;border:1px solid #fecaca}
 .bp-urgent{background:#7c3aed;color:#fff}
 
@@ -139,17 +139,17 @@
 
 /* ===== MODALES ===== */
 .plan-modal .modal-header{background:linear-gradient(135deg,#4f46e5,#7c3aed);color:#fff}
-.plan-modal .nav-tabs .nav-link{color:#64748b;font-size:.82rem}
+.plan-modal .nav-tabs .nav-link{color:#64748b;font-size: var(--fs-sm)}
 .plan-modal .nav-tabs .nav-link.active{color:#4f46e5;font-weight:600}
-.modal-section-label{font-size:.72rem;font-weight:700;text-transform:uppercase;
+.modal-section-label{font-size: var(--fs-2xs);font-weight:700;text-transform:uppercase;
   letter-spacing:.06em;color:#64748b;margin-bottom:6px;margin-top:12px}
 .phase-sug{position:absolute;z-index:100;background:#fff;border:1.5px solid #e2e8f0;
   border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.1);max-height:160px;overflow-y:auto}
-.phase-sug-item{padding:6px 12px;cursor:pointer;font-size:.82rem;color:#374151}
+.phase-sug-item{padding:6px 12px;cursor:pointer;font-size: var(--fs-sm);color:#374151}
 .phase-sug-item:hover{background:#ede9fe;color:#4f46e5}
 input[type=range].prog-range{accent-color:#4f46e5;width:100%}
 
-.btn-xs{padding:3px 10px;font-size:.73rem;border-radius:8px;border:none;cursor:pointer;font-weight:600}
+.btn-xs{padding:3px 10px;font-size: var(--fs-xs);border-radius:8px;border:none;cursor:pointer;font-weight:600}
 .btn-xs-edit{background:#ede9fe;color:#5b21b6}
 .btn-xs-del{background:#fee2e2;color:#991b1b}
 .btn-xs-edit:hover{background:#ddd6fe}
@@ -317,7 +317,7 @@ input[type=range].prog-range{accent-color:#4f46e5;width:100%}
         <ul class="nav nav-tabs mb-3" id="taskTabs">
           <li class="nav-item"><a class="nav-link active" data-bs-toggle="tab" href="#tabBasic">📋 Básico</a></li>
           <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#tabDates">📅 Plazo</a></li>
-          <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#tabSubs">📑 Subtareas <span id="tabSubsBadge" class="badge bg-secondary ms-1" style="font-size:.6rem"></span></a></li>
+          <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#tabSubs">📑 Subtareas <span id="tabSubsBadge" class="badge bg-secondary ms-1" style="font-size: var(--fs-3xs)"></span></a></li>
           <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#tabDeps">🔗 Dependencias</a></li>
           <li class="nav-item"><a class="nav-link" data-bs-toggle="tab" href="#tabExtra">📎 Adicional</a></li>
         </ul>
@@ -496,7 +496,7 @@ input[type=range].prog-range{accent-color:#4f46e5;width:100%}
             <input id="mProjColor" type="color" class="form-control form-control-color w-100" value="#4f46e5">
           </div>
           <div class="col-md-2 d-flex align-items-end">
-            <div class="w-100 text-center py-1 rounded fw-bold text-white" id="projColorPreview" style="background:#4f46e5;font-size:.75rem">Vista</div>
+            <div class="w-100 text-center py-1 rounded fw-bold text-white" id="projColorPreview" style="background:#4f46e5;font-size: var(--fs-xs)">Vista</div>
           </div>
         </div>
         {# El plazo no es un campo más: es lo que pone el proyecto en el
@@ -966,7 +966,7 @@ function renderSemaforo() {
   // como «no hay nada incumplido», que es exactamente lo contrario de lo que
   // se sabe. Cuando no se sabe, se dice que no se sabe.
   if (lecturaFallida && !allTasks.length) {
-    el.innerHTML = `<span class="text-danger" style="font-size:.8rem;font-weight:700">
+    el.innerHTML = `<span class="text-danger" style="font-size: var(--fs-sm);font-weight:700">
       ⚠️ No se pudo consultar el estado de los plazos — no se sabe qué está incumplido.</span>`;
     return;
   }
@@ -980,7 +980,7 @@ function renderSemaforo() {
   // un recuadro que nunca dice nada; esconder las que existen, un agujero.
   const visibles = SEM_ORDEN.concat(cuenta.gris ? ['gris'] : []);
   el.innerHTML =
-    `<span style="font-size:.72rem;font-weight:700;color:#94a3b8;text-transform:uppercase;
+    `<span style="font-size: var(--fs-2xs);font-weight:700;color:#94a3b8;text-transform:uppercase;
        letter-spacing:.05em;margin-right:4px">Semáforo</span>` +
     visibles.map(id => {
       const e = SEM[id];
@@ -1419,15 +1419,15 @@ function renderList() {
       const nRojas = rojas(k);
       // La cabecera dice de quién es el proyecto y para cuándo: sin eso la
       // vista general no contaba lo único que hay que saber sin abrirlo.
-      const extra = p ? `<span style="font-weight:500;font-size:.78rem;opacity:.92;margin-left:8px">👤 ${esc(p.owner || '—')}</span>` +
-        `<span class="badge bg-light text-dark ms-1" style="font-size:.7rem">${
+      const extra = p ? `<span style="font-weight:500;font-size: var(--fs-xs);opacity:.92;margin-left:8px">👤 ${esc(p.owner || '—')}</span>` +
+        `<span class="badge bg-light text-dark ms-1" style="font-size: var(--fs-2xs)">${
           p.due_date ? '📅 ' + fmtDate(p.due_date) : '♾️ Permanente'}</span>` : '';
       return `<tr class="group-header" style="background:linear-gradient(to right,${e.color},${e.color}bb);color:#fff;cursor:pointer" onclick="toggleGroup('${safeId}')">
-        <td colspan="7" style="padding:10px 14px;font-weight:700;font-size:.92rem">
+        <td colspan="7" style="padding:10px 14px;font-weight:700;font-size: var(--fs-md)">
           <span style="display:inline-block;width:20px">${caret}</span>
           ${e.icono} <strong>${esc(k)}</strong>
-          <span class="badge bg-light text-dark ms-2" title="Total" style="font-size:.7rem">${gt.length}</span>
-          ${nRojas ? `<span class="badge bg-dark text-white ms-1" title="Incumplidas" style="font-size:.7rem">⛔ ${nRojas}</span>` : ''}
+          <span class="badge bg-light text-dark ms-2" title="Total" style="font-size: var(--fs-2xs)">${gt.length}</span>
+          ${nRojas ? `<span class="badge bg-dark text-white ms-1" title="Incumplidas" style="font-size: var(--fs-2xs)">⛔ ${nRojas}</span>` : ''}
           ${extra}
         </td>
       </tr>` + rows;
@@ -1463,7 +1463,7 @@ function taskRowHtml(t, i) {
   const subs = Array.isArray(t.subtasks) ? t.subtasks : [];
   const isExpanded = expandedSet.has(t.id);
   const chevron = subs.length
-    ? `<span onclick="event.stopPropagation(); toggleExpandRow('${t.id}')" style="cursor:pointer;display:inline-block;width:18px;color:#64748b;font-size:.9rem" title="Desplegar los pasos">${isExpanded ? '▾' : '▸'}</span>`
+    ? `<span onclick="event.stopPropagation(); toggleExpandRow('${t.id}')" style="cursor:pointer;display:inline-block;width:18px;color:#64748b;font-size: var(--fs-md)" title="Desplegar los pasos">${isExpanded ? '▾' : '▸'}</span>`
     : `<span style="display:inline-block;width:18px"></span>`;
 
   const ctx = [];
@@ -1476,9 +1476,9 @@ function taskRowHtml(t, i) {
   if (t.priority === 'high' || t.priority === 'urgent')
     ctx.push(`<span class="badge-prio bp-${t.priority}">${PRIO_LABELS[t.priority]}</span>`);
   if (subs.length)
-    ctx.push(`<span class="badge" style="background:#fde68a;color:#92400e;font-size:.65rem">📑 ${subs.filter(x=>x.done).length}/${subs.length}</span>`);
+    ctx.push(`<span class="badge" style="background:#fde68a;color:#92400e;font-size: var(--fs-3xs)">📑 ${subs.filter(x=>x.done).length}/${subs.length}</span>`);
   const ctxHtml = ctx.length
-    ? `<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:2px;margin-left:22px;font-size:.72rem">${ctx.join('')}</div>`
+    ? `<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:2px;margin-left:22px;font-size: var(--fs-2xs)">${ctx.join('')}</div>`
     : '';
 
   const checkbox = selectMode
@@ -1494,8 +1494,8 @@ function taskRowHtml(t, i) {
       ${chevron} <strong>${esc(t.title)}</strong>
       ${ctxHtml}
     </td>
-    <td style="font-size:.8rem;color:#374151">${esc(t.assigned_to || '—')}</td>
-    <td style="white-space:nowrap;font-size:.8rem">${t.due_date ? fmtDate(t.due_date) : '<span class="text-muted">Sin plazo</span>'}</td>
+    <td style="font-size: var(--fs-sm);color:#374151">${esc(t.assigned_to || '—')}</td>
+    <td style="white-space:nowrap;font-size: var(--fs-sm)">${t.due_date ? fmtDate(t.due_date) : '<span class="text-muted">Sin plazo</span>'}</td>
     <td>
       <div class="prog-bar" title="${prog}% de avance"><div class="prog-bar-fill" style="width:${prog}%;background:${e.color}"></div></div>
       <small class="text-muted ms-1">${prog}%</small>
@@ -1752,7 +1752,7 @@ function updateDaysInfo() {
   caja.style.display = '';
   caja.style.background = e.fondo;
   caja.innerHTML = `<div class="d-flex align-items-center gap-2 flex-wrap">
-    <span style="font-size:1.3rem">${e.icono}</span>
+    <span style="font-size: var(--fs-2xl)">${e.icono}</span>
     <strong style="color:${e.color}">${esc(e.etiqueta)}</strong>
     <span class="text-muted small">· ${esc(textoSemaforo(s))}</span>
     ${duracion !== null ? `<span class="text-muted small">· duración ${duracion} día(s)</span>` : ''}
@@ -2192,19 +2192,19 @@ async function cargarReporte() {
     _reporte.map(a => {
       const e = ACC_ETIQUETA[a.accion] || {t: a.accion, c: '#64748b', f: '#f1f5f9'};
       return `<tr>
-        <td style="white-space:nowrap;font-size:.76rem;color:#64748b">${esc(fmtMomento(a.creado_en))}</td>
+        <td style="white-space:nowrap;font-size: var(--fs-xs);color:#64748b">${esc(fmtMomento(a.creado_en))}</td>
         <td>
           <strong>${esc(a.titulo || '(sin título)')}</strong>
-          <div style="font-size:.72rem;color:#94a3b8">
+          <div style="font-size: var(--fs-2xs);color:#94a3b8">
             ${a.proyecto ? '📂 ' + esc(a.proyecto) + ' · ' : ''}👤 ${esc(a.responsable || '—')}
           </div>
         </td>
         <td><span class="sem-chip" style="background:${e.f};color:${e.c}">${esc(e.t)}</span>
           ${a.accion === 'reprogramado'
-            ? `<div style="font-size:.74rem;color:#475569;margin-top:2px">${esc(a.resumen || '')}</div>` : ''}
+            ? `<div style="font-size: var(--fs-xs);color:#475569;margin-top:2px">${esc(a.resumen || '')}</div>` : ''}
         </td>
-        <td style="font-size:.78rem;max-width:320px">${a.justificacion ? esc(a.justificacion) : '<span class="text-muted">—</span>'}</td>
-        <td style="font-size:.76rem">${esc(a.usuario_nombre || a.usuario_email || '—')}</td>
+        <td style="font-size: var(--fs-xs);max-width:320px">${a.justificacion ? esc(a.justificacion) : '<span class="text-muted">—</span>'}</td>
+        <td style="font-size: var(--fs-xs)">${esc(a.usuario_nombre || a.usuario_email || '—')}</td>
       </tr>`;
     }).join('') + '</tbody></table>';
 }
@@ -2276,7 +2276,7 @@ async function abrirAvisosModal() {
     caja.innerHTML = `<div class="alert alert-danger py-2 mb-0">
       ⚠️ <strong>No se pudo consultar la base</strong>, así que no se sabe qué está
       incumplido. Esto <strong>no</strong> quiere decir que no haya nada.
-      <div class="text-muted mt-1" style="font-size:.75rem">${esc(r.error_base || '')}</div>
+      <div class="text-muted mt-1" style="font-size: var(--fs-xs)">${esc(r.error_base || '')}</div>
     </div>`;
     return;
   }
@@ -2382,7 +2382,7 @@ function showToast(msg, type, ms) {
   const t = document.createElement('div');
   const clr = { success:'#10b981', warning:'#f59e0b', danger:'#ef4444', info:'#4f46e5' };
   t.style.cssText = `background:${clr[type]||'#3b82f6'};color:#fff;padding:12px 20px;border-radius:12px;
-    font-size:.85rem;font-weight:600;box-shadow:0 4px 20px rgba(0,0,0,.25);max-width:360px;`;
+    font-size: var(--fs-md);font-weight:600;box-shadow:0 4px 20px rgba(0,0,0,.25);max-width:360px;`;
   t.textContent = msg;
   c.appendChild(t);
   const dura = (ms === undefined) ? 3500 : ms;

@@ -7,16 +7,16 @@
 <style>
 /* ===== CRONOGRAMA ===== */
 .plan-pills{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px}
-.plan-pill{padding:5px 13px;border-radius:999px;font-size:.78rem;font-weight:600;cursor:pointer;
+.plan-pill{padding:5px 13px;border-radius:999px;font-size: var(--fs-xs);font-weight:600;cursor:pointer;
   border:1.5px solid #e2e8f0;background:#fff;color:#475569;transition:.15s;white-space:nowrap}
 .plan-pill:hover{transform:translateY(-1px);box-shadow:0 3px 8px rgba(0,0,0,.07)}
 .plan-pill.active{color:#fff;box-shadow:0 4px 12px rgba(79,70,229,.25)}
-.plan-pill .pp-count{background:rgba(0,0,0,.08);border-radius:10px;padding:0 6px;margin-left:5px;font-size:.72rem}
+.plan-pill .pp-count{background:rgba(0,0,0,.08);border-radius:10px;padding:0 6px;margin-left:5px;font-size: var(--fs-2xs)}
 .plan-pill.active .pp-count{background:rgba(255,255,255,.25)}
 /* Cuántas lleva rotas cada proyecto, en la propia pastilla: el rojo tiene que
    verse desde fuera o hay que entrar uno por uno para encontrarlo. */
 .plan-pill .pp-rojas{background:#dc2626;color:#fff;border-radius:10px;padding:0 6px;
-  margin-left:4px;font-size:.7rem;font-weight:700}
+  margin-left:4px;font-size: var(--fs-2xs);font-weight:700}
 
 /* .stats-row y .stat-card viven en static/css/style.css: estaban
    copiados en las tres plantillas y ya habían empezado a divergir. */
@@ -25,13 +25,13 @@
 /* Ancho de la columna de nombres. En variable porque la capa que dibuja las
    dependencias tiene que empezar EXACTAMENTE donde acaba esa columna, y en
    móvil se estrecha: si fueran dos números sueltos, se desalinearían. */
-.gantt-container{min-width:900px;font-size:.8rem;position:relative;--g-label-w:290px}
+.gantt-container{min-width:900px;font-size: var(--fs-sm);position:relative;--g-label-w:290px}
 .g-head{display:flex;border-bottom:2px solid #e2e8f0;height:38px;align-items:flex-end;padding-bottom:4px}
-.g-label-col{width:var(--g-label-w);flex-shrink:0;font-size:.72rem;font-weight:700;color:#64748b;
+.g-label-col{width:var(--g-label-w);flex-shrink:0;font-size: var(--fs-2xs);font-weight:700;color:#64748b;
   text-transform:uppercase;letter-spacing:.04em}
 .g-scale{flex:1;position:relative;height:100%}
-.g-month{position:absolute;font-size:.7rem;color:#64748b;font-weight:700;bottom:14px;white-space:nowrap}
-.g-tick{position:absolute;font-size:.62rem;color:#94a3b8;bottom:0;transform:translateX(-50%);white-space:nowrap}
+.g-month{position:absolute;font-size: var(--fs-2xs);color:#64748b;font-weight:700;bottom:14px;white-space:nowrap}
+.g-tick{position:absolute;font-size: var(--fs-3xs);color:#94a3b8;bottom:0;transform:translateX(-50%);white-space:nowrap}
 .g-row{display:flex;align-items:center;height:38px;border-bottom:1px solid #f1f5f9}
 .g-row:hover{background:#fafbff}
 .g-row.g-sel{background:#eef2ff}
@@ -41,7 +41,7 @@
 .g-label:hover .gl-text{color:#4f46e5}
 .g-track{flex:1;position:relative;height:100%}
 .g-bar{position:absolute;top:9px;height:20px;border-radius:5px;cursor:pointer;
-  display:flex;align-items:center;padding:0 7px;font-size:.68rem;font-weight:600;color:#fff;
+  display:flex;align-items:center;padding:0 7px;font-size: var(--fs-2xs);font-weight:600;color:#fff;
   white-space:nowrap;overflow:hidden;min-width:6px;box-shadow:0 1px 3px rgba(0,0,0,.15)}
 .g-bar:hover{filter:brightness(1.08);z-index:12}
 .g-bar .g-fill{position:absolute;left:0;top:0;bottom:0;background:rgba(255,255,255,.35);border-radius:5px}
@@ -64,50 +64,50 @@
 .g-dep-h.g-dep-mal, .g-dep-v.g-dep-mal{border-color:#ef4444}
 .g-dep-punta.g-dep-mal{border-left-color:#ef4444}
 .g-riesgos{background:#fff;border:1.5px solid #e2e8f0;border-radius:14px;padding:14px 18px;margin-bottom:14px}
-.g-riesgos h6{font-size:.86rem;font-weight:700;margin-bottom:8px}
+.g-riesgos h6{font-size: var(--fs-md);font-weight:700;margin-bottom:8px}
 .g-riesgos .gr-ruta{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-bottom:8px}
-.g-riesgos .gr-paso{background:#ede9fe;color:#5b21b6;border-radius:20px;padding:3px 11px;font-size:.76rem;font-weight:600}
+.g-riesgos .gr-paso{background:#ede9fe;color:#5b21b6;border-radius:20px;padding:3px 11px;font-size: var(--fs-xs);font-weight:600}
 .g-riesgos ul{margin:0;padding-left:20px}
-.g-riesgos li{font-size:.82rem;color:#475569;margin-bottom:3px}
+.g-riesgos li{font-size: var(--fs-sm);color:#475569;margin-bottom:3px}
 
 /* ===== SEMÁFORO ===== */
 .sem-dot{display:inline-block;width:9px;height:9px;border-radius:50%;flex-shrink:0}
 .sem-chip{display:inline-flex;align-items:center;gap:5px;padding:2px 9px;border-radius:20px;
-  font-size:.68rem;font-weight:700;white-space:nowrap}
+  font-size: var(--fs-2xs);font-weight:700;white-space:nowrap}
 .sem-resumen{background:#fff;border:1.5px solid #e2e8f0;border-radius:12px;padding:8px 12px;margin-bottom:12px}
 .sem-bar{display:flex;height:8px;border-radius:4px;overflow:hidden;background:#f1f5f9}
 .sem-bar span{display:block;height:100%}
 .sem-leyenda{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
 .sem-lg{display:inline-flex;align-items:center;gap:6px;background:#fff;border:1.5px solid #e2e8f0;
-  border-radius:999px;padding:3px 11px;font-size:.73rem;font-weight:600;cursor:pointer;transition:.15s}
+  border-radius:999px;padding:3px 11px;font-size: var(--fs-xs);font-weight:600;cursor:pointer;transition:.15s}
 .sem-lg:hover{transform:translateY(-1px);box-shadow:0 3px 8px rgba(0,0,0,.07)}
 .sem-lg.on{box-shadow:0 3px 10px rgba(0,0,0,.12)}
 
-.badge-estado{display:inline-block;padding:2px 9px;border-radius:20px;font-size:.68rem;font-weight:700;white-space:nowrap}
+.badge-estado{display:inline-block;padding:2px 9px;border-radius:20px;font-size: var(--fs-2xs);font-weight:700;white-space:nowrap}
 .be-pending{background:#fef3c7;color:#92400e}
 .be-in_progress{background:#dbeafe;color:#1e40af}
 .be-review{background:#ede9fe;color:#5b21b6}
 .be-done{background:#d1fae5;color:#065f46}
 .be-blocked{background:#fee2e2;color:#991b1b}
 
-.act-table{width:100%;border-collapse:collapse;font-size:.83rem}
-.act-table th{background:#f8fafc;color:#64748b;font-size:.72rem;font-weight:600;text-transform:uppercase;
+.act-table{width:100%;border-collapse:collapse;font-size: var(--fs-sm)}
+.act-table th{background:#f8fafc;color:#64748b;font-size: var(--fs-2xs);font-weight:600;text-transform:uppercase;
   letter-spacing:.04em;padding:8px 10px;border-bottom:1.5px solid #e2e8f0;white-space:nowrap}
 .act-table td{padding:8px 10px;border-bottom:1px solid #f1f5f9;vertical-align:middle}
 .act-table tr:hover td{background:#f5f7ff}
 .act-table tr.vencida td{background:#fff5f5}
 
-.btn-xs{padding:3px 10px;font-size:.73rem;border-radius:8px;border:none;cursor:pointer;font-weight:600}
+.btn-xs{padding:3px 10px;font-size: var(--fs-xs);border-radius:8px;border:none;cursor:pointer;font-weight:600}
 .btn-xs-edit{background:#ede9fe;color:#5b21b6}
 .btn-xs-del{background:#fee2e2;color:#991b1b}
 
 .cro-modal .modal-header{background:linear-gradient(135deg,#4f46e5,#7c3aed);color:#fff}
-.modal-section-label{font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;
+.modal-section-label{font-size: var(--fs-2xs);font-weight:700;text-transform:uppercase;letter-spacing:.06em;
   color:#64748b;margin:14px 0 6px}
-.prop-cambio{font-size:.78rem}
+.prop-cambio{font-size: var(--fs-xs)}
 .prop-antes{color:#b91c1c;text-decoration:line-through}
 .prop-despues{color:#047857;font-weight:600}
-.ia-nota{font-size:.75rem;color:#64748b;font-style:italic}
+.ia-nota{font-size: var(--fs-xs);color:#64748b;font-style:italic}
 
 @media(max-width:768px){
   .stats-row{grid-template-columns:1fr 1fr}
@@ -637,11 +637,11 @@ function pintarAnalisis() {
     ? new Date(planActivo.ai_generado_en).toLocaleDateString('es-EC') : '';
   panel.innerHTML =
     `<h6>🤖 Análisis del plan ${cuando ? `<span class="text-muted fw-normal">· ${cuando}</span>` : ''}</h6>` +
-    (planActivo.ai_resumen ? `<p class="mb-2" style="font-size:.84rem">${esc(planActivo.ai_resumen)}</p>` : '') +
-    (ruta.length ? `<div class="gr-ruta"><strong style="font-size:.78rem">Ruta crítica:</strong>` +
+    (planActivo.ai_resumen ? `<p class="mb-2" style="font-size: var(--fs-sm)">${esc(planActivo.ai_resumen)}</p>` : '') +
+    (ruta.length ? `<div class="gr-ruta"><strong style="font-size: var(--fs-xs)">Ruta crítica:</strong>` +
        ruta.map(p => `<span class="gr-paso">${esc(p)}</span>`).join('<span class="text-muted">→</span>') +
        `</div>` : '') +
-    (riesgos.length ? `<strong style="font-size:.78rem">A tener en cuenta:</strong>
+    (riesgos.length ? `<strong style="font-size: var(--fs-xs)">A tener en cuenta:</strong>
        <ul>${riesgos.map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : '');
 }
 
