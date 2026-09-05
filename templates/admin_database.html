@@ -20,6 +20,9 @@
         <option value="clients">Cliente</option>
         <option value="users">Usuario</option>
         <option value="appointments">Cita</option>
+        {# Sin esta opción no había forma de dar de alta un calendario desde la
+           web: había que insertar la fila por SQL. La ruta ya lo aceptaba. #}
+        <option value="calendar_config">Calendario (cuenta de agenda)</option>
       </select></div>
       <div class="col-md-6" id="insertFields"></div>
       <div class="col-md-3"><button class="btn btn-primary btn-sm rounded-pill">💾 Guardar</button></div>

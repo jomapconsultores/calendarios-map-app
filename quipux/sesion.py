@@ -119,16 +119,28 @@ class Quipux:
     def _rechazado(r):
         return 'paginaerror' in (r.text or '').lower()
 
-    @staticmethod
-    def _pide_imagen(r):
-        """¿Saltó el control del texto de la imagen?
+    def _pide_imagen(self, r):
+        """¿Hace falta que una persona escriba el texto de una imagen?
 
-        Se mira el destino del salto, no el aspecto de la página: cuando
-        aparece, el sistema manda a `login_validar_captcha.php` antes de dejar
-        pasar. Es lo único fiable, porque esa página cambia de estilo con cada
-        actualización pero no de nombre."""
-        texto = (r.text or '').lower()
-        return 'login_validar_captcha' in texto or 'captcha.php' in texto
+        No basta con ver a dónde salta el sistema: tras la credencial SIEMPRE
+        manda a `login_validar_captcha.php`, haya control o no. Fiarse de ese
+        nombre hacía creer que el control estaba puesto cuando no lo estaba, y
+        entonces se le pedía a alguien que leyera una imagen que no existía —o
+        se daba por fallido un acceso que había ido bien.
+
+        Lo que decide es lo que esa página TRAE: si tiene un campo `txt_captcha`
+        que rellenar, hay control; si no, era sólo un paso intermedio."""
+        texto = r.text or ''
+        if 'txt_captcha' in texto:
+            return True
+        if 'login_validar_captcha' not in texto.lower():
+            return False
+        # Saltó ahí: hay que ir a ver si de verdad pide algo.
+        try:
+            pagina = self.get('login_validar_captcha.php')
+        except Exception:
+            return False
+        return 'txt_captcha' in (pagina.text or '')
 
     # ------------------------------------------------------------------
     #  Entrar en dos tiempos, para que el captcha se resuelva desde la web
