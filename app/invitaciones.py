@@ -86,8 +86,16 @@ def _guardar_token(app, email, datos, authority=None):
         'actualizado_en': datetime.now(timezone.utc).isoformat(),
     }
     if fila:
-        return app.supabase.update('ms_tokens', fila['id'], nuevo)
-    return bool(app.supabase.insert('ms_tokens', nuevo))
+        app.supabase.update('ms_tokens', fila['id'], nuevo)
+    else:
+        app.supabase.insert('ms_tokens', nuevo)
+    # Y se vuelve a leer. Guardar «sin error» no es lo mismo que haber guardado:
+    # si la escritura no llega —permisos, una columna que falta, la tabla que no
+    # existe— quien autorizó veía «cuenta autorizada», la pantalla seguía
+    # diciendo SIN AUTORIZAR, y no había forma de saber cuál de las dos mentía.
+    # Lo que decide es que la fila esté y tenga con qué renovarse.
+    guardada = _fila_token(app, email)
+    return bool(guardada and guardada.get('refresh_token'))
 
 
 def token_de_acceso(app, email):
@@ -173,7 +181,11 @@ def completar_autorizacion(app, email, device_code, authority=None):
     except Exception as e:
         return 'error', f'no se pudo hablar con Microsoft: {str(e)[:150]}'
     if datos.get('access_token'):
-        _guardar_token(app, email, datos, autoridad)
+        if not _guardar_token(app, email, datos, autoridad):
+            return 'error', (
+                f'{email}: Microsoft dio el permiso, pero no se pudo guardar en '
+                'ms_tokens. Revisa que la tabla exista (migración 033) y que el '
+                'servidor pueda escribir en ella; hay que volver a autorizar.')
         return 'ok', None
     error = datos.get('error', '')
     if error in ('authorization_pending', 'slow_down'):

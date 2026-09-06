@@ -5663,6 +5663,11 @@ def create_app():
             app, pendiente['cuenta'], pendiente['code'], pendiente.get('authority'))
         if estado == 'ok':
             session.pop('ms_device', None)
+            # El aviso de arriba se guarda dos minutos. Sin tirarlo aquí, quien
+            # acaba de autorizar recarga y sigue leyendo que esa misma cuenta
+            # está sin autorizar —en la misma página en la que la tabla ya dice
+            # CONECTADA—, y lo razonable es pensar que no funcionó.
+            _google_cache.invalidate_prefix('google_status_')
             return jsonify({'success': True, 'estado': 'ok',
                             'mensaje': f"{pendiente['cuenta']}: cuenta autorizada."})
         if estado == 'pendiente':
