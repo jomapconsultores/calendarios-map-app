@@ -45,7 +45,6 @@ import imaplib
 import re
 import threading
 import time
-from base64 import b64encode
 from datetime import datetime, timedelta, timezone
 
 from googleapiclient.discovery import build
@@ -350,7 +349,14 @@ def _conectar_imap(app, cuenta):
     token, error = _inv.token_de_acceso(app, cuenta)
     if not token:
         return None, error
-    cadena = b64encode(f'user={cuenta}\x01auth=Bearer {token}\x01\x01'.encode()).decode()
+    # En crudo, sin base64: `authenticate` codifica por su cuenta lo que
+    # devuelva esta función. Codificarlo aquí lo mandaba dos veces codificado y
+    # Outlook contestaba «AUTHENTICATE command error: BAD Command Argument
+    # Error», que suena a buzón sin permiso —y a que hay que pedirle algo al
+    # administrador del dominio— cuando el permiso estaba bien y lo que iba mal
+    # era la cadena. En SMTP sí se codifica a mano, porque allí se escribe el
+    # argumento del comando AUTH; son dos caminos distintos y no se parecen.
+    cadena = f'user={cuenta}\x01auth=Bearer {token}\x01\x01'
     try:
         conexion = imaplib.IMAP4_SSL(IMAP_HOST, 993)
         conexion.authenticate('XOAUTH2', lambda _: cadena.encode())
