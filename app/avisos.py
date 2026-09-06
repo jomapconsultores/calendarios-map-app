@@ -10,20 +10,40 @@ El día que se pasa sin que el trabajo esté terminado, el compromiso está
 INCUMPLIDO, y eso no puede quedarse esperando a que alguien entre a mirar la
 pantalla: sale por correo.
 
-Se manda UN correo al día con todo lo incumplido, no uno por cada cosa. Un
-proyecto con doce actividades atrasadas no debe llenar doce veces la bandeja:
-lo que hace falta saber es qué se debía, quién respondía y cuánto lleva de
-retraso, y eso cabe entero en un solo mensaje.
+**A quién le sale.** El aviso se le manda A QUIEN NO LO HIZO, no a la dirección
+del despacho. Un recordatorio que llega a un tercero obliga a que ese tercero
+reenvíe, y entonces el reclamo depende de que él se acuerde: quien tiene el
+trabajo pendiente es quien tiene que leerlo. Cada uno recibe UN correo al día y
+sólo con lo suyo — un proyecto con doce actividades atrasadas no debe llenar
+doce veces la bandeja, y a nadie le sirve la lista de lo que deben los demás.
 
-La tabla `vencimiento_avisos` guarda qué se avisó cada día. Sirve para dos
-cosas: que dos procesos (el hilo de fondo y el cron externo) no manden el mismo
-aviso dos veces, y que quede constancia de cuándo se avisó de qué.
+**Lo que sube a la dirección.** A `AVISO_EMAIL` ya no se le manda todo, porque
+un resumen diario completo se deja de leer en una semana. Sube sólo lo que hay
+que decidir: lo que lleva más de `AVISO_ESCALADO_DIAS` días de retraso —a esas
+alturas el recordatorio automático ya demostró que no basta— y aquello cuyo
+responsable no se pudo localizar. Esa segunda lista no es ruido: es un
+incumplimiento que HOY no se le está reclamando a nadie, y callarlo sería justo
+el fallo que este módulo existe para evitar.
+
+**Cómo se averigua el correo de cada quien.** En cascada: `tasks.assigned_email`
+si está escrito; si no, el nombre de `tasks.assigned_to` / `projects.owner`
+cruzado contra `users.full_name`. Si el nombre no aparece en el directorio, o
+aparece dos veces, NO se adivina: se trata como laguna y sube a la dirección.
+Reclamarle a quien no era es peor que no reclamar.
+
+La tabla `vencimiento_avisos` guarda qué se avisó cada día Y A QUIÉN. Sirve para
+dos cosas: que dos procesos (el hilo de fondo y el cron externo) no manden el
+mismo aviso dos veces, y que quede constancia de cuándo se avisó de qué y a qué
+dirección, que es lo que convierte un recordatorio en algo que se puede
+reclamar después.
 """
 import os
+import re
 import html as _html
 import smtplib
 import threading
 import time
+import unicodedata
 from datetime import datetime, timedelta
 from email.message import EmailMessage
 
@@ -36,12 +56,20 @@ TZ = pytz.timezone('America/Guayaquil')
 
 DESTINO_POR_DEFECTO = 'jomapconsultores@gmail.com'
 
+# Días de retraso a partir de los cuales el incumplimiento deja de ser sólo cosa
+# de quien lo tiene y sube a la dirección. Si el recordatorio diario no ha
+# funcionado en una semana, no va a funcionar al octavo día: hace falta que
+# alguien decida.
+ESCALADO_DIAS_POR_DEFECTO = 7
+
 # Un proyecto cerrado ya no incumple nada, esté como esté su fecha.
 ESTADOS_PROYECTO_CERRADO = {'completed', 'cancelled'}
 
 # Evita que dos peticiones simultáneas al cron manden el aviso por duplicado
 # dentro del mismo proceso. Entre procesos lo impide la tabla.
 _LOCK = threading.Lock()
+
+_RE_CORREO = re.compile(r'^[^@\s]+@[^@\s]+\.[A-Za-z]{2,}$')
 
 
 # ============================================================
@@ -51,15 +79,37 @@ def _conf(app):
     """Datos del servidor de correo. Sin SMTP_HOST el aviso queda desactivado."""
     c = app.config
     usuario = c.get('SMTP_USER') or os.getenv('SMTP_USER', '')
+
+    def _entero(clave, defecto):
+        # `is None` y no `or`: un 0 configurado a propósito es un valor, no un
+        # hueco que haya que rellenar con el valor por defecto.
+        valor = c.get(clave)
+        if valor is None or valor == '':
+            valor = os.getenv(clave, str(defecto))
+        try:
+            return int(valor)
+        except (TypeError, ValueError):
+            return defecto
+
+    def _bandera(clave, defecto='1'):
+        valor = c.get(clave)
+        if valor is None:
+            valor = os.getenv(clave, defecto)
+        return str(valor).strip().lower() not in ('0', 'false', 'no', '')
+
     return {
         'host':     c.get('SMTP_HOST') or os.getenv('SMTP_HOST', ''),
-        'port':     int(c.get('SMTP_PORT') or os.getenv('SMTP_PORT', '587')),
+        'port':     _entero('SMTP_PORT', 587),
         'user':     usuario,
         'password': c.get('SMTP_PASSWORD') or os.getenv('SMTP_PASSWORD', ''),
         'remitente': (c.get('SMTP_FROM') or os.getenv('SMTP_FROM', '') or usuario),
         'ssl':      bool(c.get('SMTP_SSL')),
         'destino':  c.get('AVISO_EMAIL') or os.getenv('AVISO_EMAIL', DESTINO_POR_DEFECTO),
-        'hora':     int(c.get('AVISO_HORA') or os.getenv('AVISO_HORA', '8')),
+        'hora':     _entero('AVISO_HORA', 8),
+        # Reparto por responsable. Apagarlo (AVISO_PERSONAL=0) devuelve el
+        # módulo a lo que hacía antes: un único correo a la dirección con todo.
+        'personal': _bandera('AVISO_PERSONAL', '1'),
+        'escalado_dias': _entero('AVISO_ESCALADO_DIAS', ESCALADO_DIAS_POR_DEFECTO),
     }
 
 
@@ -127,13 +177,63 @@ def _dias_retraso(due, hoy):
         return 0
 
 
-def _nombres_de_usuarios(app, ids):
-    """id -> nombre legible, para cuando el responsable no está escrito a mano."""
-    ids = [i for i in set(ids) if i]
-    if not ids:
-        return {}
-    filas = app.supabase.get_in('users', 'id', ids, select='id,full_name,email') or []
-    return {f['id']: (f.get('full_name') or f.get('email') or '') for f in filas}
+def _es_correo(v):
+    return bool(v and _RE_CORREO.match(str(v).strip()))
+
+
+def _normalizar(nombre):
+    """«Ana María  Pérez » -> «ana maria perez».
+
+    Se compara sin tildes, sin mayúsculas y sin espacios de más porque el
+    responsable se teclea a mano en la ficha y el directorio se llenó por otro
+    lado: exigir que coincidan carácter a carácter dejaría fuera a media
+    plantilla por un acento."""
+    texto = str(nombre or '').strip()
+    if not texto:
+        return ''
+    texto = unicodedata.normalize('NFKD', texto)
+    texto = ''.join(c for c in texto if not unicodedata.combining(c))
+    return ' '.join(texto.lower().split())
+
+
+def _directorio(app):
+    """Nombre normalizado -> correo, e id -> nombre, sacados de `users`.
+
+    Los nombres repetidos se DESCARTAN a propósito. Si hay dos personas que se
+    llaman igual, no hay forma de saber a cuál se le reclama, y mandarle el
+    aviso a la primera que salga de la consulta es exactamente el error que
+    convierte un recordatorio en un problema con alguien."""
+    filas = app.supabase.get('users', select='id,full_name,email') or []
+    por_nombre, ambiguos, nombres_por_id = {}, set(), {}
+    for f in filas:
+        correo = (f.get('email') or '').strip()
+        if f.get('id'):
+            nombres_por_id[str(f['id'])] = f.get('full_name') or correo or ''
+        clave = _normalizar(f.get('full_name'))
+        if not clave or not _es_correo(correo):
+            continue
+        anterior = por_nombre.get(clave)
+        if anterior and anterior.lower() != correo.lower():
+            ambiguos.add(clave)
+        por_nombre[clave] = correo
+    for clave in ambiguos:
+        por_nombre.pop(clave, None)
+    return por_nombre, nombres_por_id, ambiguos
+
+
+def _resolver_destino(declarado, correo_escrito, por_nombre, ambiguos):
+    """(correo, motivo_de_la_laguna). Cuando hay correo, el motivo es None."""
+    if _es_correo(correo_escrito):
+        return str(correo_escrito).strip(), None
+    clave = _normalizar(declarado)
+    if not clave:
+        return None, 'la ficha no dice quién es el responsable'
+    if clave in ambiguos:
+        return None, f'hay más de un usuario llamado «{declarado}»'
+    correo = por_nombre.get(clave)
+    if correo:
+        return correo, None
+    return None, f'«{declarado}» no tiene correo en el directorio de usuarios'
 
 
 class ConsultaFallida(Exception):
@@ -183,7 +283,10 @@ def _es_compromiso(t):
 
 
 def incumplidos(app, hoy=None):
-    """Proyectos y actividades cuya fecha ya pasó sin estar terminados."""
+    """Proyectos y actividades cuya fecha ya pasó sin estar terminados.
+
+    Cada uno sale con `_responsable` (para enseñarlo), `_correo` (a quién se le
+    reclama) y, cuando no hay correo, `_laguna` con el motivo."""
     hoy = hoy or hoy_local()
     limite = hoy.isoformat()
 
@@ -199,20 +302,27 @@ def incumplidos(app, hoy=None):
         'project_id,created_by,progress_pct,source,source_app')
     tareas = [t for t in tareas if _es_compromiso(t)]
 
-    # Nombre del responsable: primero lo escrito en la ficha, y si está vacío,
-    # quien la creó. Un aviso que no dice de quién es no sirve para reclamar.
-    nombres = _nombres_de_usuarios(
-        app, [p.get('created_by') for p in proyectos] +
-             [t.get('created_by') for t in tareas])
+    por_nombre, nombres_por_id, ambiguos = _directorio(app)
     nombre_proyecto = {p['id']: p.get('name') for p in
                        (app.supabase.get('projects', select='id,name') or [])}
 
+    # El responsable que se ENSEÑA puede caer en quien lo creó, porque un aviso
+    # que no dice de quién es no sirve para reclamar. Pero a quien se le MANDA
+    # sale sólo de lo declarado en la ficha: que alguien creara la tarea no
+    # significa que le tocara hacerla.
     for p in proyectos:
-        p['_responsable'] = p.get('owner') or nombres.get(p.get('created_by')) or '—'
+        declarado = p.get('owner')
+        p['_responsable'] = (declarado
+                             or nombres_por_id.get(str(p.get('created_by') or '')) or '—')
+        p['_correo'], p['_laguna'] = _resolver_destino(
+            declarado, None, por_nombre, ambiguos)
         p['_dias'] = _dias_retraso(p.get('due_date'), hoy)
     for t in tareas:
-        t['_responsable'] = (t.get('assigned_to') or t.get('assigned_email')
-                             or nombres.get(t.get('created_by')) or '—')
+        declarado = t.get('assigned_to')
+        t['_responsable'] = (declarado or t.get('assigned_email')
+                             or nombres_por_id.get(str(t.get('created_by') or '')) or '—')
+        t['_correo'], t['_laguna'] = _resolver_destino(
+            declarado, t.get('assigned_email'), por_nombre, ambiguos)
         t['_dias'] = _dias_retraso(t.get('due_date'), hoy)
         t['_proyecto'] = nombre_proyecto.get(t.get('project_id')) or '—'
 
@@ -230,11 +340,21 @@ def incumplidos(app, hoy=None):
 _avisado_en_memoria = {'fecha': None, 'claves': set()}
 
 
+def _clave(tipo, ref_id, destino):
+    return (tipo, ref_id, (destino or '').strip().lower())
+
+
 def _ya_avisado(app, hoy):
+    """Qué se avisó hoy y A QUIÉN.
+
+    La dirección forma parte de la clave: el mismo incumplimiento se le puede
+    recordar a quien lo tiene y, si lleva mucho, subirlo a la dirección. Son
+    dos avisos distintos y ninguno debe tapar al otro."""
     filas = app.supabase.get('vencimiento_avisos', {'fecha': hoy.isoformat()},
-                             select='tipo,ref_id')
+                             select='tipo,ref_id,destinatario')
     if filas:
-        return {(f.get('tipo'), f.get('ref_id')) for f in filas}
+        return {_clave(f.get('tipo'), f.get('ref_id'), f.get('destinatario'))
+                for f in filas}
     # Sin filas puede ser «no hay nada» o «la tabla no existe»: en ambos casos
     # el respaldo en memoria es lo único que queda.
     if _avisado_en_memoria['fecha'] == hoy:
@@ -242,16 +362,17 @@ def _ya_avisado(app, hoy):
     return set()
 
 
-def _registrar_avisos(app, hoy, destino, items):
+def _registrar_avisos(app, hoy, items):
+    """`items`: lista de (tipo, objeto, título, destinatario)."""
     if _avisado_en_memoria['fecha'] != hoy:
         _avisado_en_memoria['fecha'] = hoy
         _avisado_en_memoria['claves'] = set()
     filas = []
-    for tipo, obj, titulo in items:
-        _avisado_en_memoria['claves'].add((tipo, obj['id']))
+    for tipo, obj, titulo, destino in items:
+        _avisado_en_memoria['claves'].add(_clave(tipo, obj['id'], destino))
         filas.append({
             'tipo': tipo, 'ref_id': obj['id'], 'fecha': hoy.isoformat(),
-            'destinatario': destino, 'titulo': titulo[:300],
+            'destinatario': destino, 'titulo': (titulo or '')[:300],
             'due_date': obj.get('due_date'), 'dias_incumplido': obj.get('_dias'),
             'responsable': (obj.get('_responsable') or '')[:200],
         })
@@ -282,7 +403,133 @@ def _tabla_html(titulo, cabeceras, filas):
             f'<tbody>{trs}</tbody></table>')
 
 
+def _retraso(dias):
+    return f"<strong style='color:#b91c1c'>{dias} día(s)</strong>"
+
+
+def _sobre(titulo_cabecera, subtitulo, introduccion, cuerpo, pie):
+    """El marco común de todos estos correos."""
+    return f"""<div style="font-family:Arial,sans-serif;max-width:760px;margin:0 auto;color:#0f172a">
+  <div style="background:#b91c1c;color:#fff;padding:16px 20px;border-radius:12px 12px 0 0">
+    <div style="font-size:19px;font-weight:bold">{titulo_cabecera}</div>
+    <div style="font-size:13px;opacity:.9">{subtitulo}</div>
+  </div>
+  <div style="border:1px solid #e2e8f0;border-top:0;border-radius:0 0 12px 12px;padding:8px 20px 24px">
+    <p style="font-size:14px;color:#334155">{introduccion}</p>
+    {cuerpo}
+    <p style="font-size:12px;color:#64748b;margin-top:26px;border-top:1px solid #e2e8f0;padding-top:12px">
+      {pie}
+    </p>
+  </div>
+</div>"""
+
+
+def _componer_personal(hoy, nombre, proyectos, tareas):
+    """El recordatorio que recibe quien tiene el trabajo sin hacer.
+
+    Lleva sólo lo suyo y no lleva la columna «Responsable»: sabe de sobra que es
+    él, y enseñarle la lista de los demás convierte un recordatorio en un tablón
+    de incumplimientos ajenos."""
+    e = _html.escape
+    total = len(proyectos) + len(tareas)
+    asunto = f'⚠️ Tienes {total} compromiso(s) vencido(s) — {_fmt(hoy)}'
+
+    tabla_p = _tabla_html(
+        f'📁 Proyectos a tu cargo ({len(proyectos)})',
+        ['Proyecto', 'Vencía el', 'Retraso'],
+        [[e(p.get('name') or '(sin nombre)'), _fmt(p.get('due_date')),
+          _retraso(p['_dias'])] for p in proyectos])
+
+    tabla_t = _tabla_html(
+        f'📋 Actividades a tu cargo ({len(tareas)})',
+        ['Actividad', 'Proyecto', 'Vencía el', 'Retraso', 'Avance'],
+        [[e(t.get('title') or '(sin título)'), e(t['_proyecto']),
+          _fmt(t.get('due_date')), _retraso(t['_dias']),
+          f"{t.get('progress_pct') or 0}%"] for t in tareas])
+
+    saludo = f'{e(nombre)}: los' if nombre and nombre != '—' else 'Los'
+    cuerpo_html = _sobre(
+        '⚠️ Tienes compromisos vencidos',
+        f'Revisión del {_fmt(hoy)} · {total} pendiente(s) fuera de plazo a tu nombre',
+        f'{saludo} siguientes compromisos están a tu cargo y pasaron su fecha de '
+        f'vencimiento sin completarse. Constan como <strong>INCUMPLIDOS</strong>. '
+        f'Ciérralos en el calendario, o cambia la fecha dejando dicho el motivo.',
+        tabla_p + tabla_t,
+        'Aviso automático del calendario de vencimientos · CalendarioMAP. '
+        'Mientras el trabajo siga sin cerrarse, este correo se repite una vez al día.')
+
+    lineas = [f'TUS COMPROMISOS INCUMPLIDOS — {_fmt(hoy)}', '']
+    if proyectos:
+        lineas.append(f'PROYECTOS ({len(proyectos)}):')
+        lineas += [f"  - {p.get('name')} · vencía {_fmt(p.get('due_date'))} · "
+                   f"{p['_dias']} día(s) de retraso" for p in proyectos]
+        lineas.append('')
+    if tareas:
+        lineas.append(f'ACTIVIDADES ({len(tareas)}):')
+        lineas += [f"  - {t.get('title')} [{t['_proyecto']}] · vencía "
+                   f"{_fmt(t.get('due_date'))} · {t['_dias']} día(s) de retraso"
+                   for t in tareas]
+    return asunto, cuerpo_html, '\n'.join(lineas)
+
+
+def _titulo_de(tipo, obj):
+    return (obj.get('name') if tipo == 'proyecto' else obj.get('title')) or '(sin título)'
+
+
+def _componer_direccion(hoy, escalado, lagunas, umbral):
+    """Lo que sube a la dirección: lo que se enquistó y lo que no tiene dueño.
+
+    `escalado` y `lagunas` son listas de (tipo, objeto)."""
+    e = _html.escape
+    total = len(escalado) + len(lagunas)
+    asunto = f'🔺 Incumplimientos que requieren decisión: {total} — {_fmt(hoy)}'
+
+    tabla_e = _tabla_html(
+        f'🔺 Con más de {umbral} día(s) de retraso ({len(escalado)}) — ya se les avisó a diario',
+        ['Compromiso', 'Proyecto', 'Responsable', 'Vencía el', 'Retraso'],
+        [[e(_titulo_de(tp, o)),
+          e('(proyecto)' if tp == 'proyecto' else o.get('_proyecto') or '—'),
+          e(o.get('_responsable') or '—'), _fmt(o.get('due_date')),
+          _retraso(o['_dias'])] for tp, o in escalado])
+
+    tabla_l = _tabla_html(
+        f'❓ Sin responsable localizable ({len(lagunas)}) — hoy no se le reclama a nadie',
+        ['Compromiso', 'Proyecto', 'Responsable en la ficha', 'Vencía el',
+         'Retraso', 'Por qué no salió el aviso'],
+        [[e(_titulo_de(tp, o)),
+          e('(proyecto)' if tp == 'proyecto' else o.get('_proyecto') or '—'),
+          e(o.get('_responsable') or '—'), _fmt(o.get('due_date')),
+          _retraso(o['_dias']), e(o.get('_laguna') or '')] for tp, o in lagunas])
+
+    cuerpo_html = _sobre(
+        '🔺 Incumplimientos que requieren decisión',
+        f'Revisión del {_fmt(hoy)} · {total} caso(s)',
+        'A cada responsable ya le llegó su recordatorio diario. Aquí sube sólo lo '
+        f'que lleva más de <strong>{umbral} día(s)</strong> de retraso —donde el '
+        'recordatorio automático ya demostró que no basta— y lo que <strong>no se '
+        'le pudo reclamar a nadie</strong> porque falta el correo del responsable. '
+        'Esto último se arregla completando la ficha o el directorio de usuarios.',
+        tabla_e + tabla_l,
+        'Aviso automático del calendario de vencimientos · CalendarioMAP.')
+
+    lineas = [f'INCUMPLIMIENTOS QUE REQUIEREN DECISIÓN — {_fmt(hoy)}', '']
+    if escalado:
+        lineas.append(f'MÁS DE {umbral} DÍA(S) DE RETRASO ({len(escalado)}):')
+        lineas += [f"  - {_titulo_de(tp, o)} · {o.get('_responsable')} · vencía "
+                   f"{_fmt(o.get('due_date'))} · {o['_dias']} día(s)"
+                   for tp, o in escalado]
+        lineas.append('')
+    if lagunas:
+        lineas.append(f'SIN RESPONSABLE LOCALIZABLE ({len(lagunas)}):')
+        lineas += [f"  - {_titulo_de(tp, o)} · {o.get('_responsable')} · vencía "
+                   f"{_fmt(o.get('due_date'))} · {o['_dias']} día(s) · "
+                   f"{o.get('_laguna')}" for tp, o in lagunas]
+    return asunto, cuerpo_html, '\n'.join(lineas)
+
+
 def _componer(hoy, proyectos, tareas):
+    """El correo único con todo, para cuando el reparto está apagado
+    (AVISO_PERSONAL=0). Es lo que hacía el módulo antes del reparto."""
     e = _html.escape
     total = len(proyectos) + len(tareas)
     asunto = f'⚠️ Incumplimiento: {total} compromiso(s) vencido(s) — {_fmt(hoy)}'
@@ -291,37 +538,23 @@ def _componer(hoy, proyectos, tareas):
         f'📁 Proyectos incumplidos ({len(proyectos)})',
         ['Proyecto', 'Responsable', 'Vencía el', 'Retraso'],
         [[e(p.get('name') or '(sin nombre)'), e(p['_responsable']),
-          _fmt(p.get('due_date')),
-          f"<strong style='color:#b91c1c'>{p['_dias']} día(s)</strong>"]
-         for p in proyectos])
+          _fmt(p.get('due_date')), _retraso(p['_dias'])] for p in proyectos])
 
     tabla_t = _tabla_html(
         f'📋 Actividades incumplidas ({len(tareas)})',
         ['Actividad', 'Proyecto', 'Responsable', 'Vencía el', 'Retraso', 'Avance'],
         [[e(t.get('title') or '(sin título)'), e(t['_proyecto']),
-          e(t['_responsable']), _fmt(t.get('due_date')),
-          f"<strong style='color:#b91c1c'>{t['_dias']} día(s)</strong>",
-          f"{t.get('progress_pct') or 0}%"]
-         for t in tareas])
+          e(t['_responsable']), _fmt(t.get('due_date')), _retraso(t['_dias']),
+          f"{t.get('progress_pct') or 0}%"] for t in tareas])
 
-    cuerpo_html = f"""<div style="font-family:Arial,sans-serif;max-width:760px;margin:0 auto;color:#0f172a">
-  <div style="background:#b91c1c;color:#fff;padding:16px 20px;border-radius:12px 12px 0 0">
-    <div style="font-size:19px;font-weight:bold">⚠️ Compromisos incumplidos</div>
-    <div style="font-size:13px;opacity:.9">Revisión del {_fmt(hoy)} · {total} pendiente(s) fuera de plazo</div>
-  </div>
-  <div style="border:1px solid #e2e8f0;border-top:0;border-radius:0 0 12px 12px;padding:8px 20px 24px">
-    <p style="font-size:14px;color:#334155">
-      Los siguientes compromisos pasaron su fecha de vencimiento sin haberse
-      completado. Constan como <strong>INCUMPLIDOS</strong>.
-    </p>
-    {tabla_p}
-    {tabla_t}
-    <p style="font-size:12px;color:#64748b;margin-top:26px;border-top:1px solid #e2e8f0;padding-top:12px">
-      Aviso automático del calendario de vencimientos · CalendarioMAP.
-      Mientras el trabajo siga sin cerrarse, este correo se repite una vez al día.
-    </p>
-  </div>
-</div>"""
+    cuerpo_html = _sobre(
+        '⚠️ Compromisos incumplidos',
+        f'Revisión del {_fmt(hoy)} · {total} pendiente(s) fuera de plazo',
+        'Los siguientes compromisos pasaron su fecha de vencimiento sin haberse '
+        'completado. Constan como <strong>INCUMPLIDOS</strong>.',
+        tabla_p + tabla_t,
+        'Aviso automático del calendario de vencimientos · CalendarioMAP. '
+        'Mientras el trabajo siga sin cerrarse, este correo se repite una vez al día.')
 
     lineas = [f'COMPROMISOS INCUMPLIDOS — {_fmt(hoy)}', '']
     if proyectos:
@@ -338,18 +571,39 @@ def _componer(hoy, proyectos, tareas):
     return asunto, cuerpo_html, '\n'.join(lineas)
 
 
+def _marca_simulacro(destino_real, asunto, cuerpo_html, cuerpo_texto):
+    """Convierte un correo en su ensayo: mismo contenido, pero dice a quién
+    habría ido y se manda a la dirección del despacho."""
+    aviso = (f'<div style="background:#fef3c7;border:1px solid #f59e0b;color:#78350f;'
+             f'padding:10px 14px;border-radius:8px;font-family:Arial,sans-serif;'
+             f'font-size:13px;margin-bottom:14px"><strong>SIMULACRO.</strong> '
+             f'Este correo NO se envió a su destinatario. Iba dirigido a '
+             f'<strong>{_html.escape(destino_real)}</strong>.</div>')
+    return (f'[SIMULACRO → {destino_real}] {asunto}',
+            aviso + cuerpo_html,
+            f'*** SIMULACRO — este correo iba dirigido a {destino_real} '
+            f'y NO se le envió ***\n\n{cuerpo_texto}')
+
+
 # ============================================================
 #  LA REVISIÓN
 # ============================================================
-def revisar_vencimientos(app, forzar=False):
-    """Un ciclo completo: mirar qué está incumplido, avisar y dejar constancia.
+def revisar_vencimientos(app, forzar=False, simulacro=False):
+    """Un ciclo completo: mirar qué está incumplido, avisar a cada quien y dejar
+    constancia.
 
     `forzar` reenvía aunque ya se hubiera avisado hoy (sirve para probar que el
-    correo sale de verdad, sin esperar al día siguiente)."""
+    correo sale de verdad, sin esperar al día siguiente).
+
+    `simulacro` manda TODOS los correos a la dirección del despacho, cada uno
+    diciendo a quién habría ido, y no registra nada. Es la forma de ver qué le
+    llegaría a cada persona antes de que le llegue de verdad — y con un aviso
+    que escribe a terceros, esa comprobación no es un lujo."""
     if not app.supabase:
         return {'success': False, 'error': 'Sin base de datos'}
     with _LOCK:
         hoy = hoy_local()
+        cf = _conf(app)
         try:
             datos = incumplidos(app, hoy)
         except ConsultaFallida as e:
@@ -359,42 +613,149 @@ def revisar_vencimientos(app, forzar=False):
                     'error': f'No se pudo consultar la base ({e}). No se avisa '
                              'nada porque no se ha podido mirar, no porque no '
                              'haya incumplimientos.'}
-        proyectos, tareas = datos['proyectos'], datos['tareas']
-        total_detectado = len(proyectos) + len(tareas)
 
-        if not forzar:
-            ya = _ya_avisado(app, hoy)
-            proyectos = [p for p in proyectos if ('proyecto', p['id']) not in ya]
-            tareas = [t for t in tareas if ('actividad', t['id']) not in ya]
-
-        if not proyectos and not tareas:
-            return {'success': True, 'detectados': total_detectado, 'avisados': 0,
-                    'enviado': False,
-                    'mensaje': 'Nada nuevo que avisar' if total_detectado
-                               else 'Sin incumplimientos'}
+        todos = ([('proyecto', p) for p in datos['proyectos']] +
+                 [('actividad', t) for t in datos['tareas']])
+        total_detectado = len(todos)
+        direccion = cf['destino']
+        if not total_detectado:
+            return {'success': True, 'detectados': 0, 'avisados': 0,
+                    'enviado': False, 'destino': direccion,
+                    'proyectos': 0, 'actividades': 0,
+                    'mensaje': 'Sin incumplimientos'}
 
         if not correo_configurado(app):
             return {'success': False, 'detectados': total_detectado, 'avisados': 0,
-                    'enviado': False,
+                    'enviado': False, 'proyectos': 0, 'actividades': 0,
+                    'destino': direccion,
                     'error': 'Correo no configurado: define SMTP_HOST, SMTP_USER, '
                              'SMTP_PASSWORD y SMTP_FROM en el entorno.'}
 
-        asunto, cuerpo_html, cuerpo_texto = _componer(hoy, proyectos, tareas)
-        destino = _conf(app)['destino']
-        ok, error = enviar_correo(app, asunto, cuerpo_html, cuerpo_texto, [destino])
-        if not ok:
-            return {'success': False, 'detectados': total_detectado, 'avisados': 0,
-                    'enviado': False, 'error': error}
+        ya = set() if (forzar or simulacro) else _ya_avisado(app, hoy)
+        umbral = cf['escalado_dias']
 
-        _registrar_avisos(app, hoy, destino,
-                          [('proyecto', p, p.get('name') or '') for p in proyectos] +
-                          [('actividad', t, t.get('title') or '') for t in tareas])
-        print(f'[avisos] incumplimientos avisados a {destino}: '
-              f'{len(proyectos)} proyecto(s), {len(tareas)} actividad(es)')
-        return {'success': True, 'detectados': total_detectado,
-                'avisados': len(proyectos) + len(tareas),
-                'proyectos': len(proyectos), 'actividades': len(tareas),
-                'enviado': True, 'destino': destino}
+        # ── Reparto apagado: un solo correo con todo, como antes ────
+        if not cf['personal']:
+            proyectos = [o for tp, o in todos if tp == 'proyecto'
+                         and _clave(tp, o['id'], direccion) not in ya]
+            tareas = [o for tp, o in todos if tp == 'actividad'
+                      and _clave(tp, o['id'], direccion) not in ya]
+            if not proyectos and not tareas:
+                return {'success': True, 'detectados': total_detectado, 'avisados': 0,
+                        'enviado': False, 'destino': direccion,
+                        'proyectos': 0, 'actividades': 0,
+                        'mensaje': 'Nada nuevo que avisar'}
+            asunto, html, texto = _componer(hoy, proyectos, tareas)
+            if simulacro:
+                asunto, html, texto = _marca_simulacro(direccion, asunto, html, texto)
+            ok, error = enviar_correo(app, asunto, html, texto, [direccion])
+            if not ok:
+                return {'success': False, 'detectados': total_detectado, 'avisados': 0,
+                        'enviado': False, 'destino': direccion, 'proyectos': 0,
+                        'actividades': 0, 'error': error}
+            if not simulacro:
+                _registrar_avisos(
+                    app, hoy,
+                    [('proyecto', p, p.get('name') or '', direccion) for p in proyectos] +
+                    [('actividad', t, t.get('title') or '', direccion) for t in tareas])
+            return {'success': True, 'detectados': total_detectado,
+                    'avisados': len(proyectos) + len(tareas),
+                    'proyectos': len(proyectos), 'actividades': len(tareas),
+                    'enviado': True, 'destino': direccion, 'personal': False,
+                    'simulacro': simulacro}
+
+        # ── El reparto ──────────────────────────────────────────────
+        # Cada uno con lo suyo; a la dirección lo enquistado y lo huérfano.
+        por_persona = {}          # correo en minúsculas -> qué le toca
+        escalado, lagunas = [], []
+        for tipo, obj in todos:
+            correo = obj.get('_correo')
+            if not correo:
+                lagunas.append((tipo, obj))
+                continue
+            caja = por_persona.setdefault(
+                correo.lower(),
+                {'correo': correo, 'nombre': obj.get('_responsable') or '',
+                 'proyectos': [], 'tareas': []})
+            if _clave(tipo, obj['id'], correo) not in ya:
+                caja['proyectos' if tipo == 'proyecto' else 'tareas'].append(obj)
+            if obj['_dias'] > umbral:
+                escalado.append((tipo, obj))
+
+        # ── Los recordatorios personales ────────────────────────────
+        registrados, fallos, enviados_a = [], [], []
+        avisados_p = avisados_t = 0
+        for caja in por_persona.values():
+            ps, ts = caja['proyectos'], caja['tareas']
+            if not ps and not ts:
+                continue          # ya se le avisó hoy de todo lo suyo
+            asunto, html, texto = _componer_personal(hoy, caja['nombre'], ps, ts)
+            destino_envio = caja['correo']
+            if simulacro:
+                asunto, html, texto = _marca_simulacro(destino_envio, asunto, html, texto)
+                destino_envio = direccion
+            ok, error = enviar_correo(app, asunto, html, texto, [destino_envio])
+            if not ok:
+                # El fallo con un destinatario no puede cancelar a los demás:
+                # cada correo es un reclamo independiente.
+                fallos.append(f"{caja['correo']}: {error}")
+                continue
+            enviados_a.append(caja['correo'])
+            avisados_p += len(ps)
+            avisados_t += len(ts)
+            registrados += (
+                [('proyecto', p, p.get('name') or '', caja['correo']) for p in ps] +
+                [('actividad', t, t.get('title') or '', caja['correo']) for t in ts])
+
+        # ── Lo que sube a la dirección ──────────────────────────────
+        escalado_nuevo = [(tp, o) for tp, o in escalado
+                          if _clave(tp, o['id'], direccion) not in ya]
+        lagunas_nuevas = [(tp, o) for tp, o in lagunas
+                          if _clave(tp, o['id'], direccion) not in ya]
+        enviado_direccion = False
+        if escalado_nuevo or lagunas_nuevas:
+            asunto, html, texto = _componer_direccion(
+                hoy, escalado_nuevo, lagunas_nuevas, umbral)
+            if simulacro:
+                asunto, html, texto = _marca_simulacro(direccion, asunto, html, texto)
+            ok, error = enviar_correo(app, asunto, html, texto, [direccion])
+            if ok:
+                enviado_direccion = True
+                enviados_a.append(direccion)
+                registrados += [(tp, o, _titulo_de(tp, o), direccion)
+                                for tp, o in escalado_nuevo + lagunas_nuevas]
+            else:
+                fallos.append(f'{direccion}: {error}')
+
+        if registrados and not simulacro:
+            _registrar_avisos(app, hoy, registrados)
+
+        personas = len({c.lower() for c in enviados_a if c.lower() != direccion.lower()})
+        print(f'[avisos] {avisados_p + avisados_t} compromiso(s) reclamados a '
+              f'{personas} responsable(s); {len(escalado_nuevo)} escalado(s) y '
+              f'{len(lagunas_nuevas)} sin responsable a {direccion}')
+        resultado = {
+            'success': not fallos,
+            'detectados': total_detectado,
+            'avisados': avisados_p + avisados_t,
+            'proyectos': avisados_p,
+            'actividades': avisados_t,
+            'enviado': bool(enviados_a),
+            'destino': direccion,
+            'personal': True,
+            'simulacro': simulacro,
+            'destinatarios': sorted({c for c in enviados_a}),
+            'personas_avisadas': personas,
+            'escalados': len(escalado_nuevo),
+            'sin_responsable': len(lagunas_nuevas),
+            'escalado_dias': umbral,
+            'aviso_direccion': enviado_direccion,
+        }
+        if fallos:
+            resultado['error'] = 'No se pudo avisar a: ' + '; '.join(fallos[:5])
+        elif not enviados_a:
+            resultado['mensaje'] = 'Nada nuevo que avisar'
+        return resultado
 
 
 def estado(app):
@@ -405,8 +766,13 @@ def estado(app):
         'correo_configurado': correo_configurado(app),
         'destino': cf['destino'],
         'hora_revision': cf['hora'],
+        'reparto_personal': cf['personal'],
+        'escalado_dias': cf['escalado_dias'],
         'proyectos_incumplidos': 0,
         'actividades_incumplidas': 0,
+        'con_responsable': 0,
+        'sin_responsable': 0,
+        'personas': 0,
         'avisado_hoy': False,
         'base_ok': True,
     }
@@ -419,6 +785,10 @@ def estado(app):
         return resumen
     resumen['proyectos_incumplidos'] = len(datos['proyectos'])
     resumen['actividades_incumplidas'] = len(datos['tareas'])
+    todos = datos['proyectos'] + datos['tareas']
+    resumen['con_responsable'] = len([o for o in todos if o.get('_correo')])
+    resumen['sin_responsable'] = len([o for o in todos if not o.get('_correo')])
+    resumen['personas'] = len({o['_correo'].lower() for o in todos if o.get('_correo')})
     ultimos = app.supabase.get('vencimiento_avisos', {'fecha': hoy.isoformat()},
                                select='enviado_en') if app.supabase else []
     resumen['avisado_hoy'] = bool(ultimos)

@@ -53,9 +53,18 @@ class Config:
     SMTP_PASSWORD = os.getenv('SMTP_PASSWORD', '')
     SMTP_FROM     = os.getenv('SMTP_FROM', '') or os.getenv('SMTP_USER', '')
     SMTP_SSL      = os.getenv('SMTP_SSL', '0') == '1'   # 1 = puerto 465 directo
-    # A quién se le reclama el incumplimiento y a qué hora se revisa (local).
-    AVISO_EMAIL   = os.getenv('AVISO_EMAIL', 'jomapconsultores@gmail.com')
+    # A qué hora se revisa (local) y a dónde suben los incumplimientos que ya no
+    # son sólo cosa de quien los tiene.
     AVISO_HORA    = int(os.getenv('AVISO_HORA', '8'))
+    # ── A quién se le reclama ──
+    # El recordatorio diario va a la PERSONA que no lo hizo, con lo suyo y sólo
+    # lo suyo. AVISO_EMAIL dejó de ser «la lista de todo» y pasó a ser la
+    # dirección a la que se escala: lo que lleva más de AVISO_ESCALADO_DIAS días
+    # de retraso, y lo que no se le pudo reclamar a nadie porque falta el correo
+    # del responsable. Con AVISO_PERSONAL=0 se vuelve al correo único con todo.
+    AVISO_EMAIL          = os.getenv('AVISO_EMAIL', 'jomapconsultores@gmail.com')
+    AVISO_PERSONAL       = os.getenv('AVISO_PERSONAL', '1') != '0'
+    AVISO_ESCALADO_DIAS  = int(os.getenv('AVISO_ESCALADO_DIAS', '7'))
     TIMEZONE = 'America/Guayaquil'
     # Sincronización de navegadores (Avast ⇄ Brave). ACTIVA por defecto: el acceso
     # ya está blindado a un único administrador dueño (OWNER_EMAIL) + rol admin.

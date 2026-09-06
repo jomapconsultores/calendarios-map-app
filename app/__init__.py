@@ -4699,12 +4699,19 @@ def create_app():
     def vencimientos_revisar():
         """Dispara la revisión a mano. Con ?forzar=1 reenvía aunque ya se
         hubiera avisado hoy, que es la única forma de comprobar que el correo
-        sale de verdad sin esperar a mañana."""
+        sale de verdad sin esperar a mañana.
+
+        Con ?simulacro=1 los correos que irían a cada responsable se mandan
+        todos a la dirección del despacho, diciendo a quién habrían ido, y no
+        se registra nada. Es la prueba que hay que hacer antes de que un aviso
+        automático le escriba por primera vez a un tercero."""
         if not is_admin():
             return jsonify({'success': False, 'error': 'Solo admin'}), 403
         forzar = request.args.get('forzar') == '1'
+        simulacro = request.args.get('simulacro') == '1'
         try:
-            return jsonify(_avisos.revisar_vencimientos(app, forzar=forzar))
+            return jsonify(_avisos.revisar_vencimientos(
+                app, forzar=forzar, simulacro=simulacro))
         except Exception as e:
             return jsonify({'success': False, 'error': str(e)[:300]})
 

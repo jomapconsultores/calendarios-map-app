@@ -627,13 +627,22 @@ input[type=range].prog-range{accent-color:#4f46e5;width:100%}
       <div class="modal-body">
         <p class="small text-muted">
           Una vez al día se revisan los plazos. Lo que pasó su fecha de vencimiento
-          sin estar terminado se reúne en un solo correo, no en uno por cada cosa.
+          sin estar terminado se le recuerda <strong>a quien lo tiene a su cargo</strong>,
+          en un solo correo con lo suyo. A la dirección sube lo que se enquistó y
+          lo que no se le puede reclamar a nadie.
         </p>
         <div id="avisosEstado" class="small">Consultando…</div>
         <hr>
-        <button class="btn btn-outline-danger btn-sm rounded-pill" onclick="probarAviso()">
+        <button class="btn btn-outline-secondary btn-sm rounded-pill" onclick="probarAviso(true)">
+          🧪 Simulacro (todo a tu correo)
+        </button>
+        <button class="btn btn-outline-danger btn-sm rounded-pill" onclick="probarAviso(false)">
           ✉️ Revisar y enviar ahora
         </button>
+        <div class="text-muted mt-2" style="font-size: var(--fs-xs)">
+          El simulacro te manda a ti los correos que recibiría cada persona, cada uno
+          diciendo a quién habría ido. No le llega nada a nadie y no queda registrado.
+        </div>
         <div id="avisosResultado" class="small mt-2"></div>
       </div>
     </div>
@@ -2281,10 +2290,26 @@ async function abrirAvisosModal() {
     return;
   }
   const hora = String(r.hora_revision).padStart(2, '0') + ':00';
+  const aQuien = r.reparto_personal
+    ? `✅ Todos los días a las ${hora} se le recuerda a <strong>cada responsable</strong> lo suyo.
+       Lo que pase de <strong>${r.escalado_dias} día(s)</strong> de retraso y lo que no tenga
+       responsable localizable sube a <strong>${esc(r.destino)}</strong>.`
+    : `✅ El correo saldrá a <strong>${esc(r.destino)}</strong> todos los días a las ${hora},
+       con todo junto (reparto por responsable apagado con <code>AVISO_PERSONAL=0</code>).`;
+  // Los incumplimientos sin responsable localizable se dicen aparte y en rojo:
+  // son los que HOY no se le están reclamando a nadie, y esconderlos entre los
+  // totales es la forma de que nadie los arregle nunca.
+  const laguna = r.sin_responsable > 0
+    ? `<div class="alert alert-warning py-2 mt-2 mb-0">
+         ⚠️ <strong>${r.sin_responsable}</strong> incumplimiento(s) <strong>sin responsable
+         localizable</strong>: no se le reclaman a nadie. Te suben a ti con el motivo, y se
+         arreglan poniendo el responsable en la ficha o su correo en el directorio.
+       </div>`
+    : '';
   caja.innerHTML = `
     <div class="${r.correo_configurado ? 'alert alert-success' : 'alert alert-warning'} py-2">
       ${r.correo_configurado
-        ? `✅ El correo saldrá a <strong>${esc(r.destino)}</strong> todos los días a las ${hora}.`
+        ? aQuien
         : `⚠️ <strong>El correo no está configurado</strong> y por eso el aviso no sale.
            Hay que rellenar <code>SMTP_HOST</code>, <code>SMTP_USER</code>,
            <code>SMTP_PASSWORD</code> y <code>SMTP_FROM</code> en el entorno del servidor.`}
@@ -2292,21 +2317,40 @@ async function abrirAvisosModal() {
     <div class="d-flex gap-3 flex-wrap">
       <span>📁 Proyectos incumplidos: <strong>${r.proyectos_incumplidos}</strong></span>
       <span>📋 Actividades incumplidas: <strong>${r.actividades_incumplidas}</strong></span>
+      <span>👤 Se reclaman a: <strong>${r.personas}</strong> persona(s)</span>
     </div>
+    ${laguna}
     <div class="text-muted mt-2">${r.avisado_hoy ? 'Hoy ya se avisó.' : 'Hoy todavía no se ha avisado.'}</div>`;
 }
 
-async function probarAviso() {
+async function probarAviso(simulacro) {
   const res = document.getElementById('avisosResultado');
-  res.innerHTML = '<span class="text-muted">⏳ Revisando plazos y enviando…</span>';
+  res.innerHTML = simulacro
+    ? '<span class="text-muted">⏳ Ensayando el reparto y enviándotelo…</span>'
+    : '<span class="text-muted">⏳ Revisando plazos y avisando a cada responsable…</span>';
   let r;
+  const url = '/planning/api/vencimientos/revisar?forzar=1' + (simulacro ? '&simulacro=1' : '');
   try {
-    r = await fetch('/planning/api/vencimientos/revisar?forzar=1', {method: 'POST'}).then(x => x.json());
+    r = await fetch(url, {method: 'POST'}).then(x => x.json());
   } catch (e) { r = {success: false, error: 'Sin conexión'}; }
-  if (!r.success) { res.innerHTML = `<span class="text-danger">❌ ${esc(r.error || 'Error')}</span>`; return; }
-  res.innerHTML = r.enviado
-    ? `<span class="text-success">✅ Correo enviado a ${esc(r.destino)}: ${r.proyectos} proyecto(s) y ${r.actividades} actividad(es) incumplidas.</span>`
-    : `<span class="text-muted">Nada que avisar: no hay plazos incumplidos.</span>`;
+  if (!r.enviado && !r.success) { res.innerHTML = `<span class="text-danger">❌ ${esc(r.error || 'Error')}</span>`; return; }
+  if (!r.enviado) { res.innerHTML = `<span class="text-muted">Nada que avisar: no hay plazos incumplidos.</span>`; return; }
+
+  const quienes = (r.destinatarios || [r.destino]).map(esc).join(', ');
+  let texto = r.personal
+    ? `✅ ${r.avisados} compromiso(s) reclamados a ${r.personas_avisadas} responsable(s).`
+    : `✅ Correo enviado a ${esc(r.destino)}: ${r.proyectos} proyecto(s) y ${r.actividades} actividad(es).`;
+  if (r.escalados) texto += ` 🔺 ${r.escalados} escalado(s) por pasar de ${r.escalado_dias} día(s).`;
+  if (r.sin_responsable) texto += ` ❓ ${r.sin_responsable} sin responsable localizable.`;
+  // Un envío a medias no se puede enseñar como un éxito: si alguien se quedó
+  // sin su recordatorio, eso es lo primero que hay que leer.
+  const fallo = r.error ? `<div class="text-danger mt-1">⚠️ ${esc(r.error)}</div>` : '';
+  res.innerHTML = (r.simulacro
+      ? `<span class="text-secondary">🧪 SIMULACRO — nada le llegó a sus destinatarios. ${texto}</span>`
+      : `<span class="text-success">${texto}</span>`)
+    + `<div class="text-muted mt-1" style="font-size: var(--fs-xs)">`
+    + `${r.simulacro ? 'Habría ido a' : 'Enviado a'}: ${quienes}</div>`
+    + fallo;
 }
 
 // ——————————————————————————————————————————
