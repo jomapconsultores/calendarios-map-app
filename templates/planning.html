@@ -643,6 +643,19 @@ input[type=range].prog-range{accent-color:#4f46e5;width:100%}
           El simulacro te manda a ti los correos que recibiría cada persona, cada uno
           diciendo a quién habría ido. No le llega nada a nadie y no queda registrado.
         </div>
+        <hr>
+        <p class="small text-muted mb-2">
+          Aparte del aviso diario, puedes mandarle a cada uno <strong>todo lo que tiene
+          abierto</strong> —lo vencido y lo que aún está en plazo—. Esto no sale solo:
+          sale cuando lo pides.
+        </p>
+        <button class="btn btn-outline-secondary btn-sm rounded-pill" onclick="enviarPendientes(true)">
+          🧪 Simulacro
+        </button>
+        <button class="btn btn-outline-primary btn-sm rounded-pill" onclick="enviarPendientes(false)">
+          📋 Enviar a cada uno sus pendientes
+        </button>
+        <div id="pendientesResultado" class="small mt-2"></div>
         <div id="avisosResultado" class="small mt-2"></div>
       </div>
     </div>
@@ -2351,6 +2364,27 @@ async function probarAviso(simulacro) {
     + `<div class="text-muted mt-1" style="font-size: var(--fs-xs)">`
     + `${r.simulacro ? 'Habría ido a' : 'Enviado a'}: ${quienes}</div>`
     + fallo;
+}
+
+async function enviarPendientes(simulacro) {
+  const res = document.getElementById('pendientesResultado');
+  res.innerHTML = '<span class="text-muted">⏳ Reuniendo lo pendiente de cada uno…</span>';
+  let r;
+  const url = '/planning/api/pendientes/enviar' + (simulacro ? '?simulacro=1' : '');
+  try {
+    r = await fetch(url, {method: 'POST'}).then(x => x.json());
+  } catch (e) { r = {success: false, error: 'Sin conexión'}; }
+  if (!r.enviado && !r.success) { res.innerHTML = `<span class="text-danger">❌ ${esc(r.error || 'Error')}</span>`; return; }
+  if (!r.enviado) { res.innerHTML = `<span class="text-muted">${esc(r.mensaje || 'No hay nada pendiente')}</span>`; return; }
+  let texto = `✅ ${r.enviadas} tarea(s) enviadas a ${r.personas_avisadas} persona(s).`;
+  if (r.sin_responsable) texto += ` ❓ ${r.sin_responsable} sin responsable localizable, te suben a ti.`;
+  const quienes = (r.destinatarios || []).map(esc).join(', ');
+  res.innerHTML = (r.simulacro
+      ? `<span class="text-secondary">🧪 SIMULACRO — nada le llegó a sus destinatarios. ${texto}</span>`
+      : `<span class="text-success">${texto}</span>`)
+    + `<div class="text-muted mt-1" style="font-size: var(--fs-xs)">`
+    + `${r.simulacro ? 'Habría ido a' : 'Enviado a'}: ${quienes}</div>`
+    + (r.error ? `<div class="text-danger mt-1">⚠️ ${esc(r.error)}</div>` : '');
 }
 
 // ——————————————————————————————————————————

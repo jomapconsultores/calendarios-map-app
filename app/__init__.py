@@ -4730,6 +4730,34 @@ def create_app():
         except Exception as e:
             return jsonify({'success': False, 'error': str(e)[:300]})
 
+    # ── La agenda de pendientes ──
+    # No es el aviso diario: aquél reclama lo vencido y sale solo. Esto le manda
+    # a cada quien TODO lo que tiene abierto, vencido o no, y sólo cuando
+    # alguien lo pide.
+    @app.route('/planning/api/pendientes/enviar', methods=['POST'])
+    @login_required
+    def pendientes_enviar():
+        if not is_admin():
+            return jsonify({'success': False, 'error': 'Solo admin'}), 403
+        simulacro = request.args.get('simulacro') == '1'
+        try:
+            return jsonify(_avisos.enviar_pendientes(app, simulacro=simulacro))
+        except Exception as e:
+            return jsonify({'success': False, 'error': str(e)[:300]})
+
+    @app.route('/planning/api/pendientes-cron', methods=['POST', 'GET'])
+    def pendientes_cron():
+        """La misma agenda, disparada desde fuera con el secreto del cron."""
+        secreto = app.config.get('CRON_SECRET') or ''
+        recibido = request.headers.get('X-Cron-Secret') or request.args.get('secret') or ''
+        if not secreto or recibido != secreto:
+            return jsonify({'success': False, 'error': 'No autorizado'}), 401
+        try:
+            return jsonify(_avisos.enviar_pendientes(
+                app, simulacro=request.args.get('simulacro') == '1'))
+        except Exception as e:
+            return jsonify({'success': False, 'error': str(e)[:300]})
+
     @app.route('/planning/api/bitacora', methods=['GET'])
     @login_required
     def planning_bitacora():

@@ -407,10 +407,14 @@ def _retraso(dias):
     return f"<strong style='color:#b91c1c'>{dias} día(s)</strong>"
 
 
-def _sobre(titulo_cabecera, subtitulo, introduccion, cuerpo, pie):
-    """El marco común de todos estos correos."""
+def _sobre(titulo_cabecera, subtitulo, introduccion, cuerpo, pie, color='#b91c1c'):
+    """El marco común de todos estos correos.
+
+    El color no es decoración: el rojo es para el incumplimiento. La agenda de
+    pendientes lleva otro, porque la mayoría de lo que enseña está en plazo y
+    pintarla de rojo enseñaría a ignorar el rojo."""
     return f"""<div style="font-family:Arial,sans-serif;max-width:760px;margin:0 auto;color:#0f172a">
-  <div style="background:#b91c1c;color:#fff;padding:16px 20px;border-radius:12px 12px 0 0">
+  <div style="background:{color};color:#fff;padding:16px 20px;border-radius:12px 12px 0 0">
     <div style="font-size:19px;font-weight:bold">{titulo_cabecera}</div>
     <div style="font-size:13px;opacity:.9">{subtitulo}</div>
   </div>
@@ -569,6 +573,185 @@ def _componer(hoy, proyectos, tareas):
                    f"vencía {_fmt(t.get('due_date'))} · {t['_dias']} día(s) de retraso"
                    for t in tareas]
     return asunto, cuerpo_html, '\n'.join(lineas)
+
+
+# ============================================================
+#  LA AGENDA DE PENDIENTES
+#
+#  Distinta del aviso de incumplimiento y a propósito. Aquel sale solo, todos
+#  los días, y reclama lo que ya se pasó de fecha. Esta se manda cuando alguien
+#  la manda, y enseña TODO lo que cada quien tiene abierto —lo vencido y lo que
+#  todavía está en plazo—, que es lo que hace falta para organizarse la semana.
+#  Un correo diario con las tareas que aún no vencen sería ruido, y el ruido
+#  diario es lo que acaba haciendo que tampoco se lea el que sí importa.
+# ============================================================
+def pendientes(app, hoy=None):
+    """Todo lo que sigue abierto, con o sin plazo vencido, por responsable."""
+    hoy = hoy or hoy_local()
+    tareas = _consultar(
+        app, 'tasks', {'status': 'neq.done'},
+        'id,title,due_date,status,assigned_to,assigned_email,'
+        'project_id,created_by,progress_pct,source,source_app')
+    tareas = [t for t in tareas if _es_compromiso(t)]
+
+    por_nombre, nombres_por_id, ambiguos = _directorio(app)
+    nombre_proyecto = {p['id']: p.get('name') for p in
+                       (app.supabase.get('projects', select='id,name') or [])}
+    for t in tareas:
+        declarado = t.get('assigned_to')
+        t['_responsable'] = (declarado or t.get('assigned_email')
+                             or nombres_por_id.get(str(t.get('created_by') or '')) or '—')
+        t['_correo'], t['_laguna'] = _resolver_destino(
+            declarado, t.get('assigned_email'), por_nombre, ambiguos)
+        t['_dias'] = _dias_retraso(t.get('due_date'), hoy) if t.get('due_date') else None
+        t['_proyecto'] = nombre_proyecto.get(t.get('project_id')) or '—'
+    # Lo más urgente primero: lo vencido por antigüedad, después lo que vence
+    # antes, y al final lo que no tiene fecha.
+    tareas.sort(key=lambda t: (t['_dias'] is None, -(t['_dias'] if t['_dias'] is not None else 0)))
+    return tareas
+
+
+def _componer_agenda(hoy, nombre, tareas):
+    """La lista de pendientes de una persona, separada por lo que apremia."""
+    e = _html.escape
+    vencidas = [t for t in tareas if t['_dias'] is not None and t['_dias'] > 0]
+    hoy_mismo = [t for t in tareas if t['_dias'] == 0]
+    futuras = [t for t in tareas if t['_dias'] is not None and t['_dias'] < 0]
+    sin_fecha = [t for t in tareas if t['_dias'] is None]
+    total = len(tareas)
+    asunto = f'📋 Tus tareas pendientes: {total} — {_fmt(hoy)}'
+
+    def _tabla(titulo, filas_datos, columna_plazo):
+        return _tabla_html(
+            titulo, ['Tarea', 'Proyecto', 'Fecha', columna_plazo, 'Avance'],
+            [[e(t.get('title') or '(sin título)'), e(t['_proyecto']),
+              _fmt(t.get('due_date')) or '—', plazo,
+              f"{t.get('progress_pct') or 0}%"]
+             for t, plazo in filas_datos])
+
+    cuerpo = _tabla(f'🔴 Vencidas ({len(vencidas)})',
+                    [(t, _retraso(t['_dias'])) for t in vencidas], 'Retraso')
+    cuerpo += _tabla(f'🟠 Vencen hoy ({len(hoy_mismo)})',
+                     [(t, '<strong>hoy</strong>') for t in hoy_mismo], 'Plazo')
+    cuerpo += _tabla(
+        f'🟢 En plazo ({len(futuras)})',
+        [(t, f"faltan {abs(t['_dias'])} día(s)") for t in futuras], 'Plazo')
+    cuerpo += _tabla(f'⚪ Sin fecha ({len(sin_fecha)})',
+                     [(t, '—') for t in sin_fecha], 'Plazo')
+
+    saludo = f'{e(nombre)}: esto' if nombre and nombre != '—' else 'Esto'
+    cuerpo_html = _sobre(
+        '📋 Tus tareas pendientes',
+        f'Al {_fmt(hoy)} · {total} sin cerrar'
+        + (f' · {len(vencidas)} ya vencida(s)' if vencidas else ''),
+        f'{saludo} es todo lo que tienes abierto a tu nombre, esté o no fuera de '
+        'plazo. Lo de arriba es lo que ya se pasó de fecha; lo de abajo, lo que '
+        'todavía está a tiempo.',
+        cuerpo,
+        'Enviado desde el calendario de vencimientos · CalendarioMAP.',
+        color='#1d4ed8')
+
+    lineas = [f'TUS TAREAS PENDIENTES — {_fmt(hoy)} ({total})', '']
+    for etiqueta, grupo in (('VENCIDAS', vencidas), ('VENCEN HOY', hoy_mismo),
+                            ('EN PLAZO', futuras), ('SIN FECHA', sin_fecha)):
+        if not grupo:
+            continue
+        lineas.append(f'{etiqueta} ({len(grupo)}):')
+        for t in grupo:
+            if t['_dias'] is None:
+                plazo = 'sin fecha'
+            elif t['_dias'] > 0:
+                plazo = f"{t['_dias']} día(s) de retraso"
+            elif t['_dias'] == 0:
+                plazo = 'vence hoy'
+            else:
+                plazo = f"faltan {abs(t['_dias'])} día(s)"
+            lineas.append(f"  - {t.get('title')} [{t['_proyecto']}] · "
+                          f"{_fmt(t.get('due_date')) or 'sin fecha'} · {plazo}")
+        lineas.append('')
+    return asunto, cuerpo_html, '\n'.join(lineas)
+
+
+def enviar_pendientes(app, simulacro=False):
+    """Le manda a cada responsable su lista completa de pendientes.
+
+    A diferencia del aviso de incumplimiento, esto NO se deduplica por día: se
+    manda cuando alguien decide mandarlo, y quien lo decide sabe que lo está
+    mandando. Lo que sí queda es constancia, con tipo `agenda`, para poder decir
+    después qué se le pasó a quién y cuándo."""
+    if not app.supabase:
+        return {'success': False, 'error': 'Sin base de datos'}
+    hoy = hoy_local()
+    cf = _conf(app)
+    direccion = cf['destino']
+    try:
+        tareas = pendientes(app, hoy)
+    except ConsultaFallida as e:
+        return {'success': False, 'enviado': False,
+                'error': f'No se pudo consultar la base ({e}). No se manda nada '
+                         'porque no se ha podido mirar.'}
+    if not tareas:
+        return {'success': True, 'detectados': 0, 'enviado': False,
+                'destino': direccion, 'mensaje': 'No hay nada pendiente'}
+    if not correo_configurado(app):
+        return {'success': False, 'detectados': len(tareas), 'enviado': False,
+                'error': 'Correo no configurado: define SMTP_HOST, SMTP_USER, '
+                         'SMTP_PASSWORD y SMTP_FROM en el entorno.'}
+
+    por_persona, lagunas = {}, []
+    for t in tareas:
+        correo = t.get('_correo')
+        if not correo:
+            lagunas.append(('actividad', t))
+            continue
+        caja = por_persona.setdefault(
+            correo.lower(), {'correo': correo, 'nombre': t.get('_responsable') or '',
+                             'tareas': []})
+        caja['tareas'].append(t)
+
+    registrados, fallos, enviados_a = [], [], []
+    mandadas = 0
+    for caja in por_persona.values():
+        asunto, html, texto = _componer_agenda(hoy, caja['nombre'], caja['tareas'])
+        destino_envio = caja['correo']
+        if simulacro:
+            asunto, html, texto = _marca_simulacro(destino_envio, asunto, html, texto)
+            destino_envio = direccion
+        ok, error = enviar_correo(app, asunto, html, texto, [destino_envio])
+        if not ok:
+            fallos.append(f"{caja['correo']}: {error}")
+            continue
+        enviados_a.append(caja['correo'])
+        mandadas += len(caja['tareas'])
+        registrados += [('agenda', t, t.get('title') or '', caja['correo'])
+                        for t in caja['tareas']]
+
+    # Lo que no tiene responsable localizable no se queda sin decir.
+    if lagunas:
+        asunto, html, texto = _componer_direccion(hoy, [], lagunas, cf['escalado_dias'])
+        if simulacro:
+            asunto, html, texto = _marca_simulacro(direccion, asunto, html, texto)
+        ok, error = enviar_correo(app, asunto, html, texto, [direccion])
+        if ok:
+            enviados_a.append(direccion)
+        else:
+            fallos.append(f'{direccion}: {error}')
+
+    if registrados and not simulacro:
+        _registrar_avisos(app, hoy, registrados)
+
+    personas = len({c.lower() for c in enviados_a if c.lower() != direccion.lower()})
+    print(f'[avisos] agenda de pendientes: {mandadas} tarea(s) a {personas} persona(s)'
+          + (' (simulacro)' if simulacro else ''))
+    resultado = {
+        'success': not fallos, 'detectados': len(tareas), 'enviadas': mandadas,
+        'enviado': bool(enviados_a), 'personas_avisadas': personas,
+        'destinatarios': sorted(set(enviados_a)), 'destino': direccion,
+        'sin_responsable': len(lagunas), 'simulacro': simulacro,
+    }
+    if fallos:
+        resultado['error'] = 'No se pudo enviar a: ' + '; '.join(fallos[:5])
+    return resultado
 
 
 def _marca_simulacro(destino_real, asunto, cuerpo_html, cuerpo_texto):
