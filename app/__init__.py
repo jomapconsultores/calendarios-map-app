@@ -2326,12 +2326,18 @@ def create_app():
     @app.context_processor
     def inject_layout_globals():
         connected = False; needs_reauth = False; cuentas_pendientes = []
+        # Las de Google, aparte. El aviso de arriba hablaba de Google y mandaba
+        # a la pantalla de Google fuera cual fuera la cuenta que faltase: con
+        # una de Microsoft sin autorizar se le pedía al administrador que
+        # volviera a dar el permiso de una cuenta de Google que ya lo tenía, y
+        # ese permiso —que vale— se cambiaba por otro igual sin arreglar nada.
+        pendientes_google = []
         try:
             if current_user.is_authenticated and app.supabase:
                 cache_key = f'google_status_{current_user.role}'
                 val, hit = _google_cache.get(cache_key)
                 if hit:
-                    connected, needs_reauth, cuentas_pendientes = val
+                    connected, needs_reauth, cuentas_pendientes, pendientes_google = val
                 else:
                     # Con varias cuentas, «conectado» significa que están todas
                     # las que agendan: faltando una, hay calendarios cuyas citas
@@ -2349,11 +2355,14 @@ def create_app():
                     # sale un calendario, y si les falta el permiso sus citas
                     # tampoco salen. Dejarlas fuera hacía que el menú dijera
                     # que estaba todo conectado con dos cuentas muertas.
-                    cuentas_pendientes = cuentas_pendientes + cuentas_microsoft_pendientes(app)
+                    pendientes_google = list(cuentas_pendientes)
+                    pendientes_microsoft = cuentas_microsoft_pendientes(app)
+                    cuentas_pendientes = pendientes_google + pendientes_microsoft
                     esperadas = list(esperadas) + cuentas_microsoft_que_agendan(app)
                     connected = bool(esperadas) and not cuentas_pendientes
                     needs_reauth = bool(cuentas_pendientes) and current_user.role == 'admin'
-                    _google_cache.set(cache_key, (connected, needs_reauth, cuentas_pendientes))
+                    _google_cache.set(cache_key, (connected, needs_reauth,
+                                                  cuentas_pendientes, pendientes_google))
         except Exception:
             pass
         user_roles_list = []
@@ -2373,7 +2382,10 @@ def create_app():
         # corte pasajero (se arregla solo) de una revocación real (hace falta
         # que una persona vuelva a autorizar).
         google_health = {'estado': 'ok'}
-        if needs_reauth and app.supabase:
+        # Sólo tiene sentido preguntarle a Google cómo está si lo que falta es
+        # una cuenta suya. Con sólo cuentas de Microsoft pendientes, esta
+        # consulta pintaba el aviso como si Google se hubiera caído.
+        if pendientes_google and app.supabase:
             try:
                 google_health = _leer_estado_google(app)
             except Exception:
@@ -2389,6 +2401,7 @@ def create_app():
         # mantiene como alias para no romper ninguna plantilla que aún lo use.
         return {'google_connected_global': connected, 'google_needs_reauth': needs_reauth,
                 'cuentas_pendientes': cuentas_pendientes,
+                'cuentas_pendientes_google': pendientes_google,
                 'google_cuentas_pendientes': cuentas_pendientes,
                 'google_health': google_health, 'atlas_activo': atlas_activo,
                 'user_roles_list': user_roles_list, 'active_role_id': active_role_id,

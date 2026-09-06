@@ -361,23 +361,40 @@
       {# El aviso distingue el corte pasajero de la revocación real: antes los dos
          decían «reconecta», y se mandaba al administrador a repetir el permiso de
          Google por un simple fallo de red que el sistema arregla solo. #}
+      {# Qué falta decide qué se dice. Antes cualquier cuenta pendiente —también
+         las de Microsoft, que no pasan por Google— encendía un aviso que hablaba
+         de Google Calendar y llevaba a `/auth/google` sin decir de quién: allí
+         se repetía el permiso de la cuenta histórica, que ya lo tenía, y el
+         aviso seguía saliendo porque la que faltaba era otra. Ahora el enlace
+         apunta a la cuenta concreta que falta, y si lo pendiente es de
+         Microsoft se manda a la pantalla donde se autoriza, no a Google. #}
       {% if is_adm and google_needs_reauth %}
-      <div class="alert {{ 'alert-info' if google_health.estado == 'transitorio' else 'alert-warning' }}
+      <div class="alert {{ 'alert-info' if (cuentas_pendientes_google and google_health.estado == 'transitorio') else 'alert-warning' }}
                   d-flex align-items-center justify-content-between flex-wrap gap-2" id="avisoGoogle">
-        {% if google_health.estado == 'transitorio' %}
+        {% if not cuentas_pendientes_google %}
+        <span>⚠️ <strong>{{ cuentas_pendientes|length }} cuenta(s) de agenda por autorizar:</strong>
+          {{ cuentas_pendientes | join(', ') }}. Las citas se aprueban igual, pero no
+          salen desde esas direcciones hasta autorizarlas.</span>
+        {% elif google_health.estado == 'transitorio' %}
         <span>🔄 <strong>Google Calendar no responde en este momento.</strong>
           El sistema lo reintenta solo cada hora; las citas se aprueban con normalidad
           y se subirán al calendario en cuanto vuelva.</span>
         {% else %}
-        <span>⚠️ <strong>Google Calendar necesita que vuelvas a autorizar.</strong>
+        <span>⚠️ <strong>Google Calendar necesita que vuelvas a autorizar
+          {{ cuentas_pendientes_google | join(', ') }}.</strong>
           El permiso caducó o fue revocado. Las citas se aprueban igual, pero no llegan
           al calendario hasta reconectar.</span>
         {% endif %}
         <span class="d-flex gap-2">
+          {% if cuentas_pendientes_google %}
           <button class="btn btn-sm btn-outline-secondary" onclick="reintentarGoogle(this)">
             🔄 Reintentar ahora
           </button>
-          <a href="/auth/google" class="btn btn-sm btn-warning">🔗 Volver a autorizar</a>
+          <a href="/auth/google?cuenta={{ cuentas_pendientes_google[0] }}"
+             class="btn btn-sm btn-warning">🔗 Autorizar {{ cuentas_pendientes_google[0] }}</a>
+          {% else %}
+          <a href="/admin/cuentas" class="btn btn-sm btn-warning">🔗 Ir a autorizarlas</a>
+          {% endif %}
         </span>
       </div>
       <script>
