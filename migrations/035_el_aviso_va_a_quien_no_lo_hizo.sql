@@ -26,10 +26,16 @@
 -- y se llega por Tailscale:
 --
 --   ssh atlas
---   docker exec -i contable-supabase-db-1 psql -U postgres -d calendario \
+--   docker exec -i contable-supabase-db-1 psql -U supabase_admin -d calendario \
 --     < 035_el_aviso_va_a_quien_no_lo_hizo.sql
 --
+-- Con `-U postgres` NO funciona: las tablas son de `supabase_admin` y postgres
+-- no es superusuario aquí, así que el CREATE INDEX muere con «must be owner of
+-- table». La transacción lo deja todo como estaba, pero se pierde el viaje.
+--
 -- Es reversible y no borra ninguna fila.
+--
+-- APLICADA en producción el 2026-09-06.
 
 BEGIN;
 
