@@ -645,9 +645,9 @@ input[type=range].prog-range{accent-color:#4f46e5;width:100%}
         </div>
         <hr>
         <p class="small text-muted mb-2">
-          Aparte del aviso diario, puedes mandarle a cada uno <strong>todo lo que tiene
-          abierto</strong> —lo vencido y lo que aún está en plazo—. Esto no sale solo:
-          sale cuando lo pides.
+          Además del aviso, cada día sale la <strong>agenda de pendientes</strong>: a cada
+          uno, todo lo que tiene abierto —lo vencido y lo que aún está en plazo—. Aquí
+          puedes mandarla ahora mismo sin esperar a mañana.
         </p>
         <button class="btn btn-outline-secondary btn-sm rounded-pill" onclick="enviarPendientes(true)">
           🧪 Simulacro
@@ -2304,7 +2304,8 @@ async function abrirAvisosModal() {
   }
   const hora = String(r.hora_revision).padStart(2, '0') + ':00';
   const aQuien = r.reparto_personal
-    ? `✅ Todos los días a las ${hora} se le recuerda a <strong>cada responsable</strong> lo suyo.
+    ? `✅ Todos los días a las ${hora} se le recuerda a <strong>cada responsable</strong> lo suyo
+       ${r.agenda_diaria ? ', y detrás le sale su <strong>agenda de pendientes</strong> completa' : ''}.
        Lo que pase de <strong>${r.escalado_dias} día(s)</strong> de retraso y lo que no tenga
        responsable localizable sube a <strong>${esc(r.destino)}</strong>.`
     : `✅ El correo saldrá a <strong>${esc(r.destino)}</strong> todos los días a las ${hora},

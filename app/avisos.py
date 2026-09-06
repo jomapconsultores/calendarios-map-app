@@ -110,6 +110,10 @@ def _conf(app):
         # módulo a lo que hacía antes: un único correo a la dirección con todo.
         'personal': _bandera('AVISO_PERSONAL', '1'),
         'escalado_dias': _entero('AVISO_ESCALADO_DIAS', ESCALADO_DIAS_POR_DEFECTO),
+        # La agenda de pendientes sale también todos los días, a la misma hora y
+        # detrás del aviso de incumplimiento. Con AGENDA_DIARIA=0 vuelve a salir
+        # sólo cuando alguien la pide desde la pantalla.
+        'agenda_diaria': _bandera('AGENDA_DIARIA', '1'),
     }
 
 
@@ -578,12 +582,19 @@ def _componer(hoy, proyectos, tareas):
 # ============================================================
 #  LA AGENDA DE PENDIENTES
 #
-#  Distinta del aviso de incumplimiento y a propósito. Aquel sale solo, todos
-#  los días, y reclama lo que ya se pasó de fecha. Esta se manda cuando alguien
-#  la manda, y enseña TODO lo que cada quien tiene abierto —lo vencido y lo que
-#  todavía está en plazo—, que es lo que hace falta para organizarse la semana.
-#  Un correo diario con las tareas que aún no vencen sería ruido, y el ruido
-#  diario es lo que acaba haciendo que tampoco se lea el que sí importa.
+#  Distinta del aviso de incumplimiento y a propósito. Aquél reclama lo que ya
+#  se pasó de fecha; ésta enseña TODO lo que cada quien tiene abierto —lo
+#  vencido y lo que todavía está en plazo—, que es lo que hace falta para
+#  organizarse la semana.
+#
+#  Sale también todos los días, detrás del aviso de incumplimiento, por decisión
+#  de MAP (2026-09-06). Se levantó la objeción de que dos correos diarios a la
+#  misma persona acaban leyéndose menos, y la respuesta fue que se manden los
+#  dos: el reclamo de lo incumplido tiene que verse aparte del listado completo.
+#  Queda `AGENDA_DIARIA=0` para volver a dejarla bajo demanda sin tocar código.
+#
+#  El envío diario NO repite si ya salió hoy; el botón de la pantalla sí, porque
+#  ahí hay alguien que lo está pidiendo a conciencia.
 # ============================================================
 def pendientes(app, hoy=None):
     """Todo lo que sigue abierto, con o sin plazo vencido, por responsable."""
@@ -672,13 +683,18 @@ def _componer_agenda(hoy, nombre, tareas):
     return asunto, cuerpo_html, '\n'.join(lineas)
 
 
-def enviar_pendientes(app, simulacro=False):
+def enviar_pendientes(app, simulacro=False, evitar_repetir=False):
     """Le manda a cada responsable su lista completa de pendientes.
 
-    A diferencia del aviso de incumplimiento, esto NO se deduplica por día: se
-    manda cuando alguien decide mandarlo, y quien lo decide sabe que lo está
-    mandando. Lo que sí queda es constancia, con tipo `agenda`, para poder decir
-    después qué se le pasó a quién y cuándo."""
+    `evitar_repetir` salta a quien ya recibió su agenda hoy. Lo usa el envío
+    diario: si el proceso se reinicia cerca de la hora, el hilo vuelve a correr
+    y nadie tiene por qué recibir la misma lista dos veces. El botón de la
+    pantalla lo deja en falso a propósito — ahí hay una persona pidiéndolo, y
+    negarle el envío porque «ya salió esta mañana» sería desobedecer una orden
+    explícita.
+
+    Queda constancia con tipo `agenda`, separada del `actividad`/`proyecto` del
+    incumplimiento, para poder decir después qué se le mandó a quién y cuándo."""
     if not app.supabase:
         return {'success': False, 'error': 'Sin base de datos'}
     hoy = hoy_local()
@@ -709,9 +725,19 @@ def enviar_pendientes(app, simulacro=False):
                              'tareas': []})
         caja['tareas'].append(t)
 
+    ya_hoy = set()
+    if evitar_repetir and not simulacro:
+        filas = app.supabase.get('vencimiento_avisos', {'fecha': hoy.isoformat()},
+                                 select='tipo,destinatario') or []
+        ya_hoy = {(f.get('destinatario') or '').strip().lower()
+                  for f in filas if f.get('tipo') == 'agenda'}
+
     registrados, fallos, enviados_a = [], [], []
-    mandadas = 0
+    mandadas, saltadas = 0, 0
     for caja in por_persona.values():
+        if caja['correo'].lower() in ya_hoy:
+            saltadas += 1
+            continue
         asunto, html, texto = _componer_agenda(hoy, caja['nombre'], caja['tareas'])
         destino_envio = caja['correo']
         if simulacro:
@@ -726,16 +752,23 @@ def enviar_pendientes(app, simulacro=False):
         registrados += [('agenda', t, t.get('title') or '', caja['correo'])
                         for t in caja['tareas']]
 
-    # Lo que no tiene responsable localizable no se queda sin decir.
-    if lagunas:
+    # Lo que no tiene responsable localizable no se queda sin decir. Y cuenta
+    # como «lo de hoy» igual que las agendas: si no se registrara, el envío
+    # diario se saltaría a las personas pero volvería a mandar esta lista cada
+    # vez que el hilo corriera de más.
+    if lagunas and direccion.lower() not in ya_hoy:
         asunto, html, texto = _componer_direccion(hoy, [], lagunas, cf['escalado_dias'])
         if simulacro:
             asunto, html, texto = _marca_simulacro(direccion, asunto, html, texto)
         ok, error = enviar_correo(app, asunto, html, texto, [direccion])
         if ok:
             enviados_a.append(direccion)
+            registrados += [('agenda', t, t.get('title') or '', direccion)
+                            for tp, t in lagunas]
         else:
             fallos.append(f'{direccion}: {error}')
+    elif lagunas:
+        saltadas += 1
 
     if registrados and not simulacro:
         _registrar_avisos(app, hoy, registrados)
@@ -748,9 +781,12 @@ def enviar_pendientes(app, simulacro=False):
         'enviado': bool(enviados_a), 'personas_avisadas': personas,
         'destinatarios': sorted(set(enviados_a)), 'destino': direccion,
         'sin_responsable': len(lagunas), 'simulacro': simulacro,
+        'ya_tenian_la_suya': saltadas,
     }
     if fallos:
         resultado['error'] = 'No se pudo enviar a: ' + '; '.join(fallos[:5])
+    elif not enviados_a and saltadas:
+        resultado['mensaje'] = 'Todos habían recibido ya su agenda de hoy'
     return resultado
 
 
@@ -951,6 +987,7 @@ def estado(app):
         'hora_revision': cf['hora'],
         'reparto_personal': cf['personal'],
         'escalado_dias': cf['escalado_dias'],
+        'agenda_diaria': cf['agenda_diaria'],
         'proyectos_incumplidos': 0,
         'actividades_incumplidas': 0,
         'con_responsable': 0,
@@ -1014,10 +1051,21 @@ def start_avisos_vencimiento(app):
     def _bucle():
         while True:
             time.sleep(_segundos_hasta(hora))
+            # El reclamo de lo incumplido va primero y aparte del listado
+            # completo: son dos correos y por eso se ven como dos cosas.
             try:
                 revisar_vencimientos(app)
             except Exception as e:
                 print(f'[avisos] error en la revisión diaria: {e}')
+            # Y su fallo no puede llevarse por delante a la agenda: cada envío
+            # responde de lo suyo.
+            try:
+                if _conf(app)['agenda_diaria']:
+                    enviar_pendientes(app, evitar_repetir=True)
+            except Exception as e:
+                print(f'[avisos] error en la agenda diaria: {e}')
 
     threading.Thread(target=_bucle, name='avisos-vencimiento', daemon=True).start()
-    print(f'[avisos] revisión diaria de vencimientos activa (a las {hora:02d}:00)')
+    agenda = 'con agenda de pendientes' if _conf(app)['agenda_diaria'] else 'sin agenda'
+    print(f'[avisos] revisión diaria de vencimientos activa '
+          f'(a las {hora:02d}:00, {agenda})')
