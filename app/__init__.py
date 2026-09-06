@@ -5676,10 +5676,16 @@ def create_app():
         datos, error = _invitaciones.iniciar_autorizacion(app, cuenta)
         if error:
             return jsonify({'success': False, 'error': error})
-        # El device_code no se le enseña a nadie: viaja en la sesión del
-        # administrador que lo pidió, que es quien va a completar el trámite.
+        # El device_code no se le enseña a nadie, y ya no vive sólo en la
+        # sesión del navegador: se apunta también en la base. Atarlo a una
+        # pestaña hacía que recargarla o cerrarla borrase el único registro de
+        # qué se estaba autorizando, y entonces nadie volvía a preguntarle a
+        # Microsoft si ya lo habían aprobado: la persona veía «ya puede cerrar
+        # esta ventana» y la cuenta seguía sin conectar.
         session['ms_device'] = {'cuenta': cuenta, 'code': datos['device_code'],
                                 'authority': datos['authority']}
+        _invitaciones.apuntar_pendiente(app, cuenta, datos['device_code'],
+                                        datos['authority'], datos['expires_in'])
         return jsonify({'success': True, 'user_code': datos['user_code'],
                         'url': datos['verification_uri'],
                         'expira_en': datos['expires_in'],
@@ -5690,7 +5696,19 @@ def create_app():
     def ms_auth_completar():
         if not is_admin():
             return jsonify({'success': False, 'error': 'Solo admin'}), 403
+        # La sesión primero —es lo más inmediato— y la base después, que es lo
+        # que sobrevive a recargar la página, cambiar de pestaña o preguntar
+        # desde otro sitio. `cuenta` permite elegir cuál cerrar cuando hay dos
+        # a medias.
+        cuenta = ((request.json or {}).get('cuenta') or '').strip().lower()
         pendiente = session.get('ms_device')
+        if pendiente and cuenta and pendiente.get('cuenta') != cuenta:
+            pendiente = None
+        if not pendiente:
+            fila = _invitaciones.pendiente(app, cuenta or None)
+            if fila:
+                pendiente = {'cuenta': fila['email'], 'code': fila['device_code'],
+                             'authority': fila.get('authority')}
         if not pendiente:
             return jsonify({'success': False, 'estado': 'error',
                             'error': 'No hay ninguna autorización en curso'})
@@ -5698,6 +5716,7 @@ def create_app():
             app, pendiente['cuenta'], pendiente['code'], pendiente.get('authority'))
         if estado == 'ok':
             session.pop('ms_device', None)
+            _invitaciones.olvidar_pendiente(app, pendiente['cuenta'])
             # El aviso de arriba se guarda dos minutos. Sin tirarlo aquí, quien
             # acaba de autorizar recarga y sigue leyendo que esa misma cuenta
             # está sin autorizar —en la misma página en la que la tabla ya dice
@@ -5708,6 +5727,7 @@ def create_app():
         if estado == 'pendiente':
             return jsonify({'success': False, 'estado': 'pendiente'})
         session.pop('ms_device', None)
+        _invitaciones.olvidar_pendiente(app, pendiente['cuenta'])
         return jsonify({'success': False, 'estado': 'error', 'error': error})
 
     # ------------------------------------------------------------

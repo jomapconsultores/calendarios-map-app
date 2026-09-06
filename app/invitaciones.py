@@ -32,7 +32,7 @@ import smtplib
 import ssl
 import uuid
 from base64 import b64encode
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from email.message import EmailMessage
 from email.utils import formataddr
 
@@ -142,6 +142,54 @@ def token_de_acceso(app, email):
         return None, f'{email}: {detalle[:200]}'
     _guardar_token(app, email, datos, autoridad)
     return datos['access_token'], None
+
+
+# ------------------------------------------------------------
+#  El trámite a medio hacer
+# ------------------------------------------------------------
+# El código de dispositivo vivía en la sesión del navegador de quien lo pedía, y
+# eso ataba el trámite a una pestaña: recargarla o cerrarla borraba el único
+# apunte de qué se estaba autorizando, así que nadie volvía a preguntarle a
+# Microsoft si ya lo habían aprobado. Visto desde fuera, la cuenta seguía sin
+# autorizar por mucho que Microsoft dijera «ya puede cerrar esta ventana».
+def apuntar_pendiente(app, email, device_code, authority, expira_en_segundos):
+    caduca = datetime.now(timezone.utc) + timedelta(seconds=int(expira_en_segundos or 900))
+    return app.supabase.upsert('ms_autorizaciones', {
+        'email': (email or '').strip().lower(),
+        'device_code': device_code,
+        'authority': authority,
+        'pedida_en': datetime.now(timezone.utc).isoformat(),
+        'expira_en': caduca.isoformat(),
+    }, on_conflict='email')
+
+
+def pendiente(app, email=None):
+    """El trámite en curso: el de esa cuenta, o el único que haya vivo.
+
+    Sin `email` se elige el que no haya caducado; si hubiera varios —dos cuentas
+    a medio autorizar a la vez— se devuelve el más reciente, que es el que la
+    persona tiene delante."""
+    filas = app.supabase.get('ms_autorizaciones',
+                             {'email': email.strip().lower()} if email else None,
+                             select='email,device_code,authority,expira_en') or []
+    ahora = datetime.now(timezone.utc)
+    vivas = []
+    for f in filas:
+        try:
+            caduca = datetime.fromisoformat((f.get('expira_en') or '').replace('Z', '+00:00'))
+        except Exception:
+            caduca = ahora
+        if caduca > ahora:
+            vivas.append((caduca, f))
+    if not vivas:
+        return None
+    vivas.sort(key=lambda x: x[0], reverse=True)
+    return vivas[0][1]
+
+
+def olvidar_pendiente(app, email):
+    return app.supabase.delete('ms_autorizaciones', (email or '').strip().lower(),
+                               id_col='email')
 
 
 def iniciar_autorizacion(app, email, authority=None):
