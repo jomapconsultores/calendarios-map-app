@@ -67,6 +67,9 @@ class Quipux:
         self.s = requests.Session()
         self.s.headers.update({'User-Agent': NAVEGADOR})
         self._perfiles = None
+        # La página que dejó el salto posterior a la credencial, cuando ese
+        # salto ya se dio para comprobar si había control de imagen.
+        self._pagina_tras_salto = None
 
     # ------------------------------------------------------------------
     #  Peticiones
@@ -135,11 +138,28 @@ class Quipux:
             return True
         if 'login_validar_captcha' not in texto.lower():
             return False
-        # Saltó ahí: hay que ir a ver si de verdad pide algo.
+        # Saltó ahí: hay que ir a ver si de verdad pide algo. Se sigue la
+        # dirección TAL COMO viene, con la cola de parámetros que trae —el
+        # usuario y la contraseña cifrada—: pedida a pelo, sin ellos, la página
+        # no monta el control y contesta como si no hiciera falta. Ese es el
+        # camino por el que un acceso que SÍ pedía la imagen acababa dándose
+        # por credencial rechazada, con un mensaje que además culpaba a la
+        # contraseña —el aviso que la propia página de acceso lleva escrito en
+        # su JavaScript— cuando la contraseña estaba bien.
+        m = self.RE_SALTO.search(texto)
+        destino = (m.group(1).strip() if m else 'login_validar_captcha.php')
         try:
-            pagina = self.get('login_validar_captcha.php')
+            pagina = self.get(destino if destino.startswith('http')
+                              else destino.lstrip('./'))
         except Exception:
             return False
+        # Ese salto sólo se puede dar UNA vez: la dirección lleva la credencial
+        # y el sistema la da por gastada en cuanto se pide. Cuando no hay
+        # control, esta misma petición es la que termina de abrir la sesión, así
+        # que se guarda para que quien llamó siga desde aquí. Sin esto se
+        # repetía el salto con la credencial ya gastada, y el sistema contestaba
+        # que no conocía la sesión — justo después de haberla abierto.
+        self._pagina_tras_salto = pagina
         return 'txt_captcha' in (pagina.text or '')
 
     # ------------------------------------------------------------------
@@ -190,7 +210,8 @@ class Quipux:
                                   'entrega la imagen. Inténtalo de nuevo en un rato.')
             return 'captcha', imagen.content
 
-        respuesta = self._seguir_saltos(respuesta)
+        respuesta = self._seguir_saltos(self._pagina_tras_salto or respuesta)
+        self._pagina_tras_salto = None
         if self._rechazado(respuesta):
             raise ErrorQuipux(
                 f'CuencaDOC rechazó la credencial de «{usuario}». Revisa el usuario '
@@ -316,12 +337,13 @@ class Quipux:
             # no, así que esto no puede ser el camino normal — sólo el desvío.
             self._entrar_con_ayuda(usuario, contrasenia)
         else:
-            respuesta = self._seguir_saltos(respuesta)
+            respuesta = self._seguir_saltos(self._pagina_tras_salto or respuesta)
             if self._rechazado(respuesta):
                 raise ErrorQuipux(
                     f'CuencaDOC rechazó la credencial de «{usuario}». '
                     'Comprueba usuario y clave con «python -m quipux alta», y que la '
                     'cuenta no esté bloqueada por intentos fallidos.')
+        self._pagina_tras_salto = None
 
         texto = respuesta.text
         # Que la respuesta sea 200 no significa que se entró: un usuario o una
