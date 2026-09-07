@@ -72,6 +72,56 @@ def _texto_del_pdf(ruta):
         return ''
 
 
+def _texto_del_docx(ruta):
+    """Los párrafos y también las tablas: en los oficios en Word, la mitad de lo
+    que importa —fechas, responsables, montos— vive dentro de una tabla."""
+    try:
+        from docx import Document
+        doc = Document(ruta)
+        partes = [p.text for p in doc.paragraphs]
+        for tabla in doc.tables:
+            for fila in tabla.rows:
+                celdas = [c.text.strip() for c in fila.cells if c.text.strip()]
+                if celdas:
+                    partes.append(' | '.join(celdas))
+        return re.sub(r'[ \t]+', ' ', '\n'.join(partes)).strip()
+    except Exception:
+        return ''
+
+
+def _filas_del_excel(ruta):
+    """Las filas de la primera hoja, como listas de valores."""
+    if ruta.lower().endswith('.xls'):
+        try:
+            import xlrd
+            libro = xlrd.open_workbook(ruta)
+            hoja = libro.sheet_by_index(0)
+            return [[hoja.cell_value(f, c) for c in range(hoja.ncols)]
+                    for f in range(hoja.nrows)]
+        except Exception:
+            return []
+    try:
+        from openpyxl import load_workbook
+        libro = load_workbook(ruta, data_only=True, read_only=True)
+        return [list(fila) for fila in libro[libro.sheetnames[0]].iter_rows(values_only=True)]
+    except Exception:
+        return []
+
+
+def _texto_de_filas(filas, tope=400):
+    return '\n'.join(' | '.join(str(v) for v in fila if v not in (None, ''))
+                     for fila in filas[:tope])
+
+
+def _fecha_de_celda(valor):
+    """Una fecha de Excel puede venir como fecha de verdad o como texto."""
+    if isinstance(valor, datetime):
+        return valor.date()
+    if isinstance(valor, date):
+        return valor
+    return docs._fecha(valor) or _fecha_larga(str(valor or ''))
+
+
 def _fecha_larga(texto):
     """«Cuenca, 6 de septiembre de 2026» -> date(2026, 9, 6)."""
     m = RE_FECHA_LARGA.search(texto or '')
@@ -94,9 +144,114 @@ def _primera_linea_util(texto, saltar):
     return ''
 
 
+# ============================================================
+#  LAS MATRICES DE EXCEL
+# ============================================================
+# Un oficio es un documento; una matriz es una lista de compromisos. Tratar el
+# Excel como un texto suelto dejaría veinte actividades convertidas en una sola
+# línea, así que aquí cada fila con contenido se lee como lo que es: algo que
+# alguien tiene que entregar, con su fecha.
+COLUMNAS = {
+    'asunto': ('actividad', 'tema', 'asunto', 'descripcion', 'descripción',
+               'detalle', 'compromiso', 'tarea', 'producto', 'entregable',
+               'accion', 'acción'),
+    'plazo': ('plazo', 'fecha', 'vence', 'vencimiento', 'entrega', 'limite',
+              'límite', 'cumplimiento', 'fin'),
+    'responsable': ('responsable', 'encargado', 'asignado', 'a cargo'),
+    'numero': ('numero', 'número', 'oficio', 'documento', 'codigo', 'código',
+               'nro', 'n°'),
+    'estado': ('estado', 'avance', 'situacion', 'situación'),
+}
+
+
+def _mapa_de_encabezados(filas, mirar=15):
+    """Busca la fila de títulos y dice qué columna es qué.
+
+    No se da por hecho que los títulos estén en la primera fila: las matrices
+    del Municipio suelen abrir con el logo, el nombre de la dirección y un par
+    de filas en blanco antes de empezar."""
+    mejor, mejor_puntos, mapa_mejor = None, 0, {}
+    for i, fila in enumerate(filas[:mirar]):
+        mapa, puntos = {}, 0
+        for col, valor in enumerate(fila):
+            titulo = docs._norm(str(valor or ''))
+            if not titulo:
+                continue
+            for campo, palabras in COLUMNAS.items():
+                if campo in mapa:
+                    continue
+                if any(p in titulo for p in palabras):
+                    mapa[campo] = col
+                    puntos += 1
+                    break
+        # Con una sola columna reconocida no hay matriz que valga: sería
+        # confundir un título cualquiera con una cabecera.
+        if puntos >= 2 and puntos > mejor_puntos:
+            mejor, mejor_puntos, mapa_mejor = i, puntos, mapa
+    return mejor, mapa_mejor
+
+
+def leer_matriz(ruta):
+    """Un Excel -> una lista de registros, uno por fila con contenido.
+
+    Si no se reconoce ninguna cabecera, devuelve lista vacía y quien llama lo
+    trata como un documento más: un Excel puede ser una matriz de compromisos o
+    puede ser cualquier otra cosa, y adivinar mal llenaría el cronograma de
+    basura."""
+    filas = _filas_del_excel(ruta)
+    if not filas:
+        return []
+    cabecera, mapa = _mapa_de_encabezados(filas)
+    if cabecera is None or 'asunto' not in mapa:
+        return []
+
+    nombre = os.path.basename(ruta)
+    registros = []
+    for i, fila in enumerate(filas[cabecera + 1:], start=cabecera + 2):
+        def celda(campo):
+            col = mapa.get(campo)
+            if col is None or col >= len(fila):
+                return ''
+            return str(fila[col]).strip() if fila[col] not in (None, '') else ''
+
+        asunto = celda('asunto')
+        if len(asunto) < 4:
+            continue
+
+        plazo_col = mapa.get('plazo')
+        fecha = None
+        if plazo_col is not None and plazo_col < len(fila):
+            fecha = _fecha_de_celda(fila[plazo_col])
+
+        # El número lleva delante el nombre de la matriz. Sin eso, dos matrices
+        # distintas con su fila «001» serían el mismo documento, y la segunda se
+        # descartaría en silencio por repetida.
+        base_archivo = os.path.splitext(nombre)[0][:34]
+        propio = celda('numero')
+        numero = f'{base_archivo}#{propio}' if propio else f'{base_archivo}#f{i}'
+        registros.append({
+            'id': numero,
+            'numero': numero,
+            'asunto': asunto[:300],
+            'de': celda('responsable'),
+            'fecha_doc': '',
+            # De una matriz la fecha viene puesta por alguien, no deducida de
+            # una frase: eso la hace tan buena como la del sistema.
+            'vence': fecha.isoformat() if fecha else '',
+            'area': '',
+            'bandeja': f'Matriz · {nombre}',
+            'enlace': '',
+            'archivo': ruta,
+            'texto': ' | '.join(str(v) for v in fila if v not in (None, '')),
+            'estado_hoja': celda('estado'),
+        })
+    return registros
+
+
 def leer_oficio(ruta):
-    """Un PDF -> el mismo registro que devuelve la ficha del sistema."""
-    texto = _texto_del_pdf(ruta)
+    """Un PDF o un Word -> el mismo registro que devuelve la ficha del sistema."""
+    texto = (_texto_del_docx(ruta) if ruta.lower().endswith(('.docx', '.docm'))
+             else _texto_del_pdf(ruta))
     nombre = os.path.basename(ruta)
 
     # El número puede estar en el texto o en el propio nombre del archivo; el
@@ -136,21 +291,28 @@ def leer_oficio(ruta):
 
 
 def _descomprimir(carpeta):
-    """Deja abiertos los ZIP que haya, cada uno en su propia subcarpeta."""
-    abiertos = []
+    """Deja abiertos los ZIP que haya, cada uno en su propia subcarpeta.
+
+    Devuelve esas subcarpetas, no los nombres de los zip: hacen falta después
+    para saber el área. Un zip llamado `lote_septiembre.zip` con
+    `PLANIFICACION/` dentro no es un área llamada «lote septiembre» —es un
+    envoltorio—, y sin esto todos sus documentos acababan en un proyecto con el
+    nombre del archivo comprimido."""
+    destinos = []
     for nombre in sorted(os.listdir(carpeta)):
         if not nombre.lower().endswith('.zip'):
             continue
         destino = os.path.join(carpeta, os.path.splitext(nombre)[0])
         if os.path.isdir(destino):
+            destinos.append(destino)
             continue
         try:
             with zipfile.ZipFile(os.path.join(carpeta, nombre)) as z:
                 z.extractall(destino)
-            abiertos.append(nombre)
+            destinos.append(destino)
         except Exception as e:
             print(f'  no se pudo abrir {nombre}: {str(e)[:100]}')
-    return abiertos
+    return destinos
 
 
 def leer_carpeta(carpeta=None, registro=print):
@@ -163,40 +325,74 @@ def leer_carpeta(carpeta=None, registro=print):
     if not os.path.isdir(carpeta):
         raise RuntimeError(f'No existe la carpeta {carpeta}')
 
-    abiertos = _descomprimir(carpeta)
-    if abiertos:
-        registro(f'  {len(abiertos)} zip abierto(s)')
+    de_zip = _descomprimir(carpeta)
+    if de_zip:
+        registro(f'  {len(de_zip)} zip abierto(s)')
 
     encontrados = []
     for raiz, _, archivos in os.walk(carpeta):
         for nombre in sorted(archivos):
-            if nombre.lower().endswith('.pdf'):
+            if nombre.startswith('~$'):        # los temporales que deja Office
+                continue
+            if nombre.lower().endswith(('.pdf', '.docx', '.docm',
+                                        '.xlsx', '.xlsm', '.xls')):
                 encontrados.append(os.path.join(raiz, nombre))
 
     documentos, vistos = [], set()
     for ruta in encontrados:
-        doc = leer_oficio(ruta)
-        # El área: la primera carpeta por debajo de la raíz, si la hay.
-        relativa = os.path.relpath(os.path.dirname(ruta), carpeta)
-        if relativa not in ('.', ''):
-            doc['area'] = relativa.split(os.sep)[0].replace('_', ' ').strip()
-        doc['area'] = doc['area'] or 'CuencaDOC'
-
-        # El mismo oficio descargado dos veces es un oficio, no dos.
-        if doc['numero'] in vistos:
-            registro(f"  repetido, se omite: {doc['numero']}")
-            continue
-        vistos.add(doc['numero'])
-
-        fecha, origen, seguro = docs.deducir_plazo(doc, doc.get('texto', ''))
-        doc['plazo'] = {'fecha': fecha.isoformat() if fecha else '',
-                        'origen': origen, 'seguro': seguro}
-        doc['estado'] = 'abierto'
-        doc['nuevo'] = True
-        doc['n_adjuntos'] = 0
-        documentos.append(doc)
-
+        # Si el archivo salió de un zip, el área se cuenta desde dentro del zip:
+        # su nombre es un envoltorio, no un área.
+        raiz = carpeta
+        for destino in de_zip:
+            if ruta.startswith(destino + os.sep):
+                raiz = destino
+                break
+        for doc in _leer_archivo(ruta):
+            _completar(doc, ruta, raiz)
+            # El mismo documento cargado dos veces es uno, no dos.
+            if doc['id'] in vistos:
+                registro(f"  repetido, se omite: {doc['id']}")
+                continue
+            vistos.add(doc['id'])
+            documentos.append(doc)
     return documentos
+
+
+def _leer_archivo(ruta):
+    """Lo que haya dentro: un documento, o la lista de filas de una matriz."""
+    if ruta.lower().endswith(('.xlsx', '.xlsm', '.xls')):
+        # Un Excel puede traer veinte compromisos en veinte filas. Se intenta
+        # leer como matriz; si no se le reconoce ninguna cabecera, se trata como
+        # un documento más y su contenido se lee entero, que es mejor que
+        # inventar veinte actividades a partir de una hoja que no lo es.
+        filas = leer_matriz(ruta)
+        if filas:
+            return filas
+        nombre = os.path.splitext(os.path.basename(ruta))[0]
+        return [{
+            'id': nombre[:60], 'numero': nombre[:60], 'asunto': nombre[:300],
+            'de': '', 'fecha_doc': '', 'vence': '', 'area': '',
+            'bandeja': 'Cargados a mano', 'enlace': '', 'archivo': ruta,
+            'texto': _texto_de_filas(_filas_del_excel(ruta)),
+        }]
+    return [leer_oficio(ruta)]
+
+
+def _completar(doc, ruta, carpeta):
+    """Le pone el área y calcula para cuándo es."""
+    # El área: la primera carpeta por debajo de la raíz, si la hay.
+    relativa = os.path.relpath(os.path.dirname(ruta), carpeta)
+    if relativa not in ('.', ''):
+        doc['area'] = relativa.split(os.sep)[0].replace('_', ' ').strip()
+    doc['area'] = doc['area'] or 'CuencaDOC'
+
+    fecha, origen, seguro = docs.deducir_plazo(doc, doc.get('texto', ''))
+    doc['plazo'] = {'fecha': fecha.isoformat() if fecha else '',
+                    'origen': origen, 'seguro': seguro}
+    doc['estado'] = 'abierto'
+    doc['nuevo'] = True
+    doc['n_adjuntos'] = 0
+    return doc
 
 
 def _resumen(documentos):
@@ -213,6 +409,8 @@ def _resumen(documentos):
         marca = '' if (d.get('plazo') or {}).get('seguro') else ' (deducido)'
         print(f"  {d['numero'][:34]:<34} {plazo:<11}{marca}")
         print(f"      {(d.get('asunto') or '')[:96]}")
+        print(f"      área: {d.get('area', '')}"
+              + (f" · responsable en la hoja: {d['de']}" if d.get('de') else ''))
     if len(documentos) > 40:
         print(f'  … y {len(documentos) - 40} más')
 
