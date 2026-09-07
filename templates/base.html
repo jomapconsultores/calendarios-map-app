@@ -102,7 +102,7 @@
         {% endif %}
 
         {% if is_adm or 'quipux' in active_modules %}
-        <a href="/quipux" class="rail-btn {{ 'active' if ns.active_key == 'quipux' }}" data-panel="quipux" data-group title="Quipux — Documentos de CuencaDOC con sus plazos">
+        <a href="/quipux" class="rail-btn {{ 'active' if ns.active_key == 'quipux' }}" data-panel="quipux" data-group title="Quipux — Los documentos y sus plazos">
           <span class="rail-ic">📨</span><span class="rail-label">Quipux</span>
           <span class="nav-badge tono-aviso" data-badge="quipux" title="Documentos vencidos"></span>
         </a>
@@ -217,7 +217,7 @@
 
         {% if is_adm or 'quipux' in active_modules %}
         <section class="panel-page {{ 'active' if ns.active_key == 'quipux' }}" data-page="quipux">
-          <div class="panel-head"><span class="panel-head-ic">📨</span><span><span class="panel-title">Quipux</span><span class="panel-sub">Lo que llega de CuencaDOC</span></span></div>
+          <div class="panel-head"><span class="panel-head-ic">📨</span><span><span class="panel-title">Quipux</span><span class="panel-sub">Los documentos y sus plazos</span></span></div>
           <ul class="panel-links">
             {# Cada entrada abre algo distinto de verdad: sin parámetro, la
                vista de compromisos (qué hay que entregar); con ?ver=, la lista
