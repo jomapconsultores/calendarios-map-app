@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Quipux — CalendarioMAP{% endblock %}
 {% block page_title %}Quipux{% endblock %}
-{% block page_sub %}<p class="page-sub">Lo que hay que entregar según CuencaDOC, y para cuándo</p>{% endblock %}
+{% block page_sub %}<p class="page-sub">Lo que hay que entregar, y para cuándo</p>{% endblock %}
 
 {% block head %}
 <style>
@@ -323,16 +323,16 @@ async function marcador(){
     const cuando = r.ultima_pasada.replace('T',' ').slice(0,16);
     f.className = 'qx-sello' + (r.al_dia ? '' : ' viejo');
     f.innerHTML = '<span class="qx-punto"></span>'
-                + (r.al_dia ? 'al día · ' : 'sin traer desde ') + cuando
+                + (r.al_dia ? 'al día · ' : 'última carga ') + cuando
                 + (r.origen ? ' · ' + r.origen : '');
   } else {
     f.className = 'qx-sello viejo';
-    f.innerHTML = '<span class="qx-punto"></span>todavía no se ha traído nada';
+    f.innerHTML = '<span class="qx-punto"></span>sin documentos todavía';
   }
 
-  // Cero documentos y ninguna pasada no es «no hay nada pendiente»: es que
-  // aquí todavía no se ha recogido. Decirlo con esas palabras evita mirar una
-  // pantalla vacía sin saber si el módulo funciona o está roto.
+  // Cero documentos no es «no hay nada pendiente»: es que todavía no se ha
+  // cargado ninguno. Decirlo con esas palabras evita mirar una pantalla vacía
+  // sin saber si el módulo funciona o está roto.
   if(r.sin_recoger){
     let aviso = document.getElementById('qx-sin-recoger');
     if(!aviso){
@@ -340,11 +340,8 @@ async function marcador(){
       aviso.id = 'qx-sin-recoger';
       aviso.className = 'alert alert-warning';
       aviso.style.cssText = 'margin:12px 0;font-size: var(--fs-md)';
-      aviso.innerHTML = '<b>Aquí todavía no hay nada recogido.</b> '
-        + 'Los documentos de CuencaDOC se cargan desde la computadora de la '
-        + 'oficina y desde ahí suben, para verse en esta pantalla y en el '
-        + 'teléfono. Desde el servidor no se puede: no alcanza a '
-        + '<code>dq.cuenca.gob.ec</code>.';
+      aviso.innerHTML = '<b>Aquí todavía no hay documentos.</b> '
+        + 'En cuanto se carguen, aparecen aquí con su plazo y su semáforo.';
       document.getElementById('marcador').insertAdjacentElement('afterend', aviso);
     }
   } else {
