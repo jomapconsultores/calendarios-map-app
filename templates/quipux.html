@@ -92,19 +92,6 @@ table.qx{width:100%;border-collapse:collapse;background:#fff;
 .qx-vacio strong{display:block;color:#475569;font-size:var(--fs-sm);
   font-weight:600;margin-bottom:4px}
 
-/* Acceso: sólo aparece cuando CuencaDOC pide el texto de la imagen. */
-#qxAcceso{background:#fffbeb;border:1px solid #fcd34d;border-radius:10px;
-  padding:12px 14px;margin-bottom:8px;display:none}
-#qxAcceso .t{font-size:var(--fs-xs);font-weight:700;color:#92400e}
-#qxAcceso .d{font-size:var(--fs-3xs);color:#a16207;margin:2px 0 9px}
-#qxAcceso .fila{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
-#imgCaptcha{border:1px solid #e2e8f0;border-radius:6px;background:#fff;height:42px}
-#txtCaptcha{border:1px solid #d1d5db;border-radius:7px;padding:6px 10px;width:120px;
-  font-size:var(--fs-md);font-weight:600;letter-spacing:.18em;text-transform:uppercase;
-  text-align:center;font-family:ui-monospace,Consolas,monospace}
-#txtCaptcha:focus{outline:none;border-color:var(--primary)}
-#msgAcceso{font-size:var(--fs-3xs);color:#a16207}
-
 .qx-accion{border:0;background:var(--primary);color:#fff;border-radius:7px;
   padding:5px 13px;font-size:var(--fs-2xs);font-weight:600;cursor:pointer;transition:.12s}
 .qx-accion:hover{background:var(--primary-dark)}
@@ -121,24 +108,18 @@ table.qx{width:100%;border-collapse:collapse;background:#fff;
 {% endblock %}
 
 {% block topbar_actions %}
-<button class="qx-accion" id="btnTraer" onclick="traer()">Traer de CuencaDOC</button>
+{# El botón «Traer de CuencaDOC» ya no está: desde el servidor no se puede.
+   La máquina de Hetzner no alcanza dq.cuenca.gob.ec —la conexión se agota—,
+   así que ese botón sólo servía para prometer algo que iba a fallar. Los
+   documentos entran ahora por la carga de archivos; la recolección
+   automática sigue existiendo en la computadora de la oficina. #}
 {% endblock %}
 
 {% block content %}
 
-<div id="qxAcceso">
-  <div class="t">CuencaDOC pide comprobar que hay una persona</div>
-  <div class="d">Escriba el texto de la imagen. El servidor mantiene la sesión abierta;
-     no hace falta entrar en otra pestaña.</div>
-  <div class="fila">
-    <img id="imgCaptcha" alt="texto a copiar">
-    <input id="txtCaptcha" autocomplete="off" maxlength="10" placeholder="····"
-           onkeydown="if(event.key==='Enter')confirmarAcceso()">
-    <button class="qx-accion" onclick="confirmarAcceso()">Entrar</button>
-    <button class="qx-accion claro" onclick="pedirAcceso()">Otra imagen</button>
-    <span id="msgAcceso"></span>
-  </div>
-</div>
+{# El recuadro del control de imagen vivía aquí. Se quitó con el botón:
+   sin poder hablar con dq.cuenca.gob.ec, pedirle a alguien que lea una
+   imagen es hacerle perder el tiempo dos veces. #}
 
 <div class="qx-barra" id="marcador">
   <div class="qx-cifra" data-ver="pendientes"><b id="n-abiertos">—</b><span>abiertos</span></div>
@@ -220,81 +201,10 @@ function celdaFecha(f, extra){
           ${f?`<span class="qx-dias">${cuantoFalta(f)}</span>`:''}${extra||''}</td>`;
 }
 
-// ---------- Entrar a CuencaDOC ----------
-// El texto de la imagen lo escribe una persona: eso es lo que el control pide y
-// lo que se respeta. Lo que se evita es que además tenga que abrir otra
-// pestaña, buscar la bandeja y recorrerla a mano.
-async function pedirAcceso(){
-  document.getElementById('msgAcceso').textContent = 'pidiendo acceso…';
-  const r = await post('/quipux/api/acceso');
-  const caja = document.getElementById('qxAcceso');
-  if(!r.success){
-    caja.style.display='block';
-    document.getElementById('msgAcceso').textContent = r.error || 'no se pudo';
-    return false;
-  }
-  if(r.estado === 'dentro'){ caja.style.display='none'; return true; }
-  document.getElementById('imgCaptcha').src = r.imagen;
-  document.getElementById('txtCaptcha').value = '';
-  document.getElementById('msgAcceso').textContent = '';
-  caja.style.display='block';
-  document.getElementById('txtCaptcha').focus();
-  return false;
-}
-
-async function confirmarAcceso(){
-  const texto = document.getElementById('txtCaptcha').value.trim();
-  if(!texto) return;
-  document.getElementById('msgAcceso').textContent = 'entrando…';
-  const r = await post('/quipux/api/acceso/confirmar', {texto});
-  if(!r.success){
-    document.getElementById('msgAcceso').textContent = r.error || 'no entró';
-    pedirAcceso();               // el texto caduca: se pide una imagen nueva
-    return;
-  }
-  document.getElementById('qxAcceso').style.display='none';
-  lanzarRecoleccion();
-}
-
-async function traer(){
-  const b = document.getElementById('btnTraer');
-  b.disabled = true; b.textContent = 'Entrando…';
-  const dentro = await pedirAcceso();
-  if(dentro) lanzarRecoleccion();
-  else { b.disabled = false; b.textContent = 'Traer de CuencaDOC'; }
-}
-
-async function lanzarRecoleccion(){
-  const b = document.getElementById('btnTraer');
-  b.disabled = true; b.textContent = 'Recogiendo…';
-  const r = await post('/quipux/api/recoger');
-  if(!r.success){
-    b.disabled=false; b.textContent='Traer de CuencaDOC';
-    if(r.error === 'sin_sesion'){ pedirAcceso(); return; }
-    alert('No se pudo: '+(r.error||''));
-    return;
-  }
-  vigilar();
-}
-
-// Doscientos documentos con sus adjuntos no caben en el tiempo que una página
-// espera, así que la pasada corre por detrás y aquí se pregunta cómo va.
-function vigilar(){
-  const b = document.getElementById('btnTraer');
-  const t = setInterval(async ()=>{
-    const e = await fetch('/quipux/api/recoger/estado').then(x=>x.json()).catch(()=>null);
-    if(!e) return;
-    if(e.estado === 'en curso'){
-      b.textContent = 'Recogiendo… ' + (e.detalle||'').slice(0,40);
-      return;
-    }
-    clearInterval(t);
-    b.disabled=false; b.textContent='Traer de CuencaDOC';
-    if(e.estado === 'sin sesión'){ pedirAcceso(); return; }
-    if(e.estado === 'falló'){ alert('La recolección falló: '+(e.detalle||'')); }
-    marcador(); cargar();
-  }, 2500);
-}
+// Entrar a CuencaDOC y recoger se hacía desde aquí. Ya no: el servidor no
+// alcanza dq.cuenca.gob.ec, así que esa parte corre en la computadora de la
+// oficina y sube lo recogido. Esta pantalla lo muestra y deja trabajar con
+// ello: marcar entregado, ver plazos, filtrar por área.
 
 // ---------- Las listas ----------
 function cambiarVista(v){
@@ -322,7 +232,7 @@ async function cargarCompromisos(){
   HOY = r.hoy;
   if(!r.compromisos.length){
     c.innerHTML = VACIO(5, 'Nada por entregar',
-      'Pulse «Traer de CuencaDOC»: se leen los documentos y de ahí sale esta lista.');
+      'Cuando se carguen los documentos, de aquí sale esta lista.');
     return;
   }
   c.innerHTML = r.compromisos.map(k=>`<tr>
@@ -352,7 +262,7 @@ async function cargarTareas(){
   if(!r){ c.innerHTML = VACIO(4,'No se pudo cargar',''); return; }
   HOY = r.hoy;
   if(!r.tareas.length){
-    c.innerHTML = VACIO(4, 'Nada pendiente', 'Pulse «Traer de CuencaDOC» para empezar.');
+    c.innerHTML = VACIO(4, 'Nada pendiente', 'Aún no hay documentos cargados.');
     return;
   }
   c.innerHTML = r.tareas.map(t=>`<tr>
@@ -431,11 +341,10 @@ async function marcador(){
       aviso.className = 'alert alert-warning';
       aviso.style.cssText = 'margin:12px 0;font-size: var(--fs-md)';
       aviso.innerHTML = '<b>Aquí todavía no hay nada recogido.</b> '
-        + 'La recolección de CuencaDOC corre en la computadora de la oficina '
-        + '(necesita tu credencial y, a veces, escribir el texto de una imagen), '
-        + 'y desde ahí publica lo recogido para que se vea en esta pantalla '
-        + 'y en el teléfono. Para lanzarla, abre <code>quipux\\ALTA.cmd</code> '
-        + 'en esa computadora, o pulsa «Traer ahora» si estás en ella.';
+        + 'Los documentos de CuencaDOC se cargan desde la computadora de la '
+        + 'oficina y desde ahí suben, para verse en esta pantalla y en el '
+        + 'teléfono. Desde el servidor no se puede: no alcanza a '
+        + '<code>dq.cuenca.gob.ec</code>.';
       document.getElementById('marcador').insertAdjacentElement('afterend', aviso);
     }
   } else {
