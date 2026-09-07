@@ -107,14 +107,20 @@ def _docs_de_la_base(app, ver='pendientes', area='', bandeja='', busca='', tope=
 def _resumen_de_la_base(app):
     """El marcador (total, abiertos, con plazo, vencidos) contado sobre la base."""
     hoy = date.today().isoformat()
-    docs = app.supabase.get('quipux_documentos', select='estado,plazo_fecha') or []
+    docs = app.supabase.get('quipux_documentos',
+                            select='estado,plazo_fecha,actualizado') or []
     abiertos = [d for d in docs if (d.get('estado') or 'abierto') != 'cerrado']
+    # Cuándo entró lo último. Sin esto el sello decía «sin documentos todavía»
+    # con documentos delante: la fecha sólo se leía del SQLite de la
+    # computadora que recolecta, y aquí no hay ninguno.
+    fechas = [d.get('actualizado') for d in docs if d.get('actualizado')]
     return {
         'total': len(docs),
         'abiertos': len(abiertos),
         'con_plazo': len([d for d in abiertos if d.get('plazo_fecha')]),
         'vencidos': len([d for d in abiertos
                          if d.get('plazo_fecha') and d['plazo_fecha'] < hoy]),
+        'ultima_pasada': max(fechas) if fechas else None,
         'origen': 'plataforma',
     }
 

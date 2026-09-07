@@ -201,6 +201,8 @@ table.qx{width:100%;border-collapse:collapse;background:#fff;
 <script>
 const CSRF_TOKEN = document.querySelector('meta[name="csrf-token"]').content;
 let VER = 'pendientes', HOY = '', VISTA = 'compromisos';
+// Cuántos documentos hay, para no decir «nada por entregar» cuando sí los hay.
+let TOTAL_DOCS = 0;
 
 const esc = t => { const d=document.createElement('div'); d.textContent = t==null?'':String(t); return d.innerHTML; };
 const post = (u,d)=>fetch(u,{method:'POST',headers:{'Content-Type':'application/json',
@@ -322,6 +324,12 @@ async function cargarCompromisos(){
   if(!r){ c.innerHTML = VACIO(5,'No se pudo cargar',''); return; }
   HOY = r.hoy;
   if(!r.compromisos.length){
+    // Los compromisos se sacan frase a frase del texto de cada oficio, y eso
+    // sólo lo hace la recolección completa. Con documentos cargados a mano hay
+    // plazos pero no compromisos, y quedarse en «nada por entregar» con una
+    // lista de documentos con fecha detrás es sencillamente falso: se pasa a
+    // la vista que sí tiene algo que enseñar.
+    if(TOTAL_DOCS > 0){ cambiarVista('docs'); return; }
     c.innerHTML = VACIO(5, 'Nada por entregar',
       'Cuando se carguen los documentos, de aquí sale esta lista.');
     return;
@@ -408,6 +416,7 @@ async function marcador(){
   document.getElementById('n-vencidos').textContent = r.vencidos ?? 0;
   document.getElementById('n-plazo').textContent    = r.con_plazo ?? 0;
   document.getElementById('n-total').textContent    = r.total ?? 0;
+  TOTAL_DOCS = r.total ?? 0;
 
   const f = document.getElementById('fuente');
   if(r.ultima_pasada){
