@@ -73,9 +73,21 @@ EXTENSIONES = ('.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx', '.odt'
 RE_MOSTRAR = re.compile(
     r'mostrar_documento\s*\(\s*[\'"](\d+)[\'"]\s*,\s*[\'"]([^\'"]*)[\'"]', re.I)
 
-# «en el término de 5 días», «en un plazo de 10 días hábiles»…
+# En los oficios el número casi nunca va en cifras: se escribe «en el término
+# de cinco días», y a veces «de cinco (5) días». Leer sólo los dígitos dejaba sin
+# plazo justo a los que lo dicen de la forma más común, y un documento sin plazo
+# no entra en el semáforo — es decir, desaparece del control.
+NUMEROS_EN_LETRA = {
+    'un': 1, 'uno': 1, 'una': 1, 'dos': 2, 'tres': 3, 'cuatro': 4, 'cinco': 5,
+    'seis': 6, 'siete': 7, 'ocho': 8, 'nueve': 9, 'diez': 10, 'once': 11,
+    'doce': 12, 'trece': 13, 'catorce': 14, 'quince': 15, 'veinte': 20,
+    'treinta': 30, 'sesenta': 60, 'noventa': 90,
+}
+
+# «en el término de 5 días», «en un plazo de 10 días hábiles», «de cinco días»…
 RE_PLAZO_DIAS = re.compile(
-    r'(?:t[eé]rmino|plazo|lapso)\s+(?:m[aá]ximo\s+)?de\s+(\d{1,3})\s*'
+    r'(?:t[eé]rmino|plazo|lapso)\s+(?:m[aá]ximo\s+)?de\s+'
+    r'(\d{1,3}|[a-záéíóúñ]{2,10})\s*'
     r'\(?\s*\d*\s*\)?\s*d[ií]as?\s*(h[aá]biles|laborables|t[eé]rmino)?', re.I)
 
 # «hasta el 15 de octubre de 2026», «hasta el 2026-10-15», «hasta el 15/10/2026»
@@ -281,7 +293,13 @@ def deducir_plazo(registro, ficha_texto=''):
 
     m = RE_PLAZO_DIAS.search(texto)
     if m:
-        dias = int(m.group(1))
+        crudo = m.group(1)
+        dias = (int(crudo) if crudo.isdigit()
+                else NUMEROS_EN_LETRA.get(_norm(crudo), 0))
+        if not dias:
+            return None, '', False
+        # «en el término de término» y demás falsos positivos quedan fuera por
+        # el propio diccionario: si la palabra no es un número, no hay plazo.
         habiles = bool(m.group(2))
         fecha = _dia_habil(base_fecha, dias) if habiles else base_fecha + timedelta(days=dias)
         como = f"{dias} días {'hábiles' if habiles else 'corridos'} desde el documento"
