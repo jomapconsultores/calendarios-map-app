@@ -92,6 +92,18 @@ table.qx{width:100%;border-collapse:collapse;background:#fff;
 .qx-vacio strong{display:block;color:#475569;font-size:var(--fs-sm);
   font-weight:600;margin-bottom:4px}
 
+/* Dónde se sueltan los documentos. Se ve siempre, no sólo cuando no hay nada:
+   cargar oficios no es un trámite de estreno, es lo que se hace cada semana. */
+#qxSoltar{border:2px dashed var(--border);border-radius:12px;padding:18px 16px;
+  margin-bottom:12px;text-align:center;background:#fbfcfe;transition:.15s}
+#qxSoltar.encima{border-color:var(--primary);background:#eef2ff}
+#qxSoltar.trabajando{opacity:.7;pointer-events:none}
+.qx-soltar-t{font-size:var(--fs-md);font-weight:700;color:var(--text)}
+.qx-soltar-d{font-size:var(--fs-3xs);color:var(--text-soft);margin:4px 0 10px}
+.qx-soltar-estado{font-size:var(--fs-3xs);margin-top:8px;min-height:1.2em}
+.qx-soltar-estado.bien{color:#15803d;font-weight:600}
+.qx-soltar-estado.mal{color:#b91c1c;font-weight:600}
+
 .qx-accion{border:0;background:var(--primary);color:#fff;border-radius:7px;
   padding:5px 13px;font-size:var(--fs-2xs);font-weight:600;cursor:pointer;transition:.12s}
 .qx-accion:hover{background:var(--primary-dark)}
@@ -113,13 +125,29 @@ table.qx{width:100%;border-collapse:collapse;background:#fff;
    así que ese botón sólo servía para prometer algo que iba a fallar. Los
    documentos entran ahora por la carga de archivos; la recolección
    automática sigue existiendo en la computadora de la oficina. #}
+<button class="qx-accion" onclick="document.getElementById('qxArchivos').click()">
+  Cargar documentos
+</button>
 {% endblock %}
 
 {% block content %}
 
-{# El recuadro del control de imagen vivía aquí. Se quitó con el botón:
-   sin poder hablar con dq.cuenca.gob.ec, pedirle a alguien que lea una
-   imagen es hacerle perder el tiempo dos veces. #}
+{# Aquí se sueltan los oficios. Es la puerta de entrada desde que el servidor no
+   puede ir a buscarlos: se arrastran, se leen y de ahí sale la planificación. #}
+<div id="qxSoltar">
+  <input type="file" id="qxArchivos" multiple hidden
+         accept=".pdf,.doc,.docx,.docm,.xls,.xlsx,.xlsm,.zip"
+         onchange="cargarArchivos(this.files)">
+  <div class="qx-soltar-t">Arrastra aquí los oficios</div>
+  <div class="qx-soltar-d">PDF, Word, Excel o un zip. De cada uno se leen el número,
+    el asunto y el plazo, y los que tengan fecha entran al cronograma.
+    <br>Si los sueltas en carpetas —OBSERVATORIO, PLANIFICACION—, cada documento
+    va al proyecto de su área.</div>
+  <button class="qx-accion claro" onclick="document.getElementById('qxArchivos').click()">
+    o elegirlos del disco
+  </button>
+  <div id="qxCargaEstado" class="qx-soltar-estado"></div>
+</div>
 
 <div class="qx-barra" id="marcador">
   <div class="qx-cifra" data-ver="pendientes"><b id="n-abiertos">—</b><span>abiertos</span></div>
@@ -199,6 +227,69 @@ function cuantoFalta(f){
 function celdaFecha(f, extra){
   return `<td class="qx-fecha ${claseDePlazo(f)}">${esc(f||'sin fecha')}
           ${f?`<span class="qx-dias">${cuantoFalta(f)}</span>`:''}${extra||''}</td>`;
+}
+
+// ---------- Cargar documentos ----------
+// Se aceptan tanto los archivos sueltos como una carpeta entera arrastrada: en
+// ese segundo caso el navegador entrega los archivos con su ruta dentro, y esa
+// ruta es la que dice a qué área pertenece cada uno.
+(function () {
+  const zona = document.getElementById('qxSoltar');
+  if (!zona) return;
+  ['dragenter', 'dragover'].forEach(ev => zona.addEventListener(ev, e => {
+    e.preventDefault(); zona.classList.add('encima');
+  }));
+  ['dragleave', 'drop'].forEach(ev => zona.addEventListener(ev, e => {
+    e.preventDefault();
+    if (ev === 'dragleave' && zona.contains(e.relatedTarget)) return;
+    zona.classList.remove('encima');
+  }));
+  zona.addEventListener('drop', e => cargarArchivos(e.dataTransfer.files));
+  // Sin esto, soltar un PDF en cualquier otro punto de la página hace que el
+  // navegador lo abra y se pierda la pantalla.
+  ['dragover', 'drop'].forEach(ev =>
+    document.addEventListener(ev, e => { if (!zona.contains(e.target)) e.preventDefault(); }));
+})();
+
+async function cargarArchivos(lista) {
+  const archivos = Array.from(lista || []);
+  if (!archivos.length) return;
+  const zona = document.getElementById('qxSoltar');
+  const estado = document.getElementById('qxCargaEstado');
+  zona.classList.add('trabajando');
+  estado.className = 'qx-soltar-estado';
+  estado.textContent = `Leyendo ${archivos.length} archivo(s)…`;
+
+  const datos = new FormData();
+  // `webkitRelativePath` sólo viene al elegir una carpeta; al arrastrar llega
+  // el nombre a secas, y entonces el área la pone la carpeta de destino.
+  archivos.forEach(f => datos.append('archivos', f, f.webkitRelativePath || f.name));
+
+  try {
+    const r = await fetch('/quipux/api/cargar', {
+      method: 'POST', body: datos,
+      headers: { 'X-CSRFToken': document.querySelector('meta[name="csrf-token"]')?.content || '' }
+    }).then(x => x.json());
+
+    if (!r.success) {
+      estado.className = 'qx-soltar-estado mal';
+      estado.textContent = 'No se pudo: ' + (r.error || '');
+      return;
+    }
+    const crono = r.cronograma || {};
+    estado.className = 'qx-soltar-estado bien';
+    estado.textContent = `${r.leidos} documento(s) leído(s), ${r.con_plazo} con plazo`
+      + (r.publicados !== undefined ? ` · ${r.publicados} en la pantalla` : '')
+      + (crono.creadas !== undefined ? ` · ${crono.creadas} al cronograma` : '')
+      + (r.publicar_error ? ` · ojo: ${r.publicar_error}` : '');
+    marcador(); cargar();
+  } catch (e) {
+    estado.className = 'qx-soltar-estado mal';
+    estado.textContent = 'No se pudo enviar: ' + e;
+  } finally {
+    zona.classList.remove('trabajando');
+    document.getElementById('qxArchivos').value = '';
+  }
 }
 
 // Entrar a CuencaDOC y recoger se hacía desde aquí. Ya no: el servidor no

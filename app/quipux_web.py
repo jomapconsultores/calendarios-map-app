@@ -335,6 +335,79 @@ def registrar_quipux(app, ctx):
         return jsonify({'success': True, 'nombre': nombre})
 
     # ------------------------------------------------------------------
+    #  Los documentos que se sueltan en la pantalla
+    # ------------------------------------------------------------------
+    @app.route('/quipux/api/cargar', methods=['POST'])
+    @login_required
+    def quipux_cargar():
+        """Recibe oficios y matrices, los lee y los deja en la planificación.
+
+        Desde el servidor no se puede entrar a CuencaDOC —no lo alcanza—, así
+        que los documentos se descargan a mano y se sueltan aquí. Lo que pasa
+        después es exactamente lo mismo que con la recolección automática: se
+        deduce el plazo de cada uno, se publican para que se vean en esta
+        pantalla y en el teléfono, y los que tienen fecha entran al cronograma.
+
+        Los archivos se procesan y no se guardan: de un PDF nos interesa lo que
+        dice —número, asunto, para cuándo—, no tener otra copia del archivo. El
+        original sigue donde lo tenga quien lo subió, y el contenedor se
+        reemplaza en cada despliegue, así que guardarlo aquí sería prometer una
+        permanencia que no existe."""
+        if not _permitido():
+            return _no()
+        archivos = [f for f in request.files.getlist('archivos') if f and f.filename]
+        if not archivos:
+            return jsonify({'success': False, 'error': 'No llegó ningún archivo'})
+
+        import shutil
+        import tempfile
+        from werkzeug.utils import secure_filename
+
+        temporal = tempfile.mkdtemp(prefix='quipux_carga_')
+        avisos = []
+        try:
+            for f in archivos:
+                nombre = secure_filename(f.filename) or 'documento'
+                # El área la da la carpeta: si el navegador manda la ruta
+                # relativa (al soltar una carpeta entera), se respeta.
+                relativa = os.path.dirname(f.filename or '')
+                destino = os.path.join(temporal, *[secure_filename(p) for p in
+                                                   relativa.split('/') if p])
+                os.makedirs(destino, exist_ok=True)
+                f.save(os.path.join(destino, nombre))
+
+            from quipux.carpeta import leer_carpeta
+            documentos = leer_carpeta(temporal, registro=lambda m: avisos.append(str(m)))
+            if not documentos:
+                return jsonify({'success': False,
+                                'error': 'No se pudo leer ningún documento de lo enviado'})
+
+            from quipux import planificacion
+            resultado = {'success': True, 'leidos': len(documentos),
+                         'con_plazo': sum(1 for d in documentos
+                                          if (d.get('plazo') or {}).get('fecha')),
+                         'avisos': avisos[:10]}
+            if _hay_base(app):
+                pub = planificacion.publicar(app.supabase, documentos)
+                resultado['publicados'] = pub.get('subidos', 0)
+                if pub.get('error'):
+                    resultado['publicar_error'] = pub['error']
+                crono = planificacion.volcar(app.supabase, documentos)
+                resultado['cronograma'] = {
+                    'creadas': crono.get('creadas', 0),
+                    'actualizadas': crono.get('actualizadas', 0),
+                    'respetadas': crono.get('respetadas', 0),
+                    'error': crono.get('error'),
+                }
+            else:
+                resultado['publicar_error'] = 'sin conexión con la base'
+            return jsonify(resultado)
+        except Exception as e:
+            return jsonify({'success': False, 'error': str(e)[:250]})
+        finally:
+            shutil.rmtree(temporal, ignore_errors=True)
+
+    # ------------------------------------------------------------------
     #  La pasada
     # ------------------------------------------------------------------
     @app.route('/quipux/api/recoger', methods=['POST'])
