@@ -107,6 +107,10 @@ HOLGURA = timedelta(seconds=1)
 PREFIJO_PROPIO = 'cita-'
 SUFIJO_PROPIO = '@calendario.map'
 
+# Y el que pone Google a lo que nace en Google: el identificador del evento
+# con esto detrás.
+SUFIJO_GOOGLE = '@google.com'
+
 
 # ============================================================
 #  LO QUE YA TENEMOS
@@ -234,13 +238,39 @@ def identidad_de_evento(ev):
     return identidad(uid, cuando.get('dateTime') or cuando.get('date') or ev.get('id'))
 
 
+def _evento_de_google(uid):
+    """Si este UID lo puso Google, el evento que nombra.
+
+    A lo que nace en Google, Google le pone de UID el identificador del evento
+    con `@google.com` detrás. Así que una invitación que llega por correo con
+    `abc123@google.com` está hablando del evento `abc123`, que es justo lo que
+    esta plataforma guarda cuando ella misma lo creó allí.
+
+    Sin esto, una reunión convocada desde aquí en la agenda de una cuenta
+    volvía a entrar por la bandeja de la cuenta de Microsoft invitada: la
+    primera fila tenía el evento y ningún UID, la segunda el UID y ningún
+    evento, y no había por dónde reconocer que eran la misma reunión. Quedaban
+    las dos, y cada pasada volvía a intentar ponerle a la primera el UID que la
+    segunda ya tenía: choque con el índice, cada cuarto de hora, para siempre."""
+    if not uid:
+        return None
+    # Sin el día: una repetición de serie lleva el UID de la serie con el día
+    # pegado, y lo que nombra al evento es el UID.
+    texto = str(uid).strip().lower().split('#')[0]
+    if not texto.endswith(SUFIJO_GOOGLE):
+        return None
+    return texto[:-len(SUFIJO_GOOGLE)] or None
+
+
 def _copia_de_lo_que_ya_hay(indice, evento_id=None, uid=None):
     """La fila que ya tenemos para este mismo evento, si está: por su
     identificador de Google —que es el mismo en la agenda de cada invitado—, por
-    su UID de calendario, o porque el UID lo pusimos nosotros."""
+    su UID de calendario, porque el UID lo pusimos nosotros, o porque lo puso
+    Google y lleva dentro el identificador del evento."""
     return (indice['por_evento'].get(evento_id) if evento_id else None) \
         or (indice['por_uid'].get(str(uid).strip().lower()) if uid else None) \
-        or _cita_propia(uid, indice)
+        or _cita_propia(uid, indice) \
+        or indice['por_evento'].get(_evento_de_google(uid))
 
 
 def _guardar_uid(app, cita, uid, indice):
@@ -737,7 +767,13 @@ def _aplicar_invitacion(app, lectura, cuenta, indice, res):
     # reconoce y no se repite; como mucho se le guarda el UID a la fila que ya
     # existe, para que la siguiente vez el reconocimiento sea inmediato.
     if cita is None:
-        copia = _cita_propia(uid, indice)
+        # Lo segundo es lo que faltaba, y lo que este comentario ya prometía: el
+        # UID que pone Google lleva dentro el identificador del evento, y ese
+        # evento puede ser uno que esta plataforma creó desde otra cuenta. Sin
+        # mirarlo, la reunión convocada aquí volvía a entrar como cita ajena por
+        # la bandeja del invitado de la casa.
+        copia = (_cita_propia(uid, indice)
+                 or indice['por_evento'].get(_evento_de_google(uid)))
         if copia is not None:
             res['copias'] += 1
             _guardar_uid(app, copia, uid, indice)

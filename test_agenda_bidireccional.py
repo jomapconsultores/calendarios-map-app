@@ -520,6 +520,35 @@ check('y un evento suelto se queda con su UID a secas',
       ent.identidad_de_evento({'iCalUID': 'SUELTO@google.com'}),
       'suelto@google.com')
 
+print('')
+print('-- La reunión que convocamos nosotros, de vuelta por la bandeja de otra cuenta --')
+# El caso real que se quedó dando vueltas en producción: la plataforma crea el
+# evento en la agenda de una cuenta, y la invitación llega por correo a la cuenta
+# de Microsoft invitada. Google pone de UID el identificador del evento con
+# '@google.com' detrás, así que la fila que ya existe se reconoce por ahí: una
+# tenía el evento y ningún UID, la otra el UID y ningún evento.
+YA_CREADA = {**LECTURA['cita'], 'id': 'cita-en-google', 'status': 'confirmed',
+             'google_event_id': 'abc123', 'external_uid': None,
+             'google_account': 'jomap@ejemplo.com'}
+de_vuelta = {**LECTURA, 'uid': 'abc123@google.com'}
+app = AppFalsa()
+res = contador()
+ind = indice([YA_CREADA])
+ent._aplicar_invitacion(app, de_vuelta, BUZON, ind, res)
+check('no entra como una segunda cita',
+      (res['nuevas'], len(app.supabase.insertados)), (0, 0))
+check('se reconoce como la que ya teníamos', res['copias'], 1)
+check('y se le guarda el UID, para que la próxima vez sea inmediato',
+      app.supabase.actualizados,
+      [('cita-en-google', {'external_uid': 'abc123@google.com'})])
+
+# Y una repetición de esa serie: el UID lleva el día pegado, y lo que nombra al
+# evento sigue siendo lo de delante.
+check('también con el día pegado',
+      ent._evento_de_google('abc123@google.com#20260922T150000Z'), 'abc123')
+check('y un UID que no es de Google no nombra ningún evento',
+      ent._evento_de_google('uid-de-outlook@outlook.com'), None)
+
 print('\n' + ('TODO CORRECTO' if not fallos else
               '%d FALLO(S): %s' % (len(fallos), ', '.join(fallos))))
 sys.exit(1 if fallos else 0)
