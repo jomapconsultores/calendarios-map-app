@@ -1340,9 +1340,9 @@ def resincronizar_citas_google(app, creds=None, limite_segundos=60):
             # antes de insertar para no duplicar la cita en el calendario.
             existente = service.events().list(
                 calendarId=gcal_id, timeMin=cita['start_time'], timeMax=cita['end_time'],
-                q=cita.get('title') or '', maxResults=1).execute()
-            if existente.get('items'):
-                ya_estaba = existente['items'][0]
+                q=cita.get('title') or '', maxResults=5).execute()
+            ya_estaba = evento_sin_dueno(app, existente.get('items'), cita['id'])
+            if ya_estaba:
                 app.supabase.update('appointments', cita['id'], {
                     'google_event_id': ya_estaba['id'],
                     'google_cal_id': gcal_id, 'google_account': cuenta,
@@ -1535,6 +1535,41 @@ def _cuenta_map(all_cals):
 def _proveedor_map(all_cals):
     """calendar_id → 'google' (API de Calendar) | 'microsoft' (invitación .ics)."""
     return {c['calendar_id']: (c.get('proveedor') or 'google') for c in all_cals}
+
+
+def evento_sin_dueno(app, encontrados, cita_id=None):
+    """De los eventos que la búsqueda devolvió, el primero que no sea ya de otra
+    cita de aquí.
+
+    Antes de crear el evento en Google se busca por título y rango de horas, por
+    si ya estaba —un evento creado del que se perdió la respuesta, o uno que
+    alguien puso a mano—. Pero «lo que hay a esa hora y se llama así» no es
+    necesariamente lo mismo: dos reuniones llamadas «REUNIÓN» que se solapan son
+    dos reuniones, y la búsqueda devuelve la primera.
+
+    Sin esta comprobación, la segunda cita se ataba al evento de la primera. Dos
+    filas apuntando al mismo evento de Google: editar una pisaba a la otra, y lo
+    que entraba de fuera para ese evento se repartía entre las dos. Desde la 038
+    hay un índice que lo impide, así que ya no se ata —pero se intenta otra vez
+    cada cuarto de hora, la cita no llega nunca a Google y el registro se llena
+    de choques que no dicen qué los causa.
+
+    Se mira entre varios candidatos y no sólo el primero: el evento bueno puede
+    ser el segundo de la lista, y descartar la búsqueda entera por el primero
+    obligaría a crear un duplicado en el calendario de verdad, que es el daño
+    que esta búsqueda viene a evitar."""
+    encontrados = [e for e in (encontrados or []) if e.get('id')]
+    if not encontrados:
+        return None
+    filas = app.supabase.get_in('appointments', 'google_event_id',
+                                [e['id'] for e in encontrados],
+                                select='id,google_event_id') or []
+    tomados = {f.get('google_event_id') for f in filas
+               if str(f.get('id')) != str(cita_id)}
+    for e in encontrados:
+        if e['id'] not in tomados:
+            return e
+    return None
 
 
 def marca_de_version(evento):
@@ -4313,10 +4348,11 @@ def create_app():
             # Buscar si ya existe en Google Calendar para evitar duplicado
             existing = service.events().list(
                 calendarId=gcal_id, timeMin=apt['start_time'],
-                timeMax=apt['end_time'], q=apt['title'], maxResults=1).execute()
-            if existing.get('items'):
-                # Ya existe: vincular sin reenviar notificaciones
-                ya_estaba = existing['items'][0]
+                timeMax=apt['end_time'], q=apt['title'], maxResults=5).execute()
+            # Ya existe: vincular sin reenviar notificaciones. Salvo que ese
+            # evento sea ya de otra cita: entonces no es éste, y hay que crearlo.
+            ya_estaba = evento_sin_dueno(app, existing.get('items'), aid)
+            if ya_estaba:
                 app.supabase.update('appointments', aid,
                     {'status': 'confirmed', 'google_event_id': ya_estaba['id'],
                      'google_cal_id': gcal_id, 'google_account': cuenta,
@@ -4462,9 +4498,9 @@ def create_app():
                 gcal_id = gcal_id_map.get(cal_id, 'primary')
                 existing = service.events().list(
                     calendarId=gcal_id, timeMin=apt['start_time'],
-                    timeMax=apt['end_time'], q=apt['title'], maxResults=1).execute()
-                if existing.get('items'):
-                    ya_estaba = existing['items'][0]
+                    timeMax=apt['end_time'], q=apt['title'], maxResults=5).execute()
+                ya_estaba = evento_sin_dueno(app, existing.get('items'), apt['id'])
+                if ya_estaba:
                     app.supabase.update('appointments', apt['id'],
                         {'google_event_id': ya_estaba['id'],
                          'google_cal_id': gcal_id, 'google_account': cuenta,

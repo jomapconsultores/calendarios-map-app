@@ -257,5 +257,43 @@ check('ni se la busca en Google al editarla',
       appmod._reflejar_en_google(AppFalsa(), {'google_event_id': None}, {'title': 'X'}),
       ({}, None))
 
+print('')
+print('-- Un evento que ya es de otra cita no se adopta --')
+# Antes de crear el evento se busca por título y rango de horas, por si ya
+# estaba. Pero dos reuniones llamadas «REUNIÓN» que se solapan son dos
+# reuniones: atar la segunda al evento de la primera hacía que editar una
+# pisara a la otra. Desde la 038 el índice lo impide, y la cita se quedaba sin
+# subir dando un choque en el registro cada cuarto de hora.
+
+
+class SupabaseConDuenos:
+    def __init__(self, duenos):
+        self.duenos = dict(duenos)   # evento -> cita que ya lo tiene
+
+    def get_in(self, tabla, columna, valores, select=None):
+        return [{'id': cita, 'google_event_id': ev}
+                for ev, cita in self.duenos.items() if ev in valores]
+
+
+class AppConDuenos:
+    def __init__(self, duenos):
+        self.supabase = SupabaseConDuenos(duenos)
+
+
+EVS = [{'id': 'ev-de-otra'}, {'id': 'ev-libre'}]
+app_d = AppConDuenos({'ev-de-otra': 'cita-vecina'})
+check('se salta el que ya tiene dueño y toma el siguiente',
+      (appmod.evento_sin_dueno(app_d, EVS, 'cita-mia') or {}).get('id'), 'ev-libre')
+check('si todos tienen dueño, ninguno: se creará uno nuevo',
+      appmod.evento_sin_dueno(AppConDuenos({'ev-de-otra': 'v1', 'ev-libre': 'v2'}),
+                              EVS, 'cita-mia'), None)
+check('el evento que ya es de LA MISMA cita sí se reconoce',
+      (appmod.evento_sin_dueno(AppConDuenos({'ev-de-otra': 'cita-mia'}),
+                               EVS, 'cita-mia') or {}).get('id'), 'ev-de-otra')
+check('sin resultados de búsqueda, nada que adoptar',
+      appmod.evento_sin_dueno(AppConDuenos({}), [], 'cita-mia'), None)
+check('y lo que viene sin id se ignora',
+      appmod.evento_sin_dueno(AppConDuenos({}), [{'summary': 'sin id'}], 'x'), None)
+
 print('\n' + ('TODO CORRECTO' if not fallos else '%d FALLO(S): %s' % (len(fallos), ', '.join(fallos))))
 sys.exit(1 if fallos else 0)
