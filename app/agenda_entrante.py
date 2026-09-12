@@ -140,7 +140,19 @@ def _citas_conocidas(app):
         # fuera del índice, y lo que no está en el índice se toma por nuevo: la
         # misma reunión volvía a entrar en cada pasada, cada cuarto de hora, y
         # cada tanda empujaba a más citas fuera de la página.
-        filas = app.supabase.get_todo('appointments', select=SELECT_SINCRONIA)
+        # Y `_detallado`, porque aquí hay que saber si la lista vacía es una
+        # agenda vacía o una consulta que no se pudo hacer. Un error de
+        # PostgREST no levanta excepción: devuelve []. Sin distinguirlo, el
+        # índice salía vacío, la pasada daba por nueva cada reunión que leía y
+        # volvía a crear la agenda ENTERA — y no hacía falta una caída de la
+        # base: bastaba con que faltara una columna del select, es decir con una
+        # migración sin aplicar, para que eso pasara cada cuarto de hora.
+        filas, motivo = app.supabase.get_todo_detallado(
+            'appointments', select=SELECT_SINCRONIA)
+        if motivo:
+            print(f'[agenda] no se pudieron leer las citas ({motivo}): '
+                  f'no se sincroniza, para no duplicarlas')
+            return None
     except Exception as e:
         print(f'[agenda] no se pudieron leer las citas: {e}')
         return None

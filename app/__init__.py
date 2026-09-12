@@ -505,19 +505,30 @@ class SupabaseAPI:
         para decidir qué falta sincronizar es veneno: lo que queda fuera de esa
         página se toma por inexistente, y una cita que se toma por inexistente se
         vuelve a crear."""
+        return self.get_todo_detallado(table, select, filters, pagina, tope)[0]
+
+    def get_todo_detallado(self, table, select='*', filters=None,
+                           pagina=1000, tope=100000):
+        """La tabla entera y si la lectura falló: (filas, motivo).
+
+        Lo que se devuelve cuando falla es lo leído hasta ahí, que es una lista
+        INCOMPLETA: con motivo distinto de None no se puede concluir nada de lo
+        que no aparece. Ver `get_q_detallado` para los motivos."""
         filas, desde = [], 0
         while True:
             params = {'order': 'id.asc', 'limit': pagina, 'offset': desde}
             for k, v in (filters or {}).items():
                 params[k] = f'eq.{v}'
-            lote = self.get_q(table, params, select=select) or []
-            filas.extend(lote)
-            if len(lote) < pagina:
-                return filas
+            lote, motivo = self.get_q_detallado(table, params, select=select)
+            if motivo:
+                return filas, motivo
+            filas.extend(lote or [])
+            if len(lote or []) < pagina:
+                return filas, None
             desde += pagina
             if desde >= tope:
                 print(f'[supabase.get_todo] {table}: más de {desde} filas, se corta')
-                return filas
+                return filas, None
 
     def get_in(self, table, column, values, select='*'):
         """Single query WHERE column IN (values)."""
@@ -675,6 +686,23 @@ class SupabaseAPI:
 
     def get_q(self, table, query_params=None, select='*'):
         """Query with raw PostgREST filter params, e.g. {'status': 'eq.done'}."""
+        return self.get_q_detallado(table, query_params, select)[0]
+
+    def get_q_detallado(self, table, query_params=None, select='*'):
+        """Lo mismo, pero diciendo si la consulta FALLÓ: (filas, motivo).
+
+        La diferencia entre «no hay filas» y «no pude preguntar» no es un matiz.
+        Quien lee para decidir qué falta sincronizar toma la lista vacía por «la
+        agenda está vacía» y vuelve a crearlo todo; si lo que pasó es que la base
+        no contestó, eso duplica la agenda entera en una pasada. Y no hacía falta
+        una caída: basta que falte una columna del `select` —una migración sin
+        aplicar— para que PostgREST contestara 400 y esto devolviera [] sin que
+        nadie se enterara, cada cuarto de hora.
+
+        `motivo` es None si la consulta se hizo, y si no: 'columna' (la base no
+        conoce un campo que se le pidió), 'rechazo' (cualquier otro no) o 'red'
+        (no hubo respuesta).
+        """
         q = f'{self.url}/rest/v1/{table}?select={select}'
         for k, v in (query_params or {}).items():
             q += f'&{k}={v}'
@@ -687,17 +715,21 @@ class SupabaseAPI:
             try:
                 r = self._session.get(q, timeout=self._timeout)
                 if r.status_code == 200:
-                    return r.json()
+                    return r.json(), None
                 if intento == 1 and r.status_code >= 500:
                     continue
-                print(f'[supabase.get_q] {table}: HTTP {r.status_code} {r.text[:120]}')
-                return []
+                texto = r.text[:200]
+                print(f'[supabase.get_q] {table}: HTTP {r.status_code} {texto[:120]}')
+                falta_columna = (r.status_code in (400, 404)
+                                 and ('column' in texto.lower() or 'PGRST204' in texto
+                                      or '42703' in texto))
+                return [], ('columna' if falta_columna else 'rechazo')
             except Exception as e:
                 if intento == 1:
                     continue
                 print(f'[supabase.get_q] {table}: {e}')
-                return []
-        return []
+                return [], 'red'
+        return [], 'red'
 
 
 # ============================================================

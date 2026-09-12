@@ -221,8 +221,13 @@ def _sincronizar(app, zona, deadline_segundos):
     # que cortó. Lo que quedara fuera de esa página no aparecía en `por_reunion`,
     # y una reunión que no aparece se toma por nueva: se volvía a crear la cita
     # en cada pasada.
-    citas = app.supabase.get_todo('appointments', select='*',
-                                  filters={'calendar_id': CALENDARIO_ATLAS}) or []
+    citas, motivo = app.supabase.get_todo_detallado(
+        'appointments', select='*', filters={'calendar_id': CALENDARIO_ATLAS})
+    if motivo:
+        # Media lista es peor que ninguna: lo que no aparece se toma por reunión
+        # sin cita y se vuelve a crear. Se para aquí.
+        return {'success': False,
+                'error': f'no se pudo leer la agenda de aquí ({motivo})'}
     por_reunion = {c['atlas_reunion_id']: c for c in citas if c.get('atlas_reunion_id')}
     ahora = datetime.now(timezone.utc).isoformat()
 

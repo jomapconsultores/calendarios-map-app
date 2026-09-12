@@ -43,10 +43,13 @@ def check(titulo, obtenido, esperado):
 
 class SupabaseFalso:
     """Apunta lo que se le manda escribir, y devuelve lo que se le enchufe."""
-    def __init__(self, filas=()):
+    def __init__(self, filas=(), fallo_lectura=None):
         self.filas = list(filas)
         self.insertados = []
         self.actualizados = []
+        # Como falla PostgREST de verdad: no levanta excepción: contesta con un
+        # error HTTP que el cliente traduce a lista vacía y un motivo.
+        self.fallo_lectura = fallo_lectura
 
     def get(self, tabla, filtros=None, select=None):
         return list(self.filas)
@@ -58,13 +61,25 @@ class SupabaseFalso:
         hasta = desde + int((params or {}).get('limit') or len(self.filas) or 1)
         return list(self.filas)[desde:hasta]
 
+    def get_q_detallado(self, tabla, params=None, select=None):
+        if self.fallo_lectura:
+            return [], self.fallo_lectura
+        return self.get_q(tabla, params, select), None
+
     def get_todo(self, tabla, select=None, filters=None, pagina=1000, tope=100000):
+        return self.get_todo_detallado(tabla, select, filters, pagina, tope)[0]
+
+    def get_todo_detallado(self, tabla, select=None, filters=None,
+                           pagina=1000, tope=100000):
         filas, desde = [], 0
         while True:
-            lote = self.get_q(tabla, {'offset': desde, 'limit': pagina}, select)
+            lote, motivo = self.get_q_detallado(
+                tabla, {'offset': desde, 'limit': pagina}, select)
+            if motivo:
+                return filas, motivo
             filas.extend(lote)
             if len(lote) < pagina:
-                return filas
+                return filas, None
             desde += pagina
 
     def insert(self, tabla, data):
@@ -77,8 +92,8 @@ class SupabaseFalso:
 
 
 class AppFalsa:
-    def __init__(self, filas=(), eventos=(), falla=None):
-        self.supabase = SupabaseFalso(filas)
+    def __init__(self, filas=(), eventos=(), falla=None, fallo_lectura=None):
+        self.supabase = SupabaseFalso(filas, fallo_lectura)
         self._eventos = list(eventos)
         self._falla = falla
 
@@ -410,6 +425,30 @@ check('se reconoce como la que ya teníamos', res['copias'], 1)
 check('y se le guarda el UID para reconocerla sin pensar la próxima vez',
       app.supabase.actualizados,
       [('cita-del-despacho', {'external_uid': 'cita-cita-del-despacho@calendario.map'})])
+
+print('')
+print('-- La base no contesta cuando se le pregunta qué hay --')
+# El caso que llenaba el calendario sin que fallara nada a la vista: PostgREST
+# contesta con un error —o le falta una columna del select, que es una migración
+# sin aplicar— y devuelve []. Tomar ese [] por «la agenda está vacía» hace que
+# cada reunión leída se dé por nueva y se vuelva a crear la agenda entera.
+for motivo in ('red', 'columna', 'rechazo'):
+    app = AppFalsa(filas=[], eventos=[evento('ev-1')], fallo_lectura=motivo)
+    enchufar_google(app)
+    r = ent.sincronizar_google(app, [CUENTA], CAL)
+    cuenta = r[CUENTA]
+    check('con «%s» no se escribe nada' % motivo,
+          (cuenta['nuevas'], len(app.supabase.insertados),
+           len(app.supabase.actualizados)), (0, 0, 0))
+    check('  y se dice por qué, en vez de callar', bool(cuenta.get('error')), True)
+
+app = AppFalsa(filas=[], eventos=[evento('ev-1')], fallo_lectura='red')
+enchufar_google(app)
+r = ent.sincronizar_correo(app, ['buzon@ejemplo.com'])
+# Que no inserte nada no prueba nada aquí —sin buzón tampoco insertaría—, así
+# que se mira que la pasada se detenga POR ESTO y lo diga.
+check('lo mismo con las invitaciones que llegan por correo',
+      r['buzon@ejemplo.com'].get('error'), 'no se pudo leer la agenda de aquí')
 
 print('\n' + ('TODO CORRECTO' if not fallos else
               '%d FALLO(S): %s' % (len(fallos), ', '.join(fallos))))
