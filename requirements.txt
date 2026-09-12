@@ -31,3 +31,10 @@ lxml>=5.0                # lectura del HTML de las bandejas y las fichas
 # recorrido de las bandejas y las descargas siguen yendo por HTTP, que es
 # veinte veces más rápido. Usa el Chrome ya instalado, no descarga otro.
 playwright>=1.40         # ventana de acceso cuando salta el control de la imagen
+
+# Migraciones. `tools/aplicar_migracion.py` habla con PostgreSQL por conexión
+# directa, y el único sitio con acceso a la base es el servidor — donde corre
+# esta misma lista. Sin esto, la herramienta que aplica migraciones no se puede
+# ejecutar justamente allí: pide «pip install psycopg[binary]» en una máquina
+# donde nadie va a instalar nada a mano.
+psycopg[binary]>=3.1      # aplicar migraciones desde el servidor
