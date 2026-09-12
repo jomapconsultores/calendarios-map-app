@@ -1361,6 +1361,14 @@ def resincronizar_citas_google(app, creds=None, limite_segundos=60):
                 # pasada, pero las citas de las demás cuentas siguen subiendo.
                 servicios[cuenta] = None
                 continue
+            # Y se dice cuál falló y por qué. Esto contaba los errores y se los
+            # guardaba: la pantalla decía «5 errores» y no había forma de saber
+            # de qué cinco citas hablaba ni qué les pasaba, ni en el registro del
+            # servidor. Cinco citas que llevaban meses sin llegar a Google y
+            # nadie podía averiguar por qué.
+            print(f'[google] no se pudo subir «{cita.get("title")}» '
+                  f'({cita.get("id")}, {cita.get("start_time")}, cuenta {cuenta}): '
+                  f'{str(e)[:200]}')
             errores += 1
     if subidas:
         print(f'[google] resincronizadas {subidas} cita(s) pendientes')
