@@ -1641,6 +1641,12 @@ def cuenta_de_la_cita(app, apt):
     """Dónde vive —o va a vivir— el evento de esta cita."""
     return apt.get('google_account') or cuenta_del_calendario(app, apt.get('calendar_id'))
 
+# Lo que Google acepta como invitado. No pretende validar direcciones: sólo
+# distinguir «esteban@ejemplo.com» de «Esteban Brazales», que es lo que se cuela
+# por el campo de invitados.
+ES_CORREO = re.compile(r'^[^@\s,;]+@[^@\s,;]+\.[a-z]{2,}$', re.I)
+
+
 def _build_attendees(apt, email_map, cuenta_organizadora=None):
     """Build a deduplicated attendee list for a Google Calendar event.
     Uses lowercase comparison to avoid case-sensitive duplicates.
@@ -1658,7 +1664,15 @@ def _build_attendees(apt, email_map, cuenta_organizadora=None):
         seen.add(organizadora)
     def _add(email):
         e = (email or '').strip().lower()
-        if e and e not in seen:
+        # Sólo lo que Google pueda invitar. El campo `invitados` no siempre trae
+        # correos: las citas que llegan de Atlas traen NOMBRES —«CARMEN REINOSO,
+        # JOHANNA NIEVECELA»—, y Google contesta 400 «Invalid attendee email» y
+        # rechaza el evento ENTERO. No es que faltara un invitado: es que la
+        # reunión no llegaba al calendario. Cinco citas llevaban así desde mayo.
+        #
+        # A quien no tiene correo no se le puede invitar, y su nombre ya va en la
+        # ficha de la cita. Se le deja fuera de la lista y la reunión se crea.
+        if e and e not in seen and ES_CORREO.match(e):
             seen.add(e)
             attendees.append({'email': email.strip()})
     cal_email = email_map.get(apt.get('calendar_id', ''))

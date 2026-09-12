@@ -323,5 +323,26 @@ check('sin fecha, se avisa: mejor de más que callarse',
 check('y con una fecha que no se entiende, igual',
       appmod.aviso_de_evento({'end_time': 'cuando sea'}), 'all')
 
+print('')
+print('-- A quien no se le puede invitar, no se le invita --')
+# El campo de invitados no siempre trae correos: lo que llega de Atlas son
+# NOMBRES. Google contestaba 400 «Invalid attendee email» y rechazaba el evento
+# entero, así que la reunión no llegaba al calendario. Cinco citas llevaban así
+# desde mayo, y el error no se escribía en ningún sitio.
+ATLAS = {'invitados': 'CARMEN REINOSO, JOHANNA NIEVECELA', 'calendar_id': 'atlas'}
+check('los nombres sueltos no van como invitados',
+      appmod._build_attendees(ATLAS, {}, 'atlas.cenest@gmail.com'), [])
+check('pero de una mezcla se rescata lo que sí es un correo',
+      appmod._build_attendees({'invitados': 'Carmen Reinoso, esteban@ejemplo.com',
+                               'calendar_id': 'atlas'}, {}, 'atlas.cenest@gmail.com'),
+      [{'email': 'esteban@ejemplo.com'}])
+check('y los correos de siempre siguen entrando',
+      appmod._build_attendees({'invitados': 'a@b.com, c@d.ec', 'calendar_id': 'x'},
+                              {}, 'org@x.com'),
+      [{'email': 'a@b.com'}, {'email': 'c@d.ec'}])
+check('lo que parece correo pero no lo es, fuera',
+      appmod._build_attendees({'invitados': 'juan@casa, @nadie, sin arroba',
+                               'calendar_id': 'x'}, {}, 'org@x.com'), [])
+
 print('\n' + ('TODO CORRECTO' if not fallos else '%d FALLO(S): %s' % (len(fallos), ', '.join(fallos))))
 sys.exit(1 if fallos else 0)
