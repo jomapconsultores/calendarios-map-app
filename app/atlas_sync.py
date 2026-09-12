@@ -217,7 +217,12 @@ def _sincronizar(app, zona, deadline_segundos):
     except Exception as e:
         return {'success': False, 'error': str(e)[:200]}
 
-    citas = app.supabase.get('appointments', {'calendar_id': CALENDARIO_ATLAS}, select='*') or []
+    # Por páginas: `get` devuelve como mucho las mil primeras filas y no dice
+    # que cortó. Lo que quedara fuera de esa página no aparecía en `por_reunion`,
+    # y una reunión que no aparece se toma por nueva: se volvía a crear la cita
+    # en cada pasada.
+    citas = app.supabase.get_todo('appointments', select='*',
+                                  filters={'calendar_id': CALENDARIO_ATLAS}) or []
     por_reunion = {c['atlas_reunion_id']: c for c in citas if c.get('atlas_reunion_id')}
     ahora = datetime.now(timezone.utc).isoformat()
 

@@ -497,6 +497,28 @@ class SupabaseAPI:
                 return []
         return []
 
+    def get_todo(self, table, select='*', filters=None, pagina=1000, tope=100000):
+        """La tabla entera, página a página.
+
+        `get` no la devuelve entera: PostgREST corta en las primeras mil filas y
+        no dice que cortó. Para una pantalla da igual —se ve una semana—, pero
+        para decidir qué falta sincronizar es veneno: lo que queda fuera de esa
+        página se toma por inexistente, y una cita que se toma por inexistente se
+        vuelve a crear."""
+        filas, desde = [], 0
+        while True:
+            params = {'order': 'id.asc', 'limit': pagina, 'offset': desde}
+            for k, v in (filters or {}).items():
+                params[k] = f'eq.{v}'
+            lote = self.get_q(table, params, select=select) or []
+            filas.extend(lote)
+            if len(lote) < pagina:
+                return filas
+            desde += pagina
+            if desde >= tope:
+                print(f'[supabase.get_todo] {table}: más de {desde} filas, se corta')
+                return filas
+
     def get_in(self, table, column, values, select='*'):
         """Single query WHERE column IN (values)."""
         if not values:
@@ -514,17 +536,37 @@ class SupabaseAPI:
             return []
 
     def insert(self, table, data):
+        filas, _ = self.insert_detallado(table, data)
+        return filas
+
+    def insert_detallado(self, table, data):
+        """Inserta y dice POR QUÉ falló, si falló: (filas, motivo).
+
+        El motivo importa cuando quien llama iba a reintentar. Reintentar un
+        INSERT a ciegas es una forma tranquila de duplicar: si la fila se
+        escribió y lo que se perdió fue la respuesta —un tiempo de espera
+        agotado, la red— el reintento la escribe otra vez, y en pantalla salen
+        dos citas idénticas sin que nadie haya hecho nada dos veces. Con el
+        motivo delante se puede reintentar sólo cuando es seguro: cuando la base
+        RECHAZÓ la fila y por tanto no hay nada escrito.
+
+        `motivo` es 'columna' (la base no conoce un campo: falta una migración),
+        'rechazo' (cualquier otro no), 'red' (no se sabe si llegó) o None."""
         h = {'Prefer': 'return=representation'}
         try:
-            r = self._session.post(f'{self.url}/rest/v1/{table}', headers=h, json=data, timeout=self._timeout)
+            r = self._session.post(f'{self.url}/rest/v1/{table}', headers=h,
+                                   json=data, timeout=self._timeout)
             if r.status_code in [200, 201]:
                 body = r.json()
-                return body if isinstance(body, list) else [body]
-            print(f'[supabase.insert] {table}: HTTP {r.status_code} {r.text[:120]}')
-            return None
+                return (body if isinstance(body, list) else [body]), None
+            texto = r.text[:200]
+            print(f'[supabase.insert] {table}: HTTP {r.status_code} {texto[:120]}')
+            falta_columna = (r.status_code in (400, 404)
+                             and ('column' in texto.lower() or 'PGRST204' in texto))
+            return None, ('columna' if falta_columna else 'rechazo')
         except Exception as e:
             print(f'[supabase.insert] {table}: {e}')
-            return None
+            return None, 'red'
 
     def insert_ignore(self, table, data):
         """Insert and silently ignore unique-constraint conflicts."""
@@ -1220,16 +1262,20 @@ def resincronizar_citas_google(app, creds=None, limite_segundos=60):
     sueltas no sirven para todas, y subir una cita de csccue con el permiso de
     jomap la habría puesto en el calendario equivocado."""
     try:
-        citas = app.supabase.get('appointments',
+        citas = app.supabase.get_todo('appointments',
             select='id,title,encargado,tema,client_name,start_time,end_time,calendar_id,'
                    'invitados,direccion,ciudad,lugar,mapa,notes,meeting_link,status,'
-                   'google_event_id') or []
+                   'google_event_id,origen,external_uid') or []
     except Exception as e:
         print(f'[google] no se pudieron leer las citas: {e}')
         return {'subidas': 0, 'errores': 0, 'pendientes': 0}
 
+    # Una cita recogida de fuera NO se sube: ya existe en la agenda de donde
+    # vino. Subirla la pondría por segunda vez en el calendario de quien la
+    # convocó —y como un evento distinto, que ya no se actualiza con el suyo.
     pendientes = [c for c in citas
-                  if c.get('status') == 'confirmed' and not c.get('google_event_id')]
+                  if c.get('status') == 'confirmed' and not c.get('google_event_id')
+                  and (c.get('origen') or 'plataforma') != 'externo']
     if not pendientes:
         return {'subidas': 0, 'errores': 0, 'pendientes': 0}
 
@@ -1264,9 +1310,11 @@ def resincronizar_citas_google(app, creds=None, limite_segundos=60):
                 calendarId=gcal_id, timeMin=cita['start_time'], timeMax=cita['end_time'],
                 q=cita.get('title') or '', maxResults=1).execute()
             if existente.get('items'):
+                ya_estaba = existente['items'][0]
                 app.supabase.update('appointments', cita['id'], {
-                    'google_event_id': existente['items'][0]['id'],
-                    'google_cal_id': gcal_id, 'google_account': cuenta})
+                    'google_event_id': ya_estaba['id'],
+                    'google_cal_id': gcal_id, 'google_account': cuenta,
+                    **marca_de_version(ya_estaba)})
                 continue
             evento = _build_google_event(cita, _build_attendees(cita, email_map, cuenta))
             creado = service.events().insert(calendarId=gcal_id, body=evento,
@@ -1461,12 +1509,24 @@ def marca_de_version(evento):
     """Lo que Google contesta al crear o modificar un evento incluye su nueva
     marca de tiempo. Guardarla es lo que impide que la siguiente pasada de
     sincronización se crea que ese cambio vino de fuera y lo traiga de vuelta:
-    el sistema estaría discutiendo consigo mismo."""
-    marca = (evento or {}).get('updated')
-    if not marca:
-        return {}
-    return {'google_updated': marca,
-            'sincronizado_en': datetime.now(timezone.utc).isoformat()}
+    el sistema estaría discutiendo consigo mismo.
+
+    Y el `iCalUID`, que es el nombre que ese evento tiene en TODAS las agendas
+    donde aparezca. Ahí está la diferencia entre una reunión y dos: la copia que
+    le queda a cada invitado lleva el mismo UID, así que cuando la reunión vuelve
+    a entrar por la agenda de otra cuenta de la casa se reconoce como la misma en
+    vez de duplicarse. Sin guardarlo al crear el evento, la sincronización no
+    tiene con qué reconocerla."""
+    evento = evento or {}
+    marca = evento.get('updated')
+    uid = (evento.get('iCalUID') or '').strip().lower()
+    campos = {}
+    if marca:
+        campos['google_updated'] = marca
+        campos['sincronizado_en'] = datetime.now(timezone.utc).isoformat()
+    if uid:
+        campos['external_uid'] = uid
+    return campos
 
 
 def cuenta_del_calendario(app, calendar_id):
@@ -2206,18 +2266,27 @@ def create_app():
         del despacho."""
         cals = _get_calendar_config(app)
         cuenta_map, proveedor_map = _cuenta_map(cals), _proveedor_map(cals)
+        _, gcal_id_map = _make_cal_maps(cals)
         entrada = {c['calendar_id']: c.get('sincronizar_entrada', True) for c in cals}
         cal_por_cuenta = {}
+        # Y además, por cuenta, en qué agendas de Google escribe la plataforma.
+        # Mirar sólo la principal dejaba sin camino de vuelta justo los
+        # calendarios donde se ponen las citas: lo que se movía allí desde el
+        # móvil no llegaba aquí nunca.
+        gcals_por_cuenta = {}
         google, microsoft = set(), set()
         for cal_id, cuenta in cuenta_map.items():
             if not entrada.get(cal_id, True):
                 continue
             cal_por_cuenta.setdefault(cuenta, cal_id)
+            gcals_por_cuenta.setdefault(cuenta, set()).add(
+                gcal_id_map.get(cal_id, 'primary'))
             (google if proveedor_map.get(cal_id, 'google') == 'google'
              else microsoft).add(cuenta)
         conectadas = set(cuentas_google_conectadas(app))
-        return _entrante.sincronizar(app, sorted(google & conectadas),
-                                     sorted(microsoft), cal_por_cuenta)
+        return _entrante.sincronizar(
+            app, sorted(google & conectadas), sorted(microsoft), cal_por_cuenta,
+            {c: sorted(g) for c, g in gcals_por_cuenta.items()})
 
     app.sincronizar_agenda_entrante = _sincronizar_agenda_entrante
 
@@ -4045,9 +4114,13 @@ def create_app():
                         record['recurrence_rule'] = rule_json
                         if rec_end:
                             record['recurrence_end_date'] = rec_end.isoformat()
-                    r = app.supabase.insert('appointments', record)
-                    if not r:
-                        # Fallback si aún no se corrió la migración de columnas de recurrencia
+                    r, motivo = app.supabase.insert_detallado('appointments', record)
+                    if not r and motivo == 'columna':
+                        # Aún no se corrió la migración de las columnas de
+                        # recurrencia: se reintenta sin ellas. SÓLO en ese caso.
+                        # Reintentar también cuando lo que falló fue la red
+                        # duplicaba la sesión: la fila se había escrito y lo que
+                        # se perdió fue la respuesta.
                         for col in ('is_recurring', 'parent_event_id',
                                     'recurrence_rule', 'recurrence_end_date'):
                             record.pop(col, None)
@@ -4102,8 +4175,10 @@ def create_app():
                     record['is_recurring'] = True
                     if parent_id:
                         record['parent_event_id'] = parent_id
-                    r = app.supabase.insert('appointments', record)
-                    if not r:
+                    r, motivo = app.supabase.insert_detallado('appointments', record)
+                    if not r and motivo == 'columna':
+                        # Igual que arriba: sólo se reintenta cuando la base
+                        # rechazó la fila, nunca cuando no se sabe si llegó.
                         for col in ('is_recurring', 'parent_event_id'):
                             record.pop(col, None)
                         r = app.supabase.insert('appointments', record)
@@ -4204,10 +4279,11 @@ def create_app():
                 timeMax=apt['end_time'], q=apt['title'], maxResults=1).execute()
             if existing.get('items'):
                 # Ya existe: vincular sin reenviar notificaciones
-                gev_id = existing['items'][0]['id']
+                ya_estaba = existing['items'][0]
                 app.supabase.update('appointments', aid,
-                    {'status': 'confirmed', 'google_event_id': gev_id,
-                     'google_cal_id': gcal_id, 'google_account': cuenta})
+                    {'status': 'confirmed', 'google_event_id': ya_estaba['id'],
+                     'google_cal_id': gcal_id, 'google_account': cuenta,
+                     **marca_de_version(ya_estaba)})
                 return jsonify({'success': True, 'message': 'Confirmada (evento ya existía en Google)'})
             # Nuevo evento — notificar a todos los asistentes una sola vez
             created = service.events().insert(
@@ -4323,11 +4399,16 @@ def create_app():
         cuenta_map, proveedor_map = _cuenta_map(all_cals), _proveedor_map(all_cals)
         servicios = {}          # cuenta → servicio (None = esa cuenta no responde)
         sin_conectar = set()
-        for apt in app.supabase.get('appointments',
+        for apt in app.supabase.get_todo('appointments',
                 select='id,title,encargado,tema,client_name,start_time,end_time,calendar_id,'
-                       'invitados,direccion,ciudad,lugar,mapa,notes,meeting_link,status,google_event_id'):
+                       'invitados,direccion,ciudad,lugar,mapa,notes,meeting_link,status,'
+                       'google_event_id,origen'):
             if apt.get('status') != 'confirmed' or apt.get('google_event_id'):
                 continue
+            # Lo que vino de fuera ya está en su calendario: volver a crearlo
+            # aquí lo duplicaría allí, y esta vez sin vínculo con el original.
+            if (apt.get('origen') or 'plataforma') == 'externo':
+                skipped += 1; continue
             cal_id  = apt.get('calendar_id')
             cuenta  = cuenta_map.get(cal_id) or GOOGLE_ACCOUNT_EMAIL
             if proveedor_map.get(cal_id, 'google') != 'google':
@@ -4346,9 +4427,11 @@ def create_app():
                     calendarId=gcal_id, timeMin=apt['start_time'],
                     timeMax=apt['end_time'], q=apt['title'], maxResults=1).execute()
                 if existing.get('items'):
+                    ya_estaba = existing['items'][0]
                     app.supabase.update('appointments', apt['id'],
-                        {'google_event_id': existing['items'][0]['id'],
-                         'google_cal_id': gcal_id, 'google_account': cuenta})
+                        {'google_event_id': ya_estaba['id'],
+                         'google_cal_id': gcal_id, 'google_account': cuenta,
+                         **marca_de_version(ya_estaba)})
                     skipped += 1; continue
                 attendees = _build_attendees(apt, email_map, cuenta)
                 event = _build_google_event(apt, attendees)

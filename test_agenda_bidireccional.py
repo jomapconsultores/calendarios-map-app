@@ -16,7 +16,12 @@ y lo que rompería si esto estuviera mal hecho:
   * que lo que la propia plataforma acaba de escribir en Google vuelva en la
     siguiente pasada disfrazado de novedad y se pise a sí mismo — el sistema
     discutiendo consigo mismo;
-  * que la misma reunión entre una vez por pasada hasta llenar el día.
+  * que la misma reunión entre una vez por pasada hasta llenar el día;
+  * que una reunión entre dos cuentas de la casa —que está en las dos agendas—
+    se cuente como dos reuniones, que es lo que llenaba el calendario de citas
+    repetidas;
+  * que una repetición de una serie semanal se descarte por «ya la tengo»: todas
+    comparten el mismo UID, y confundirlas es el error contrario.
 """
 import sys, os
 sys.path.insert(0, os.getcwd())
@@ -47,7 +52,20 @@ class SupabaseFalso:
         return list(self.filas)
 
     def get_q(self, tabla, params=None, select=None):
-        return list(self.filas)
+        # La agenda se lee por páginas (PostgREST corta en mil y no avisa): aquí
+        # se respeta eso, para que el test recorra el mismo camino que producción.
+        desde = int((params or {}).get('offset') or 0)
+        hasta = desde + int((params or {}).get('limit') or len(self.filas) or 1)
+        return list(self.filas)[desde:hasta]
+
+    def get_todo(self, tabla, select=None, filters=None, pagina=1000, tope=100000):
+        filas, desde = [], 0
+        while True:
+            lote = self.get_q(tabla, {'offset': desde, 'limit': pagina}, select)
+            filas.extend(lote)
+            if len(lote) < pagina:
+                return filas
+            desde += pagina
 
     def insert(self, tabla, data):
         self.insertados.append(data)
@@ -86,15 +104,20 @@ CAL = {CUENTA: 'cal-jomap'}
 
 def evento(id_, titulo='Reunión de directorio', updated='2026-09-04T10:00:00.000Z',
            inicio='2026-09-20T15:00:00-05:00', fin='2026-09-20T16:00:00-05:00',
-           estado='confirmed', lugar='Sala grande'):
-    return {
+           estado='confirmed', lugar='Sala grande', uid=None, **extra):
+    ev = {
         'id': id_, 'status': estado, 'updated': updated,
+        # El nombre que el evento conserva en la agenda de cada invitado. Es lo
+        # que permite reconocer la misma reunión vista desde otra cuenta.
+        'iCalUID': uid or (id_ + '@google.com'),
         'summary': titulo, 'location': lugar,
         'start': {'dateTime': inicio}, 'end': {'dateTime': fin},
         'organizer': {'email': 'otro@ejemplo.com', 'displayName': 'OTRO DESPACHO'},
         'attendees': [{'email': CUENTA, 'self': True},
                       {'email': 'tercero@ejemplo.com'}],
     }
+    ev.update(extra)
+    return ev
 
 
 def cita(id_='cita-1', updated='2026-09-04T10:00:00.000Z', **campos):
@@ -107,7 +130,8 @@ def cita(id_='cita-1', updated='2026-09-04T10:00:00.000Z', **campos):
         'end_time': '2026-09-20T16:00:00-05:00',
         'origen': 'externo', 'visto': True,
         'google_event_id': 'ev-1', 'google_cal_id': 'primary',
-        'google_account': CUENTA, 'google_updated': updated, 'external_uid': None,
+        'google_account': CUENTA, 'google_updated': updated,
+        'external_uid': 'ev-1@google.com',
     }
     base.update(campos)
     return base
@@ -130,6 +154,8 @@ check('con el calendario de la cuenta por la que entró',
       nueva['calendar_id'], 'cal-jomap')
 check('y atada a su evento, para no volver a entrar en la siguiente pasada',
       (nueva['google_account'], nueva['google_event_id']), (CUENTA, 'ev-nuevo'))
+check('y a su UID, que es lo que la identifica en las demás agendas',
+      nueva['external_uid'], 'ev-nuevo@google.com')
 check('se guarda de qué versión venimos', nueva['google_updated'],
       '2026-09-04T10:00:00.000Z')
 check('quien convoca queda como encargado', nueva['encargado'], 'OTRO DESPACHO')
@@ -143,6 +169,77 @@ res = ent.sincronizar_google(app, [CUENTA], CAL)
 check('no se duplica', len(app.supabase.insertados), 0)
 check('ni se apunta como cambio', res[CUENTA]['actualizadas'], 0)
 check('y no se escribe nada en la base', len(app.supabase.actualizados), 0)
+
+
+# ------------------------------------ la misma reunión vista por dos cuentas
+#
+# Una reunión del despacho con Atlas está en las dos agendas, porque la una
+# invitó a la otra. Es un compromiso, no dos. Reconociéndola sólo por la pareja
+# (cuenta, evento), la copia de la segunda cuenta era siempre una reunión nueva:
+# es lo que llenaba el calendario de la misma cita repetida.
+print('\n-- La reunión que ya entró por OTRA cuenta de la casa --')
+OTRA = 'atlas@ejemplo.com'
+app = AppFalsa(filas=[cita()],                      # ya está, traída por jomap
+               eventos=[evento('ev-1')])            # y ahora se ve desde atlas
+enchufar_google(app)
+res = ent.sincronizar_google(app, [OTRA], {OTRA: 'cal-atlas'})
+check('no entra por segunda vez', (res[OTRA]['nuevas'], len(app.supabase.insertados)),
+      (0, 0))
+check('se dice que se reconoció, no que no pasó nada', res[OTRA]['copias'], 1)
+check('y la fila sigue siendo de la cuenta que la trajo',
+      len(app.supabase.actualizados), 0)
+
+print('\n-- Lo mismo, cuando Google le cambia el id a la copia --')
+# Entre dominios distintos la copia puede llevar otro identificador. Lo que no
+# cambia nunca es el UID de calendario: es el que tiene que salvar el caso.
+app = AppFalsa(filas=[cita()],
+               eventos=[evento('otro-id-de-la-copia', uid='ev-1@google.com')])
+enchufar_google(app)
+res = ent.sincronizar_google(app, [OTRA], {OTRA: 'cal-atlas'})
+check('tampoco entra dos veces',
+      (res[OTRA]['nuevas'], res[OTRA]['copias']), (0, 1))
+
+print('\n-- A una cita vieja, sin UID, se le pone el que le falta --')
+# Es justo lo que permitía que volviera a entrar por otra cuenta.
+app = AppFalsa(filas=[cita(external_uid=None)], eventos=[evento('ev-1')])
+enchufar_google(app)
+ent.sincronizar_google(app, [CUENTA], CAL)
+check('se le guarda, y nada más',
+      app.supabase.actualizados, [('cita-1', {'external_uid': 'ev-1@google.com'})])
+
+
+# ------------------------------------------------ las repeticiones de una serie
+print('\n-- Una reunión semanal: tres repeticiones --')
+# Las tres llevan el MISMO iCalUID. Si se las confunde por eso, de una reunión
+# semanal entra sólo la primera semana, que es el error contrario al de duplicar.
+serie = [evento('base_20260920T200000Z', uid='base@google.com',
+                recurringEventId='base',
+                originalStartTime={'dateTime': '2026-09-20T15:00:00-05:00'}),
+         evento('base_20260927T200000Z', uid='base@google.com',
+                recurringEventId='base', inicio='2026-09-27T15:00:00-05:00',
+                fin='2026-09-27T16:00:00-05:00',
+                originalStartTime={'dateTime': '2026-09-27T15:00:00-05:00'}),
+         evento('base_20261004T200000Z', uid='base@google.com',
+                recurringEventId='base', inicio='2026-10-04T15:00:00-05:00',
+                fin='2026-10-04T16:00:00-05:00',
+                originalStartTime={'dateTime': '2026-10-04T15:00:00-05:00'})]
+app = AppFalsa(filas=[], eventos=serie)
+enchufar_google(app)
+res = ent.sincronizar_google(app, [CUENTA], CAL)
+check('entran las tres', res[CUENTA]['nuevas'], 3)
+check('y cada una con su propio nombre, no todas con el de la serie',
+      len({c['external_uid'] for c in app.supabase.insertados}), 3)
+
+print('\n-- Y en la siguiente pasada no vuelven a entrar --')
+filas = [cita(id_=f'cita-{i}', google_event_id=e['id'],
+              external_uid=ent._identidad(e), start_time=e['start']['dateTime'],
+              end_time=e['end']['dateTime'])
+         for i, e in enumerate(serie)]
+app = AppFalsa(filas=filas, eventos=serie)
+enchufar_google(app)
+res = ent.sincronizar_google(app, [CUENTA], CAL)
+check('ninguna se duplica',
+      (res[CUENTA]['nuevas'], res[CUENTA]['copias']), (0, 0))
 
 
 # ------------------------------------------------------- lo que cambia de lado
@@ -229,9 +326,20 @@ LECTURA = {'uid': 'uid-123', 'cancelado': False, 'secuencia': 0,
                     'notes': '', 'invitados': 'secretaria@ejemplo.gob.ec',
                     'meeting_link': '', 'direccion': '', 'ciudad': ''}}
 
+def indice(filas=()):
+    ind = ent._indice_vacio()
+    for f in filas:
+        ent._apuntar(ind, f)
+    return ind
+
+
+def contador():
+    return {'nuevas': 0, 'actualizadas': 0, 'canceladas': 0, 'copias': 0}
+
+
 app = AppFalsa()
-res = {'nuevas': 0, 'actualizadas': 0, 'canceladas': 0}
-ent._aplicar_invitacion(app, LECTURA, 'csccue@ejemplo.gob.ec', {}, res)
+res = contador()
+ent._aplicar_invitacion(app, LECTURA, 'csccue@ejemplo.gob.ec', indice(), res)
 check('entra a la agenda como una cita más', res['nuevas'], 1)
 check('atada a su UID, que es su identificador allí',
       app.supabase.insertados[0]['external_uid'], 'uid-123')
@@ -239,10 +347,11 @@ check('y marcada como venida de fuera',
       app.supabase.insertados[0]['origen'], 'externo')
 
 print('\n-- La misma invitación reenviada --')
+YA_ESTA = {**LECTURA['cita'], 'id': 'cita-x', 'status': 'confirmed',
+           'external_uid': 'uid-123'}
 app = AppFalsa()
-por_uid = {'uid-123': {**LECTURA['cita'], 'id': 'cita-x', 'status': 'confirmed'}}
-res = {'nuevas': 0, 'actualizadas': 0, 'canceladas': 0}
-ent._aplicar_invitacion(app, LECTURA, 'csccue@ejemplo.gob.ec', por_uid, res)
+res = contador()
+ent._aplicar_invitacion(app, LECTURA, 'csccue@ejemplo.gob.ec', indice([YA_ESTA]), res)
 check('no entra dos veces ni se toca',
       (res['nuevas'], res['actualizadas'], len(app.supabase.actualizados)), (0, 0, 0))
 
@@ -250,8 +359,8 @@ print('\n-- Cambian la hora y reenvían --')
 app = AppFalsa()
 movida = {**LECTURA, 'secuencia': 1,
           'cita': {**LECTURA['cita'], 'start_time': '2026-09-16T13:00:00+00:00'}}
-res = {'nuevas': 0, 'actualizadas': 0, 'canceladas': 0}
-ent._aplicar_invitacion(app, movida, 'csccue@ejemplo.gob.ec', por_uid, res)
+res = contador()
+ent._aplicar_invitacion(app, movida, 'csccue@ejemplo.gob.ec', indice([YA_ESTA]), res)
 check('se actualiza la que había, no se crea otra',
       (res['actualizadas'], res['nuevas']), (1, 0))
 check('con la hora nueva',
@@ -259,12 +368,48 @@ check('con la hora nueva',
 
 print('\n-- Llega la cancelación --')
 app = AppFalsa()
-res = {'nuevas': 0, 'actualizadas': 0, 'canceladas': 0}
+res = contador()
 ent._aplicar_invitacion(app, {**LECTURA, 'cancelado': True},
-                        'csccue@ejemplo.gob.ec', por_uid, res)
+                        'csccue@ejemplo.gob.ec', indice([YA_ESTA]), res)
 check('la cita queda cancelada aquí también',
       (res['canceladas'], app.supabase.actualizados[0][1]['status']),
       (1, 'cancelled'))
+
+
+# ------------------------------- nuestra propia invitación, de vuelta a casa
+#
+# La plataforma convoca desde csccue e invita a hotmail, que también es cuenta
+# de la casa. Esa invitación llega a la bandeja de hotmail con csccue como quien
+# convoca —así que no es «lo que yo mismo apunté»— y volvía a entrar como una
+# reunión nueva. La misma reunión, dos veces: la que se creó y la que se recibió
+# de sí misma. Se reconoce por el UID, que lo pone esta plataforma y lleva dentro
+# el número de la cita.
+print('\n-- La invitación de una reunión que ya lleva la API de Google --')
+# Si los dos caminos escriben sobre la misma fila, se corrigen el uno al otro
+# cada cuarto de hora y piden cada vez que alguien lo mire. Manda el que tiene el
+# evento; el correo, ahí, es la copia.
+app = AppFalsa()
+res = contador()
+ent._aplicar_invitacion(app, {**LECTURA, 'secuencia': 2,
+                              'cita': {**LECTURA['cita'], 'title': 'Otro título'}},
+                        'csccue@ejemplo.gob.ec',
+                        indice([{**YA_ESTA, 'google_event_id': 'ev-9'}]), res)
+check('no se pisan entre ellos',
+      (res['actualizadas'], len(app.supabase.actualizados)), (0, 0))
+
+print('\n-- La invitación que mandamos nosotros, recibida en otra cuenta nuestra --')
+NUESTRA = {**LECTURA['cita'], 'id': 'cita-del-despacho', 'status': 'confirmed',
+           'external_uid': None}
+propia = {**LECTURA, 'uid': 'cita-cita-del-despacho@calendario.map'}
+app = AppFalsa()
+res = contador()
+ent._aplicar_invitacion(app, propia, 'maposligua@hotmail.com', indice([NUESTRA]), res)
+check('no se convierte en una segunda cita',
+      (res['nuevas'], len(app.supabase.insertados)), (0, 0))
+check('se reconoce como la que ya teníamos', res['copias'], 1)
+check('y se le guarda el UID para reconocerla sin pensar la próxima vez',
+      app.supabase.actualizados,
+      [('cita-del-despacho', {'external_uid': 'cita-cita-del-despacho@calendario.map'})])
 
 print('\n' + ('TODO CORRECTO' if not fallos else
               '%d FALLO(S): %s' % (len(fallos), ', '.join(fallos))))

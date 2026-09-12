@@ -193,8 +193,13 @@ async function sincronizarEntrantes(boton) {
 
   const fallos = Object.entries(r.errores || {})
     .map(([c, e]) => `${c}: ${e}`).join('\n');
+  // Las «ya estaban» son las reuniones que se vieron desde más de una cuenta de
+  // la casa y se reconocieron como una sola. Se dice, porque si no el número de
+  // eventos leídos y el de citas que aparecen no cuadran y parece que algo falta.
   alert(`Entraron ${r.nuevas}, cambiaron ${r.actualizadas}, `
         + `se cancelaron ${r.canceladas}.`
+        + (r.copias ? `\n${r.copias} ya estaban aquí (la misma reunión vista `
+                      + `desde otra cuenta): no se duplicaron.` : '')
         + (fallos ? `\n\nCon problemas:\n${fallos}` : ''));
   location.reload();
 }

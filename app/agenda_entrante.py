@@ -29,6 +29,30 @@ al evento (`updated`) contra la última que conocemos (`google_updated`). Si lo
 de fuera es más nuevo, el cambio se hizo allí. Si coincide, el cambio salió de
 aquí y traerlo sería pisar con su propio eco lo que se acaba de escribir.
 
+UNA REUNIÓN ES UNA FILA, LA VEAN UNA CUENTA O SEIS
+--------------------------------------------------
+Aquí se miran nueve agendas que se invitan entre ellas. Una reunión del despacho
+con Atlas está en la agenda del despacho Y en la de Atlas: es la misma reunión
+vista dos veces, no dos reuniones. Reconocerla sólo por la pareja (cuenta,
+evento) la hacía nueva cada vez que entraba por otra cuenta, y el día acababa
+con la misma audiencia repetida tantas veces como cuentas invitadas tuviera. Lo
+mismo por correo: la invitación que esta plataforma manda vuelve a la bandeja de
+los invitados que son también cuentas de la casa, y volvía a entrar como si
+alguien de fuera acabara de convocarla.
+
+Así que el evento se reconoce por lo que NO cambia al cruzar de agenda:
+
+  * `google_event_id`          Google le pone el mismo identificador a la copia
+                               de cada invitado: si ya está aquí bajo cualquier
+                               cuenta, es la misma reunión
+  * `iCalUID`                  el identificador de calendario, el único que
+                               cruza además de Google a Outlook y al correo
+  * `cita-<id>@calendario.map` el UID que pone esta plataforma en sus propias
+                               invitaciones: si vuelve, es nuestra y ya está
+
+Lo que se reconoce como copia no se escribe: la fila la lleva la cuenta por la
+que entró primero, y desde ahí sale hacia fuera como cualquier otra.
+
 De dónde se lee, según lo que admite cada cuenta:
 
   * Cuentas de Google: por la API de Calendar, con el mismo permiso que ya se
@@ -74,25 +98,138 @@ SELECT_SINCRONIA = ('id,title,start_time,end_time,status,calendar_id,lugar,direc
                     'google_event_id,google_cal_id,google_account,google_updated,'
                     'external_uid')
 
+# La holgura que se le da a la marca de tiempo antes de dar un cambio por hecho
+# fuera. Es para absorber el redondeo de guardar la marca y volver a leerla, no
+# para tolerar cambios de verdad.
+HOLGURA = timedelta(seconds=1)
+
+# El UID que esta plataforma pone en sus propias invitaciones por correo.
+PREFIJO_PROPIO = 'cita-'
+SUFIJO_PROPIO = '@calendario.map'
+
 
 # ============================================================
 #  LO QUE YA TENEMOS
 # ============================================================
 def _citas_conocidas(app):
-    """Índice de lo que ya está aquí, por su identificador de fuera.
+    """Índice de lo que ya está aquí, por cada nombre con el que puede volver a
+    presentarse.
 
     Se lee de una vez y no cita por cita: nueve cuentas por doscientos eventos
     son mil ochocientas consultas que la base no tiene por qué aguantar cada
-    cuarto de hora."""
+    cuarto de hora.
+
+    Cuatro entradas y no una, porque el mismo evento llega llamándose distinto
+    según por dónde entre:
+
+      por_cuenta  (cuenta, evento) → la fila que ESA cuenta lleva. Es la que se
+                  actualiza cuando el cambio se hizo fuera.
+      por_evento  evento → la fila, venga por la cuenta que venga. Google le pone
+                  el mismo identificador a la copia de cada invitado, así que
+                  esto es lo que distingue «la misma reunión otra vez» de «una
+                  reunión nueva».
+      por_uid     UID de calendario → la fila. Es lo que cruza de Google a
+                  Outlook y al correo, y lo que permite reconocer nuestras
+                  propias invitaciones cuando vuelven.
+      por_cita    id de aquí → la fila, para cuando lo que vuelve es un UID que
+                  pusimos nosotros.
+    """
     try:
-        filas = app.supabase.get('appointments', select=SELECT_SINCRONIA) or []
+        # Por páginas, y no de un tirón: PostgREST corta en las primeras mil
+        # filas y no dice que cortó. Lo que quedaba fuera de esa página quedaba
+        # fuera del índice, y lo que no está en el índice se toma por nuevo: la
+        # misma reunión volvía a entrar en cada pasada, cada cuarto de hora, y
+        # cada tanda empujaba a más citas fuera de la página.
+        filas = app.supabase.get_todo('appointments', select=SELECT_SINCRONIA)
     except Exception as e:
         print(f'[agenda] no se pudieron leer las citas: {e}')
-        return None, None
-    por_google = {(f.get('google_account'), f.get('google_event_id')): f
-                  for f in filas if f.get('google_event_id')}
-    por_uid = {f['external_uid']: f for f in filas if f.get('external_uid')}
-    return por_google, por_uid
+        return None
+    indice = _indice_vacio()
+    for f in filas:
+        _apuntar(indice, f)
+    return indice
+
+
+def _indice_vacio():
+    return {'por_cuenta': {}, 'por_evento': {}, 'por_uid': {}, 'por_cita': {}}
+
+
+def _apuntar(indice, cita, cuenta=None):
+    """Deja la fila en el índice por todos sus nombres, para que lo que entre
+    después en la misma pasada ya la reconozca."""
+    if cita.get('id'):
+        indice['por_cita'][str(cita['id'])] = cita
+    gid = cita.get('google_event_id')
+    if gid:
+        indice['por_cuenta'][(cuenta or cita.get('google_account'), gid)] = cita
+        indice['por_evento'].setdefault(gid, cita)
+    if cita.get('external_uid'):
+        indice['por_uid'].setdefault(str(cita['external_uid']).strip().lower(), cita)
+
+
+def _cita_propia(uid, indice):
+    """Si este UID lo puso esta plataforma, la cita que nombra.
+
+    Una invitación mandada desde aquí vuelve a la bandeja de los invitados que
+    son también cuentas de la casa. Sin esto volvía a entrar como convocatoria
+    ajena y la misma reunión quedaba dos veces: la que se creó y la que se
+    recibió de sí misma."""
+    if not uid:
+        return None
+    texto = str(uid).strip().lower()
+    if not texto.startswith(PREFIJO_PROPIO) or not texto.endswith(SUFIJO_PROPIO):
+        return None
+    return indice['por_cita'].get(texto[len(PREFIJO_PROPIO):-len(SUFIJO_PROPIO)])
+
+
+def _identidad(ev):
+    """El nombre con el que este evento se presenta en cualquier agenda.
+
+    Es el `iCalUID`, con una salvedad que importa: las repeticiones de una serie
+    comparten todas el mismo UID. Tomarlo tal cual habría hecho que de una
+    reunión semanal entrara sólo la primera semana y las demás se descartaran por
+    «repetidas», que es el error contrario al que se viene a arreglar. Así que a
+    una repetición se le añade el día al que corresponde —el mismo en la copia de
+    cada invitado, que es lo que tiene que seguir cuadrando entre cuentas."""
+    uid = (ev.get('iCalUID') or '').strip().lower() or None
+    if not uid or not ev.get('recurringEventId'):
+        return uid
+    cuando = ev.get('originalStartTime') or ev.get('start') or {}
+    return '%s#%s' % (uid, cuando.get('dateTime') or cuando.get('date') or ev.get('id'))
+
+
+def _copia_de_lo_que_ya_hay(indice, evento_id=None, uid=None):
+    """La fila que ya tenemos para este mismo evento, si está: por su
+    identificador de Google —que es el mismo en la agenda de cada invitado—, por
+    su UID de calendario, o porque el UID lo pusimos nosotros."""
+    return (indice['por_evento'].get(evento_id) if evento_id else None) \
+        or (indice['por_uid'].get(str(uid).strip().lower()) if uid else None) \
+        or _cita_propia(uid, indice)
+
+
+def _guardar_uid(app, cita, uid, indice):
+    """Le pone a una fila el UID con el que el evento se va a presentar la
+    próxima vez. Un UID que falta es justamente lo que permite que la misma
+    reunión vuelva a entrar por otra cuenta."""
+    if not uid or not cita.get('id') or cita.get('external_uid'):
+        return
+    cita['external_uid'] = uid
+    indice['por_uid'].setdefault(uid, cita)
+    app.supabase.update('appointments', cita['id'], {'external_uid': uid})
+
+
+def _instante(valor):
+    """Una marca de tiempo, venga como venga, en algo que se pueda comparar."""
+    if not valor:
+        return None
+    texto = str(valor).strip().replace('Z', '+00:00')
+    try:
+        marca = datetime.fromisoformat(texto)
+    except Exception:
+        return None
+    if marca.tzinfo is None:
+        marca = marca.replace(tzinfo=timezone.utc)
+    return marca.astimezone(timezone.utc)
 
 
 def _mas_nuevo_fuera(evento_updated, cita):
@@ -100,11 +237,18 @@ def _mas_nuevo_fuera(evento_updated, cita):
 
     Ante la duda —no hay marca guardada— se da por bueno lo de fuera: una
     primera pasada tiene que poder ponerse al día. Lo que no puede pasar nunca
-    es lo contrario, traer como novedad lo que uno mismo acaba de mandar."""
-    conocido = cita.get('google_updated')
-    if not conocido or not evento_updated:
+    es lo contrario, traer como novedad lo que uno mismo acaba de mandar.
+
+    Las dos marcas se comparan como FECHAS, no como texto. Como texto esto no
+    protegía de nada: Google manda `...10:00:00.000Z` y la base devuelve lo mismo
+    escrito `...10:00:00+00:00`, y carácter a carácter la `Z` va por delante del
+    `+`, así que lo de fuera salía siempre más nuevo. Cada pasada se creía con
+    derecho a volver a traer lo que se acababa de escribir aquí."""
+    conocido = _instante(cita.get('google_updated'))
+    fuera = _instante(evento_updated)
+    if conocido is None or fuera is None:
         return True
-    return str(evento_updated) > str(conocido)
+    return fuera > conocido + HOLGURA
 
 
 def _cambios(nuevo, cita):
@@ -167,11 +311,32 @@ def _cita_desde_evento(evento, cuenta, calendar_id):
     }
 
 
-def sincronizar_google(app, cuentas, cal_por_cuenta=None):
+def _eventos_de(service, gcal_id, desde, hasta):
+    """Todos los eventos de una agenda en la ventana que nos importa.
+
+    Google contesta por páginas. Antes se leía sólo la primera —doscientos
+    cincuenta eventos— y el resto del semestre no existía para esta plataforma:
+    una agenda cargada se quedaba a medio traer sin que nada lo dijera."""
+    eventos, pagina, vueltas = [], None, 0
+    while vueltas < 20:
+        lote = service.events().list(
+            calendarId=gcal_id,
+            timeMin=desde.isoformat(), timeMax=hasta.isoformat(),
+            singleEvents=True, orderBy='startTime',
+            showDeleted=True, maxResults=250, pageToken=pagina).execute()
+        eventos.extend(lote.get('items', []))
+        pagina = lote.get('nextPageToken')
+        vueltas += 1
+        if not pagina:
+            break
+    return eventos
+
+
+def sincronizar_google(app, cuentas, cal_por_cuenta=None, gcals_por_cuenta=None):
     """Pone al día lo que hay en las agendas de Google. Resumen por cuenta."""
-    por_google, _ = _citas_conocidas(app)
-    if por_google is None:
-        return {c: {'nuevas': 0, 'actualizadas': 0, 'canceladas': 0,
+    indice = _citas_conocidas(app)
+    if indice is None:
+        return {c: {'nuevas': 0, 'actualizadas': 0, 'canceladas': 0, 'copias': 0,
                     'error': 'no se pudo leer la agenda de aquí'} for c in cuentas}
 
     desde = datetime.now(timezone.utc) - timedelta(days=DIAS_ATRAS)
@@ -179,7 +344,8 @@ def sincronizar_google(app, cuentas, cal_por_cuenta=None):
     resumen = {}
 
     for cuenta in cuentas:
-        cuenta_res = {'nuevas': 0, 'actualizadas': 0, 'canceladas': 0, 'error': None}
+        cuenta_res = {'nuevas': 0, 'actualizadas': 0, 'canceladas': 0,
+                      'copias': 0, 'error': None}
         creds = app.obtener_creds_google(cuenta)
         if creds is None:
             cuenta_res['error'] = 'sin conectar'
@@ -192,34 +358,64 @@ def sincronizar_google(app, cuentas, cal_por_cuenta=None):
             cuenta_res['error'] = 'esa cuenta no tiene ningún calendario asignado'
             resumen[cuenta] = cuenta_res
             continue
+        # La agenda principal y además aquellas en las que esta plataforma
+        # escribe. Leer sólo `primary` dejaba fuera del camino de vuelta
+        # justamente los calendarios donde la plataforma pone sus citas: lo que
+        # se anotaba o se movía allí a mano no llegaba aquí nunca.
+        agendas = ['primary'] + [g for g in (gcals_por_cuenta or {}).get(cuenta, ())
+                                 if g and g != 'primary']
         try:
             service = build('calendar', 'v3', credentials=creds)
-            eventos = service.events().list(
-                calendarId='primary',
-                timeMin=desde.isoformat(), timeMax=hasta.isoformat(),
-                singleEvents=True, orderBy='startTime',
-                showDeleted=True, maxResults=250).execute().get('items', [])
+            eventos, vistos = [], set()
+            for gcal_id in agendas:
+                for ev in _eventos_de(service, gcal_id, desde, hasta):
+                    # La misma agenda puede aparecer con dos nombres ('primary' y
+                    # su dirección): el evento se atiende una sola vez.
+                    if ev.get('id') in vistos:
+                        continue
+                    vistos.add(ev.get('id'))
+                    eventos.append((ev, gcal_id))
         except Exception as e:
             cuenta_res['error'] = str(e)[:150]
             resumen[cuenta] = cuenta_res
             continue
 
-        for ev in eventos:
+        for ev, gcal_id in eventos:
             try:
-                _aplicar_evento(app, ev, cuenta, calendar_id, por_google, cuenta_res)
+                _aplicar_evento(app, ev, cuenta, calendar_id, indice, cuenta_res,
+                                gcal_id=gcal_id)
             except Exception as e:
                 print(f'[agenda] {cuenta} evento {ev.get("id")}: {str(e)[:150]}')
         resumen[cuenta] = cuenta_res
     return resumen
 
 
-def _aplicar_evento(app, ev, cuenta, calendar_id, por_google, res):
+def _aplicar_evento(app, ev, cuenta, calendar_id, indice, res, gcal_id='primary'):
     """Deja aquí este evento como está allí."""
-    cita = por_google.get((cuenta, ev.get('id')))
+    uid = _identidad(ev)
+    cita = indice['por_cuenta'].get((cuenta, ev.get('id')))
     cancelado_fuera = ev.get('status') == 'cancelled'
+
+    # ---- Lo mismo, visto desde otra de nuestras cuentas ----
+    #
+    # Una reunión entre dos cuentas de la casa está en las dos agendas. Es un
+    # solo compromiso y le toca una sola fila: la lleva la cuenta por la que
+    # entró primero, y es esa la que la mantiene al día. Sin esto la misma
+    # audiencia aparecía tantas veces como cuentas invitadas tuviera.
+    if cita is None:
+        copia = _copia_de_lo_que_ya_hay(indice, ev.get('id'), uid)
+        if copia is not None:
+            res['copias'] += 1
+            # No se le cambia el dueño: la fila sigue siendo de la cuenta que la
+            # trajo, y es esa la que la mantiene al día. Lo único que se hace es
+            # guardarle el UID si le faltaba, que es lo que la hace reconocible
+            # la próxima vez sin depender del identificador del evento.
+            _guardar_uid(app, copia, uid, indice)
+            return
 
     # ---- Ya lo teníamos ----
     if cita:
+        _guardar_uid(app, cita, uid, indice)
         if not _mas_nuevo_fuera(ev.get('updated'), cita):
             return                          # el cambio salió de aquí
         if cancelado_fuera:
@@ -261,15 +457,23 @@ def _aplicar_evento(app, ev, cuenta, calendar_id, por_google, res):
         'origen': 'externo',
         'visto': False,
         'google_event_id': ev.get('id'),
-        'google_cal_id': 'primary',
+        # La agenda de la que se leyó, no 'primary' a ciegas: si el evento vive
+        # en un calendario secundario, apuntar 'primary' deja la ficha señalando
+        # a un sitio donde ese evento no está, y luego no se puede ni mover ni
+        # borrar desde aquí.
+        'google_cal_id': gcal_id,
         'google_account': cuenta,
         'google_updated': ev.get('updated'),
         'sincronizado_en': datetime.now(timezone.utc).isoformat(),
     })
+    if uid:
+        # El identificador que el evento conserva al cruzar a otra agenda: es lo
+        # que impide que la misma reunión vuelva a entrar por otra cuenta.
+        nuevo['external_uid'] = uid
     creada = app.supabase.insert('appointments', nuevo)
     if creada:
         res['nuevas'] += 1
-        por_google[(cuenta, ev.get('id'))] = {**nuevo, 'id': creada[0].get('id')}
+        _apuntar(indice, {**nuevo, 'id': creada[0].get('id')}, cuenta)
 
 
 # ============================================================
@@ -367,9 +571,9 @@ def _conectar_imap(app, cuenta):
 
 def sincronizar_correo(app, cuentas, cal_por_cuenta=None, dias=None):
     """Lee las invitaciones que llegaron por correo a las cuentas de Microsoft."""
-    _, por_uid = _citas_conocidas(app)
-    if por_uid is None:
-        return {c: {'nuevas': 0, 'actualizadas': 0, 'canceladas': 0,
+    indice = _citas_conocidas(app)
+    if indice is None:
+        return {c: {'nuevas': 0, 'actualizadas': 0, 'canceladas': 0, 'copias': 0,
                     'error': 'no se pudo leer la agenda de aquí'} for c in cuentas}
 
     resumen = {}
@@ -377,7 +581,8 @@ def sincronizar_correo(app, cuentas, cal_por_cuenta=None, dias=None):
     criterio = desde.strftime('%d-%b-%Y')
 
     for cuenta in cuentas:
-        res = {'nuevas': 0, 'actualizadas': 0, 'canceladas': 0, 'error': None}
+        res = {'nuevas': 0, 'actualizadas': 0, 'canceladas': 0, 'copias': 0,
+               'error': None}
         calendar_id = (cal_por_cuenta or {}).get(cuenta)
         if not calendar_id:
             res['error'] = 'esa cuenta no tiene ningún calendario asignado'
@@ -401,7 +606,7 @@ def sincronizar_correo(app, cuentas, cal_por_cuenta=None, dias=None):
                 lectura = leer_invitacion(
                     _email.message_from_bytes(cuerpo[0][1]), cuenta, calendar_id)
                 if lectura:
-                    _aplicar_invitacion(app, lectura, cuenta, por_uid, res)
+                    _aplicar_invitacion(app, lectura, cuenta, indice, res)
         except Exception as e:
             res['error'] = str(e)[:150]
         try:
@@ -475,10 +680,33 @@ def leer_invitacion(mensaje, cuenta, calendar_id):
     }
 
 
-def _aplicar_invitacion(app, lectura, cuenta, por_uid, res):
+def _aplicar_invitacion(app, lectura, cuenta, indice, res):
     """Deja aquí lo que dice esta invitación."""
-    cita = por_uid.get(lectura['uid'])
+    uid = str(lectura['uid']).strip().lower()
+    cita = indice['por_uid'].get(uid)
     ahora = datetime.now(timezone.utc).isoformat()
+
+    # La invitación de una reunión que ya está aquí por otro camino: porque la
+    # mandó esta plataforma y vuelve a la bandeja de un invitado de la casa, o
+    # porque el mismo evento ya entró por la agenda de Google de otra cuenta. Se
+    # reconoce y no se repite; como mucho se le guarda el UID a la fila que ya
+    # existe, para que la siguiente vez el reconocimiento sea inmediato.
+    if cita is None:
+        copia = _cita_propia(uid, indice)
+        if copia is not None:
+            res['copias'] += 1
+            _guardar_uid(app, copia, uid, indice)
+            return
+
+    # La misma reunión, pero la lleva la API de Google: el correo es entonces la
+    # copia y no la fuente. Dejarle escribir aquí ponía a los dos caminos a
+    # corregirse el uno al otro cada cuarto de hora —uno pone lo que dice el
+    # .ics, el otro lo que dice el evento— y a pedir cada vez que alguien lo
+    # mirara. La cancelación tampoco se pierde: el evento también se cancela allí
+    # y la pasada de Google la trae.
+    if cita and cita.get('google_event_id'):
+        res['copias'] += 1
+        return
 
     if cita:
         if lectura['cancelado']:
@@ -501,13 +729,13 @@ def _aplicar_invitacion(app, lectura, cuenta, por_uid, res):
     nueva = dict(lectura['cita'])
     nueva.update({
         'status': 'confirmed', 'origen': 'externo', 'visto': False,
-        'external_uid': lectura['uid'], 'google_account': cuenta,
+        'external_uid': uid, 'google_account': cuenta,
         'ics_sequence': lectura['secuencia'], 'sincronizado_en': ahora,
     })
     creada = app.supabase.insert('appointments', nueva)
     if creada:
         res['nuevas'] += 1
-        por_uid[lectura['uid']] = {**nueva, 'id': creada[0].get('id')}
+        _apuntar(indice, {**nueva, 'id': creada[0].get('id')}, cuenta)
 
 
 # ============================================================
@@ -539,18 +767,23 @@ def resumen(app):
 # ============================================================
 #  LA PASADA COMPLETA
 # ============================================================
-def sincronizar(app, cuentas_google, cuentas_microsoft, cal_por_cuenta=None):
+def sincronizar(app, cuentas_google, cuentas_microsoft, cal_por_cuenta=None,
+                gcals_por_cuenta=None):
     """Una pasada por todas las cuentas. Lo que falle en una no detiene el resto:
     que csccue no conteste no puede dejar sin agenda a las otras ocho."""
     resultado = {'google': {}, 'correo': {}}
     if cuentas_google:
-        resultado['google'] = sincronizar_google(app, cuentas_google, cal_por_cuenta)
+        resultado['google'] = sincronizar_google(app, cuentas_google, cal_por_cuenta,
+                                                 gcals_por_cuenta)
     if cuentas_microsoft:
         resultado['correo'] = sincronizar_correo(app, cuentas_microsoft, cal_por_cuenta)
     todas = list(resultado['google'].values()) + list(resultado['correo'].values())
     resultado['nuevas'] = sum(v.get('nuevas', 0) for v in todas)
     resultado['actualizadas'] = sum(v.get('actualizadas', 0) for v in todas)
     resultado['canceladas'] = sum(v.get('canceladas', 0) for v in todas)
+    # Las que se reconocieron como la misma reunión vista desde otra cuenta. No
+    # es un error ni un aviso: es el número de duplicados que NO se crearon.
+    resultado['copias'] = sum(v.get('copias', 0) for v in todas)
     resultado['errores'] = {c: v['error']
                             for grupo in (resultado['google'], resultado['correo'])
                             for c, v in grupo.items() if v.get('error')}
