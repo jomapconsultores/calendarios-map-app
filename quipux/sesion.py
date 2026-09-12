@@ -233,13 +233,33 @@ class Quipux:
 
         Mandarlo a `login_validar_captcha.php`, que es lo que parece, hace que
         el sistema conteste que el texto no era correcto — aunque lo fuera."""
-        pagina = self.get('login_validar_captcha.php')
+        # Se usa la página del control que ya se trajo al comprobar si hacía
+        # falta —la que vino CON la credencial en la dirección—, no una nueva.
+        # Pedirla otra vez a pelo devuelve un formulario que ya no corresponde a
+        # esta sesión: el envío del texto se acepta sin protestar, y acto seguido
+        # el sistema contesta que no conoce la sesión. El texto era correcto; lo
+        # que no lo era es el formulario desde el que se mandó.
+        pagina = self._pagina_tras_salto or self.get('login_validar_captcha.php')
+        self._pagina_tras_salto = None
         doc = lxml_html.fromstring(pagina.text)
         datos = {}
         for campo in doc.xpath('//input[@name]'):
             nombre = campo.get('name')
             if nombre and nombre.lower() != 'submit':
                 datos[nombre] = campo.get('value') or ''
+        # La credencial se vuelve a mandar. El comentario de arriba daba por
+        # hecho que el servidor la guardaba en la sesión al recibirla en el
+        # primer paso, y ya no es así: con `krd` y `txt_contrasenia` vacíos
+        # contesta «Usuario o Contraseña incorrectos» —y suma ese intento al
+        # contador de fallos de la cuenta— por mucho que el texto de la imagen
+        # esté bien. Los valores buenos viajan en la dirección a la que saltó el
+        # acceso, que es de donde salió esta misma página.
+        cola = parse_qs(urlparse(pagina.url).query)
+        if not datos.get('krd'):
+            datos['krd'] = (cola.get('txt_usuario') or [''])[0]
+        if not datos.get('txt_contrasenia'):
+            datos['txt_contrasenia'] = (cola.get('txt_contrasenia') or [''])[0]
+
         datos['txt_captcha'] = (texto_imagen or '').strip()
         datos['Submit'] = 'Ingresar'
 
