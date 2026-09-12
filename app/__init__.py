@@ -1350,7 +1350,7 @@ def resincronizar_citas_google(app, creds=None, limite_segundos=60):
                 continue
             evento = _build_google_event(cita, _build_attendees(cita, email_map, cuenta))
             creado = service.events().insert(calendarId=gcal_id, body=evento,
-                                             sendUpdates='all').execute()
+                                             sendUpdates=aviso_de_evento(cita)).execute()
             app.supabase.update('appointments', cita['id'], {
                 'google_event_id': creado.get('id'), 'google_cal_id': gcal_id,
                 'google_account': cuenta, **marca_de_version(creado)})
@@ -1535,6 +1535,30 @@ def _cuenta_map(all_cals):
 def _proveedor_map(all_cals):
     """calendar_id → 'google' (API de Calendar) | 'microsoft' (invitación .ics)."""
     return {c['calendar_id']: (c.get('proveedor') or 'google') for c in all_cals}
+
+
+def aviso_de_evento(cita):
+    """A quién se avisa al crear este evento en Google: a todos, o a nadie.
+
+    A nadie si la reunión ya terminó. Una cita vieja que nunca llegó a subir
+    sigue subiendo —el calendario tiene que contar lo que pasó—, pero mandar hoy
+    la invitación de una reunión de hace cuatro meses no avisa de nada: llega a
+    gente que ya estuvo o que ya no viene al caso, y parece que alguien acaba de
+    convocar algo.
+
+    Esto apareció al desbloquear la subida de cinco citas de mayo y junio que
+    llevaban meses atascadas. El atasco era un error; los cinco correos que iban
+    a salir al arreglarlo, también."""
+    cuando = cita.get('end_time') or cita.get('start_time')
+    if not cuando:
+        return 'all'
+    try:
+        marca = datetime.fromisoformat(str(cuando).strip().replace('Z', '+00:00'))
+    except Exception:
+        return 'all'
+    if marca.tzinfo is None:
+        marca = marca.replace(tzinfo=timezone.utc)
+    return 'none' if marca < datetime.now(timezone.utc) else 'all'
 
 
 def evento_sin_dueno(app, encontrados, cita_id=None):
@@ -4360,7 +4384,8 @@ def create_app():
                 return jsonify({'success': True, 'message': 'Confirmada (evento ya existía en Google)'})
             # Nuevo evento — notificar a todos los asistentes una sola vez
             created = service.events().insert(
-                calendarId=gcal_id, body=event, sendUpdates='all').execute()
+                calendarId=gcal_id, body=event,
+                sendUpdates=aviso_de_evento(apt)).execute()
             app.supabase.update('appointments', aid,
                 {'status': 'confirmed', 'google_event_id': created.get('id'),
                  'google_cal_id': gcal_id, 'google_account': cuenta,
@@ -4509,7 +4534,7 @@ def create_app():
                 attendees = _build_attendees(apt, email_map, cuenta)
                 event = _build_google_event(apt, attendees)
                 created = service.events().insert(calendarId=gcal_id,
-                    body=event, sendUpdates='all').execute()
+                    body=event, sendUpdates=aviso_de_evento(apt)).execute()
                 app.supabase.update('appointments', apt['id'],
                     {'google_event_id': created.get('id'), 'google_cal_id': gcal_id,
                      'google_account': cuenta, **marca_de_version(created)})

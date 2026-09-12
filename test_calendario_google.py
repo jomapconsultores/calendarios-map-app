@@ -295,5 +295,33 @@ check('sin resultados de búsqueda, nada que adoptar',
 check('y lo que viene sin id se ignora',
       appmod.evento_sin_dueno(AppConDuenos({}), [{'summary': 'sin id'}], 'x'), None)
 
+print('')
+print('-- De una reunión que ya pasó no se avisa a nadie --')
+# Una cita vieja que nunca llegó a subir sigue subiendo: el calendario tiene que
+# contar lo que pasó. Lo que no se hace es mandar hoy la invitación de una
+# reunión de hace cuatro meses.
+from datetime import datetime, timedelta, timezone as _tz
+ahora = datetime.now(_tz.utc)
+
+
+def cuando(dias):
+    ini = ahora + timedelta(days=dias)
+    return {'start_time': ini.isoformat(),
+            'end_time': (ini + timedelta(hours=1)).isoformat()}
+
+
+check('la de la semana que viene avisa a todos',
+      appmod.aviso_de_evento(cuando(7)), 'all')
+check('la de hace cuatro meses, a nadie',
+      appmod.aviso_de_evento(cuando(-120)), 'none')
+check('la que empezó hace un rato y aún no acaba, también avisa',
+      appmod.aviso_de_evento({'start_time': (ahora - timedelta(minutes=20)).isoformat(),
+                              'end_time': (ahora + timedelta(minutes=40)).isoformat()}),
+      'all')
+check('sin fecha, se avisa: mejor de más que callarse',
+      appmod.aviso_de_evento({}), 'all')
+check('y con una fecha que no se entiende, igual',
+      appmod.aviso_de_evento({'end_time': 'cuando sea'}), 'all')
+
 print('\n' + ('TODO CORRECTO' if not fallos else '%d FALLO(S): %s' % (len(fallos), ', '.join(fallos))))
 sys.exit(1 if fallos else 0)
