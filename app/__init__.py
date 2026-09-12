@@ -1551,7 +1551,12 @@ def marca_de_version(evento):
     tiene con qué reconocerla."""
     evento = evento or {}
     marca = evento.get('updated')
-    uid = (evento.get('iCalUID') or '').strip().lower()
+    # La MISMA regla que usa la sincronización entrante para reconocerlo, y no
+    # el `iCalUID` pelado. Una repetición de serie lo comparte con todas sus
+    # hermanas: guardarlo crudo aquí archivaba varias semanas bajo un solo
+    # nombre, y luego ni cuadraban con lo que entra por Google —que lleva el día
+    # pegado— ni se distinguían entre ellas.
+    uid = _entrante.identidad_de_evento(evento)
     campos = {}
     if marca:
         campos['google_updated'] = marca

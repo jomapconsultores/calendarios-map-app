@@ -82,13 +82,19 @@ ALTER TABLE appointments_duplicadas DISABLE ROW LEVEL SECURITY;
 --   HAVING count(*) > 1
 --    ORDER BY filas DESC, cuando;
 --
--- 2.b  El mismo UID de calendario en varias filas
+-- 2.b  El mismo UID de calendario Y la misma hora en varias filas
 --
---   SELECT lower(btrim(external_uid)) AS uid, count(*) AS filas,
---          min(title) AS titulo, min(start_time) AS cuando
+--   SELECT lower(btrim(external_uid)) AS uid, start_time AS cuando,
+--          count(*) AS filas, min(title) AS titulo
 --     FROM appointments
 --    WHERE external_uid IS NOT NULL AND btrim(external_uid) <> ''
---    GROUP BY 1 HAVING count(*) > 1 ORDER BY filas DESC;
+--    GROUP BY 1, 2 HAVING count(*) > 1 ORDER BY filas DESC;
+--
+--   La hora entra en el grupo a propósito. Las repeticiones de una serie
+--   comparten UID —todas las semanas— y hasta ahora no todos los caminos le
+--   pegaban el día para distinguirlas: agrupar sólo por UID daría por repetida
+--   una serie entera y se llevaría por delante todas las semanas menos una.
+--   Mismo UID y misma hora sí es la misma reunión dos veces.
 --
 -- 2.c  Nuestras propias invitaciones, recibidas de vuelta como cita ajena
 --
@@ -138,11 +144,12 @@ DELETE FROM appointments a
  USING guardadas g
  WHERE a.id = g.cita_id;
 
--- 3.b  Varias filas para el mismo UID de calendario
+-- 3.b  Varias filas para el mismo UID de calendario A LA MISMA HORA
+--      (ver 2.b: el UID solo no distingue las semanas de una serie)
 WITH grupos AS (
   SELECT id,
          first_value(id) OVER (
-           PARTITION BY lower(btrim(external_uid))
+           PARTITION BY lower(btrim(external_uid)), start_time
            ORDER BY (origen = 'plataforma') DESC, visto DESC,
                     (google_event_id IS NOT NULL) DESC, id) AS se_queda
     FROM appointments
@@ -204,12 +211,18 @@ CREATE UNIQUE INDEX IF NOT EXISTS appointments_evento_unico
   ON appointments (google_event_id)
   WHERE google_event_id IS NOT NULL;
 
--- Y un UID de calendario, igual. Parcial (WHERE ... IS NOT NULL) porque la
--- inmensa mayoría de las citas no tiene identificador externo, y varios NULL no
--- chocan entre sí.
+-- Y un UID de calendario a una hora dada, igual. Parcial (WHERE ... IS NOT
+-- NULL) porque la inmensa mayoría de las citas no tiene identificador externo, y
+-- varios NULL no chocan entre sí.
+--
+-- Con la hora dentro, por lo mismo que en 3.b: las semanas de una serie
+-- comparten UID. El código les pega el día —`uid#20260922T150000Z`— y por ahí ya
+-- son distintas, pero las filas que quedaron de antes no lo llevan, y un índice
+-- que las declare repetidas no se puede crear o, peor, obliga a borrarlas.
 DROP INDEX IF EXISTS appointments_uid_externo_unico;
-CREATE UNIQUE INDEX IF NOT EXISTS appointments_uid_unico
-  ON appointments (lower(btrim(external_uid)))
+DROP INDEX IF EXISTS appointments_uid_unico;
+CREATE UNIQUE INDEX IF NOT EXISTS appointments_uid_hora_unico
+  ON appointments (lower(btrim(external_uid)), start_time)
   WHERE external_uid IS NOT NULL AND btrim(external_uid) <> '';
 
 -- Las consultas de cada pasada de sincronización: «¿tengo ya este evento?»,
@@ -231,6 +244,12 @@ CREATE INDEX IF NOT EXISTS appointments_sin_ver_idx
 --   -- Y que no queda ninguna repetida (las dos tienen que dar 0 filas):
 --   SELECT google_event_id, count(*) FROM appointments
 --    WHERE google_event_id IS NOT NULL GROUP BY 1 HAVING count(*) > 1;
---   SELECT lower(btrim(external_uid)), count(*) FROM appointments
+--   SELECT lower(btrim(external_uid)), start_time, count(*) FROM appointments
 --    WHERE external_uid IS NOT NULL AND btrim(external_uid) <> ''
---    GROUP BY 1 HAVING count(*) > 1;
+--    GROUP BY 1, 2 HAVING count(*) > 1;
+--
+--   -- Y que las series siguen enteras: cada una con sus semanas, no con una.
+--   SELECT lower(btrim(external_uid)) AS uid, count(*) AS semanas
+--     FROM appointments
+--    WHERE external_uid IS NOT NULL AND btrim(external_uid) <> ''
+--    GROUP BY 1 HAVING count(*) > 1 ORDER BY semanas DESC;

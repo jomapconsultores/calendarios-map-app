@@ -179,6 +179,34 @@ def _apuntar(indice, cita, cuenta=None):
         indice['por_uid'].setdefault(str(cita['external_uid']).strip().lower(), cita)
 
 
+def identidad(uid, dia=None):
+    """El nombre con el que un evento se presenta en CUALQUIER agenda.
+
+    Es el UID de calendario, con una salvedad que importa: las repeticiones de
+    una serie comparten todas el mismo UID. Tomarlo tal cual haría que de una
+    reunión semanal entrara sólo la primera semana y las demás se descartaran por
+    «repetidas», que es el error contrario al que se viene a arreglar. Así que a
+    una repetición se le añade el día al que corresponde —el mismo en la copia de
+    cada invitado, que es lo que tiene que seguir cuadrando entre cuentas.
+
+    Esta regla la tienen que aplicar TODOS los caminos por los que un evento
+    entra o se apunta: Google, el correo y lo que la propia plataforma guarda al
+    crear un evento allí. Cuando cada camino escribía lo suyo, la misma reunión
+    quedaba archivada bajo dos nombres distintos y volvía a duplicarse, que es
+    justamente lo que no puede pasar."""
+    uid = (str(uid).strip().lower() if uid else '') or None
+    if not uid or not dia:
+        return uid
+    # El día, siempre escrito igual. Cada camino lo trae a su manera: Google
+    # manda `...T15:00:00Z` en un sitio y `...T10:00:00-05:00` en otro, el ICS
+    # del correo lo devuelve ya en ISO con `+00:00`, y una serie de día completo
+    # es una fecha pelada. Son el mismo instante escrito de cuatro formas, y
+    # pegado crudo al UID daba cuatro nombres distintos para la misma
+    # repetición: exactamente el duplicado que el UID venía a evitar.
+    marca = _instante(dia)
+    return '%s#%s' % (uid, marca.strftime('%Y%m%dT%H%M%SZ') if marca else dia)
+
+
 def _cita_propia(uid, indice):
     """Si este UID lo puso esta plataforma, la cita que nombra.
 
@@ -188,26 +216,22 @@ def _cita_propia(uid, indice):
     recibió de sí misma."""
     if not uid:
         return None
-    texto = str(uid).strip().lower()
+    # Sin el día: una invitación nuestra puede ser una repetición de serie, y lo
+    # que dice de qué cita es, es el UID; el día sólo distingue una semana de
+    # otra.
+    texto = str(uid).strip().lower().split('#')[0]
     if not texto.startswith(PREFIJO_PROPIO) or not texto.endswith(SUFIJO_PROPIO):
         return None
     return indice['por_cita'].get(texto[len(PREFIJO_PROPIO):-len(SUFIJO_PROPIO)])
 
 
-def _identidad(ev):
-    """El nombre con el que este evento se presenta en cualquier agenda.
-
-    Es el `iCalUID`, con una salvedad que importa: las repeticiones de una serie
-    comparten todas el mismo UID. Tomarlo tal cual habría hecho que de una
-    reunión semanal entrara sólo la primera semana y las demás se descartaran por
-    «repetidas», que es el error contrario al que se viene a arreglar. Así que a
-    una repetición se le añade el día al que corresponde —el mismo en la copia de
-    cada invitado, que es lo que tiene que seguir cuadrando entre cuentas."""
-    uid = (ev.get('iCalUID') or '').strip().lower() or None
+def identidad_de_evento(ev):
+    """La identidad de un evento tal como lo devuelve la API de Google."""
+    uid = ev.get('iCalUID')
     if not uid or not ev.get('recurringEventId'):
-        return uid
+        return identidad(uid)
     cuando = ev.get('originalStartTime') or ev.get('start') or {}
-    return '%s#%s' % (uid, cuando.get('dateTime') or cuando.get('date') or ev.get('id'))
+    return identidad(uid, cuando.get('dateTime') or cuando.get('date') or ev.get('id'))
 
 
 def _copia_de_lo_que_ya_hay(indice, evento_id=None, uid=None):
@@ -404,7 +428,7 @@ def sincronizar_google(app, cuentas, cal_por_cuenta=None, gcals_por_cuenta=None)
 
 def _aplicar_evento(app, ev, cuenta, calendar_id, indice, res, gcal_id='primary'):
     """Deja aquí este evento como está allí."""
-    uid = _identidad(ev)
+    uid = identidad_de_evento(ev)
     cita = indice['por_cuenta'].get((cuenta, ev.get('id')))
     cancelado_fuera = ev.get('status') == 'cancelled'
 
@@ -655,6 +679,15 @@ def leer_invitacion(mensaje, cuenta, calendar_id):
     if not uid or not inicio:
         return None
     fin, _ = _fecha_ics(campos, 'DTEND')
+
+    # Igual que en Google: una repetición de serie lleva el mismo UID que todas
+    # sus hermanas, y lo que dice de cuál se trata es el `RECURRENCE-ID`. Sin
+    # esto, la invitación de la semana que viene se tomaba por la de esta —misma
+    # cita, misma fila— y le cambiaba la hora en vez de entrar como otra reunión;
+    # y la serie que además se veía por Google, archivada allí con el día pegado
+    # al UID, no se reconocía como la misma y se duplicaba.
+    recurrencia, _dia_entero = _fecha_ics(campos, 'RECURRENCE-ID')
+    uid = identidad(uid, recurrencia)
 
     metodo = (campos.get('METHOD') or '').upper()
     estado_ics = (_valor(campos, 'STATUS') or '').upper()

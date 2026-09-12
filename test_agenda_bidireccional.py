@@ -27,6 +27,10 @@ import sys, os
 sys.path.insert(0, os.getcwd())
 
 from app import agenda_entrante as ent
+from app import marca_de_version
+import email as _email
+
+BUZON = 'buzon@ejemplo.com'
 
 
 fallos = []
@@ -247,7 +251,7 @@ check('y cada una con su propio nombre, no todas con el de la serie',
 
 print('\n-- Y en la siguiente pasada no vuelven a entrar --')
 filas = [cita(id_=f'cita-{i}', google_event_id=e['id'],
-              external_uid=ent._identidad(e), start_time=e['start']['dateTime'],
+              external_uid=ent.identidad_de_evento(e), start_time=e['start']['dateTime'],
               end_time=e['end']['dateTime'])
          for i, e in enumerate(serie)]
 app = AppFalsa(filas=filas, eventos=serie)
@@ -449,6 +453,72 @@ r = ent.sincronizar_correo(app, ['buzon@ejemplo.com'])
 # que se mira que la pasada se detenga POR ESTO y lo diga.
 check('lo mismo con las invitaciones que llegan por correo',
       r['buzon@ejemplo.com'].get('error'), 'no se pudo leer la agenda de aquí')
+
+print('')
+print('-- Una serie semanal que llega por correo --')
+# Todas las semanas de una serie comparten UID; lo que dice de cuál se trata es
+# el RECURRENCE-ID. Sin mirarlo, la invitación de la semana que viene se tomaba
+# por la de esta —misma cita, misma fila— y le cambiaba la hora en vez de entrar
+# como otra reunión.
+CRLF = chr(13) + chr(10)
+
+
+def correo_ics(*lineas):
+    ics = CRLF.join(('BEGIN:VCALENDAR', 'METHOD:REQUEST', 'BEGIN:VEVENT',
+                     'UID:serie-semanal@outlook.com',
+                     'SUMMARY:Comite semanal',
+                     'ORGANIZER:mailto:quien@convoca.com') + lineas +
+                    ('END:VEVENT', 'END:VCALENDAR', ''))
+    cabecera = CRLF.join(('From: quien@convoca.com', 'Subject: Invitacion',
+                          'Content-Type: text/calendar; method=REQUEST',
+                          'MIME-Version: 1.0', '', ''))
+    return _email.message_from_string(cabecera + ics)
+
+
+primera = ent.leer_invitacion(correo_ics(
+    'DTSTART:20260915T150000Z', 'DTEND:20260915T160000Z'), BUZON, 'cal-1')
+otra = ent.leer_invitacion(correo_ics(
+    'DTSTART:20260922T150000Z', 'DTEND:20260922T160000Z',
+    'RECURRENCE-ID:20260922T150000Z'), BUZON, 'cal-1')
+check('la primera se apunta con el UID de la serie',
+      primera['uid'], 'serie-semanal@outlook.com')
+check('y la semana siguiente NO se llama igual', otra['uid'] != primera['uid'], True)
+
+app = AppFalsa()
+res = contador()
+ind = indice()
+ent._aplicar_invitacion(app, primera, BUZON, ind, res)
+ent._aplicar_invitacion(app, otra, BUZON, ind, res)
+check('entran las dos semanas, no una pisando a la otra',
+      (res['nuevas'], len(app.supabase.insertados)), (2, 2))
+check('y cada una a su hora',
+      [c['start_time'][:10] for c in app.supabase.insertados],
+      ['2026-09-15', '2026-09-22'])
+
+# La misma invitacion repetida sigue sin entrar dos veces.
+ent._aplicar_invitacion(app, otra, BUZON, ind, res)
+check('y la repetición reenviada tampoco se duplica', len(app.supabase.insertados), 2)
+
+print('')
+print('-- La misma repetición, vista por los tres caminos --')
+# El duplicado de manual: cada camino escribía el día a su manera —Google en
+# hora local, el correo en ISO, la plataforma con la Z de la API— y la misma
+# repetición quedaba archivada bajo tres nombres distintos.
+por_google = ent.identidad_de_evento({
+    'iCalUID': 'SERIE@google.com', 'recurringEventId': 'serie',
+    'originalStartTime': {'dateTime': '2026-09-22T10:00:00-05:00'}})
+al_crearla = marca_de_version({
+    'updated': '2026-09-11T10:00:00.000Z', 'iCalUID': 'SERIE@google.com',
+    'recurringEventId': 'serie',
+    'originalStartTime': {'dateTime': '2026-09-22T15:00:00Z'}})['external_uid']
+por_correo = ent.identidad('SERIE@google.com', '2026-09-22T15:00:00+00:00')
+check('los tres escriben el mismo nombre',
+      (al_crearla, por_correo), (por_google, por_google))
+check('con el día pegado, para no confundir una semana con otra',
+      por_google, 'serie@google.com#20260922T150000Z')
+check('y un evento suelto se queda con su UID a secas',
+      ent.identidad_de_evento({'iCalUID': 'SUELTO@google.com'}),
+      'suelto@google.com')
 
 print('\n' + ('TODO CORRECTO' if not fallos else
               '%d FALLO(S): %s' % (len(fallos), ', '.join(fallos))))
