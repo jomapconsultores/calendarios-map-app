@@ -211,6 +211,24 @@ check('se reconocen como tales', lec_d['todo_el_dia'], True)
 check('y ocupan el día entero, no una hora suelta',
       lec_d['cita']['start_time'].startswith('2026-09-15T00:00:00'), True)
 
+print('')
+print('-- Cuando Microsoft dice que el permiso ya no vale --')
+# El error que salía en la pantalla de cuentas era el código crudo de Microsoft,
+# que no le dice a nadie qué tiene que hacer.
+reconectar = inv.hay_que_volver_a_conectar
+check('el token emitido para otra aplicación',
+      reconectar({'error': 'invalid_grant'},
+                 "AADSTS70000: The provided value for the input parameter "
+                 "'refresh_token' or 'assertion' is not valid"), True)
+check('el permiso retirado', reconectar({'error': 'invalid_grant'}, ''), True)
+check('la contraseña cambiada', reconectar({}, 'AADSTS50173: ...'), True)
+check('el que caducó por no usarse', reconectar({}, 'AADSTS700082: expired'), True)
+check('pero un tropiezo de Microsoft NO se cuenta como permiso caído',
+      reconectar({'error': 'temporarily_unavailable'},
+                 'Service is temporarily unavailable'), False)
+check('ni un fallo de red', reconectar({}, 'no se pudo hablar con Microsoft'), False)
+check('ni una respuesta vacía', reconectar(None, ''), False)
+
 print('\n' + ('TODO CORRECTO' if not fallos else
               '%d FALLO(S): %s' % (len(fallos), ', '.join(fallos))))
 sys.exit(1 if fallos else 0)

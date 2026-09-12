@@ -27,9 +27,14 @@
 #      como respaldo, y sólo si SUPABASE_URL apunta a *.supabase.co.
 #
 #   2. No había registro de lo aplicado, así que no existía forma de preguntar
-#      «¿qué falta?». Desde la 035 hay una tabla `schema_migrations`: cada
-#      migración que se aplica se anota ahí, lo ya anotado se salta, y
-#      `--estado` enseña la lista entera con lo que queda pendiente.
+#      «¿qué falta?». Lo dice una tabla `schema_migrations`: cada migración que
+#      se aplica se anota ahí, lo ya anotado se salta, y `--estado` enseña la
+#      lista entera con lo que queda pendiente.
+#
+#      Esto estuvo escrito aquí desde la 035 sin ser verdad: la tabla la creaba
+#      `migrations/035_registro_de_migraciones.sql`, un archivo que nunca se
+#      escribió. La herramienta mandaba aplicarlo, no existía, y la tabla no
+#      nacía nunca. La crea la 040, y de ahí en adelante esto ya se sostiene.
 #
 # La clave de servicio (SUPABASE_KEY) NO sirve para esto: habla con PostgREST,
 # que ejecuta consultas sobre tablas, no CREATE TABLE. Hace falta la cadena de
@@ -170,9 +175,9 @@ def estado(conexion):
     ya = aplicadas(conexion)
     if ya is None:
         print(f'La tabla {TABLA_REGISTRO} todavía no existe: aplica primero')
-        print('  python tools/aplicar_migracion.py migrations/035_registro_de_migraciones.sql')
-        print('(esa migración siembra como aplicadas las versiones 001..034,')
-        print(' que es como está la base de producción hoy)')
+        print('  python tools/aplicar_migracion.py migrations/040_registro_de_migraciones.sql')
+        print('(esa migración la crea y siembra lo que ya está aplicado, que se')
+        print(' comprobó objeto a objeto en la base el 2026-09-12)')
         return 1
     pendientes = []
     for ruta in numeradas():

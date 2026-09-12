@@ -98,6 +98,29 @@ def _guardar_token(app, email, datos, authority=None):
     return bool(guardada and guardada.get('refresh_token'))
 
 
+# Lo que Microsoft contesta cuando el permiso ya no sirve. Son varios códigos y
+# ninguno se explica solo:
+#
+#   invalid_grant   el permiso se retiró, o caducó por no usarse
+#   AADSTS70000     el token no vale para esta aplicación — es lo que pasa con
+#                   un refresh_token traído de otro sitio, emitido con otro
+#                   `client_id`: no hay forma de convertirlo, hay que autorizar
+#                   otra vez desde aquí
+#   AADSTS50173     cambió la contraseña de la cuenta y los permisos se cayeron
+#   AADSTS700082    llevaba tanto sin usarse que Microsoft lo dio por muerto
+#
+# Todos acaban en lo mismo, y eso es lo único que hace falta decir.
+CODIGOS_DE_RECONECTAR = ('invalid_grant', 'aadsts70000', 'aadsts50173',
+                         'aadsts700082', 'aadsts700084')
+
+
+def hay_que_volver_a_conectar(datos, detalle=''):
+    """Si lo que contestó Microsoft significa «esta cuenta hay que autorizarla
+    otra vez», y no «vuelve a intentarlo en un rato»."""
+    texto = ('%s %s' % ((datos or {}).get('error') or '', detalle or '')).lower()
+    return any(c in texto for c in CODIGOS_DE_RECONECTAR)
+
+
 def token_de_acceso(app, email):
     """Un access_token válido para esa cuenta, o (None, motivo).
 
@@ -137,8 +160,15 @@ def token_de_acceso(app, email):
         pass
     if r.status_code != 200 or not datos.get('access_token'):
         detalle = datos.get('error_description') or r.text[:200]
-        # invalid_grant aquí significa que el permiso ya no vale: reintentarlo
-        # no lo arregla, hace falta que una persona vuelva a autorizar.
+        # Cuando el permiso ya no vale, reintentarlo no lo arregla: hace falta
+        # que una persona vuelva a autorizar. Se dice así, y no con el código de
+        # Microsoft, que estaba saliendo tal cual en la pantalla de cuentas:
+        # «AADSTS70000: The provided value for the input parameter
+        # 'refresh_token' or 'assertion' is not valid» no le dice a nadie que lo
+        # que tiene que hacer es pulsar Conectar.
+        if hay_que_volver_a_conectar(datos, detalle):
+            return None, (f'{email}: hay que volver a conectarla — el permiso '
+                          f'ya no vale. Entra en Cuentas y pulsa Conectar.')
         return None, f'{email}: {detalle[:200]}'
     _guardar_token(app, email, datos, autoridad)
     return datos['access_token'], None
