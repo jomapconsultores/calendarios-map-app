@@ -62,7 +62,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from dotenv import load_dotenv                               # noqa: E402
 load_dotenv()
 
-API = 'https://api.supabase.com/v1'
+API = ''  # retirado 2026-09-26: sin supabase.com
 CARPETA = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                        'migrations')
 
@@ -282,7 +282,7 @@ def main():
     if not dsn:
         # Respaldo: sólo tiene sentido si la base está de verdad en supabase.com.
         url = os.getenv('SUPABASE_URL', '')
-        if url.endswith('.supabase.co') or '.supabase.co/' in url:
+        if False:  # retirado 2026-09-26: nada se envía a supabase.com
             if ver_estado or pendientes:
                 print('--estado y --pendientes necesitan conexión directa a')
                 print('PostgreSQL: la API de gestión no lleva registro.')

@@ -456,9 +456,16 @@ def _auditar_acceso(app, accion, target_id=None, target_email=None, detalle=''):
 #  SUPABASE CLIENT — persistent HTTP session (keep-alive)
 # ============================================================
 class SupabaseAPI:
-    def __init__(self, url, key):
-        self.url = url
-        self._session = req_lib.Session()
+    def __init__(self, url, key, dsn=None):
+        # Con DATABASE_URL se habla directo con PostgreSQL (app/pgrest.py): las
+        # mismas peticiones /rest/v1/... se resuelven con SQL, sin PostgREST.
+        # Sin ella, se sigue usando el servicio REST como antes.
+        self.url = url or 'http://postgresql-directo'
+        if dsn:
+            from app.pgrest import SesionDirecta
+            self._session = SesionDirecta(dsn)
+        else:
+            self._session = req_lib.Session()
         self._headers = {
             'apikey': key,
             'Authorization': f'Bearer {key}',
@@ -2361,8 +2368,9 @@ def create_app():
     app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
 
     try:
-        app.supabase = SupabaseAPI(app.config['SUPABASE_URL'], app.config['SUPABASE_KEY'])
-        print('Supabase OK')
+        app.supabase = SupabaseAPI(app.config['SUPABASE_URL'], app.config['SUPABASE_KEY'],
+                                   app.config.get('DATABASE_URL') or None)
+        print('Base de datos OK (' + ('PostgreSQL directo' if app.config.get('DATABASE_URL') else 'REST') + ')')
     except Exception as e:
         print(f'Supabase error: {e}'); app.supabase = None
 

@@ -40,7 +40,7 @@ from datetime import datetime, date, time as _time, timedelta, timezone
 
 import requests as req_lib
 
-ATLAS_URL = os.getenv('ATLAS_SUPABASE_URL', 'https://naubddczohedvtywmmmy.supabase.co')
+ATLAS_URL = os.getenv('ATLAS_SUPABASE_URL', 'https://supabase-at.pensamiento-libre.org')
 CALENDARIO_ATLAS = os.getenv('ATLAS_CALENDAR_ID', 'atlas')
 _TIMEOUT = (6, 25)
 
@@ -51,15 +51,30 @@ ESTADOS_VIGENTES = {'programada', 'confirmada', 'pendiente'}
 _lock = threading.Lock()
 
 
+_directa = None
+
+
+def _http():
+    """Con ATLAS_DATABASE_URL se habla directo con la base de ATLAS (sin REST)."""
+    global _directa
+    dsn = os.getenv('ATLAS_DATABASE_URL')
+    if not dsn:
+        return req_lib
+    if _directa is None:
+        from app.pgrest import SesionDirecta
+        _directa = SesionDirecta(dsn)
+    return _directa
+
+
 def disponible():
-    """True si hay clave para hablar con la base de ATLAS."""
-    return bool(os.getenv('ATLAS_SUPABASE_KEY'))
+    """True si hay forma de hablar con la base de ATLAS."""
+    return bool(os.getenv('ATLAS_DATABASE_URL') or os.getenv('ATLAS_SUPABASE_KEY'))
 
 
 def estado():
     if not disponible():
         return {'disponible': False,
-                'motivo': 'Falta ATLAS_SUPABASE_KEY en el servidor'}
+                'motivo': 'Falta ATLAS_DATABASE_URL en el servidor'}
     return {'disponible': True, 'motivo': None,
             'url': ATLAS_URL, 'calendario': CALENDARIO_ATLAS}
 
@@ -74,7 +89,7 @@ def _cabeceras():
 #  ACCESO A LA BASE DE ATLAS
 # ============================================================
 def _atlas_get(recurso, params=''):
-    r = req_lib.get(f'{ATLAS_URL}/rest/v1/{recurso}?{params}',
+    r = _http().get(f'{ATLAS_URL}/rest/v1/{recurso}?{params}',
                     headers=_cabeceras(), timeout=_TIMEOUT)
     if r.status_code != 200:
         raise RuntimeError(f'ATLAS respondió HTTP {r.status_code}: {r.text[:160]}')
@@ -82,7 +97,7 @@ def _atlas_get(recurso, params=''):
 
 
 def _atlas_insert(recurso, datos):
-    r = req_lib.post(f'{ATLAS_URL}/rest/v1/{recurso}',
+    r = _http().post(f'{ATLAS_URL}/rest/v1/{recurso}',
                      headers=dict(_cabeceras(), Prefer='return=representation'),
                      json=datos, timeout=_TIMEOUT)
     if r.status_code not in (200, 201):
@@ -92,7 +107,7 @@ def _atlas_insert(recurso, datos):
 
 
 def _atlas_update(recurso, id_val, datos):
-    r = req_lib.patch(f'{ATLAS_URL}/rest/v1/{recurso}?id=eq.{id_val}',
+    r = _http().patch(f'{ATLAS_URL}/rest/v1/{recurso}?id=eq.{id_val}',
                       headers=dict(_cabeceras(), Prefer='return=minimal'),
                       json=datos, timeout=_TIMEOUT)
     return r.status_code in (200, 204)
@@ -331,7 +346,7 @@ def _sincronizar(app, zona, deadline_segundos):
 def arrancar_autosync(app, zona, interval_min=10):
     """Hilo de fondo, con el mismo candado de un solo worker que los demás."""
     if not disponible():
-        print('[atlas-sync] sin ATLAS_SUPABASE_KEY: desactivado')
+        print('[atlas-sync] sin ATLAS_DATABASE_URL: desactivado')
         return
     try:
         import fcntl
@@ -466,12 +481,12 @@ def sondear_tablas(nombres=None):
     Es lo mismo que preguntar «¿está Pedro?» y que te contesten «no, pero está
     Pedro Luis»: la respuesta equivocada trae la información correcta."""
     if not disponible():
-        return {'success': False, 'error': 'Falta ATLAS_SUPABASE_KEY en el servidor'}
+        return {'success': False, 'error': 'Falta ATLAS_DATABASE_URL en el servidor'}
     existen, sugeridas, sondeadas = {}, set(), 0
     for nombre in (nombres or VOCABULARIO_SONDEO):
         sondeadas += 1
         try:
-            r = req_lib.get(f'{ATLAS_URL}/rest/v1/{nombre}?select=*&limit=1',
+            r = _http().get(f'{ATLAS_URL}/rest/v1/{nombre}?select=*&limit=1',
                             headers=_cabeceras(), timeout=_TIMEOUT)
         except Exception:
             continue
@@ -492,7 +507,7 @@ def sondear_tablas(nombres=None):
     # Lo sugerido se comprueba: una pista no es una certeza.
     for nombre in sorted(sugeridas - set(existen)):
         try:
-            r = req_lib.get(f'{ATLAS_URL}/rest/v1/{nombre}?select=*&limit=1',
+            r = _http().get(f'{ATLAS_URL}/rest/v1/{nombre}?select=*&limit=1',
                             headers=_cabeceras(), timeout=_TIMEOUT)
             if r.status_code == 200:
                 muestra = r.json()
@@ -514,9 +529,9 @@ def listar_tablas():
     PostgREST publica en su raíz el catálogo de lo que expone. Se le pregunta y
     se acabó la adivinanza."""
     if not disponible():
-        return {'success': False, 'error': 'Falta ATLAS_SUPABASE_KEY en el servidor'}
+        return {'success': False, 'error': 'Falta ATLAS_DATABASE_URL en el servidor'}
     try:
-        r = req_lib.get(f'{ATLAS_URL}/rest/v1/', headers=_cabeceras(), timeout=_TIMEOUT)
+        r = _http().get(f'{ATLAS_URL}/rest/v1/', headers=_cabeceras(), timeout=_TIMEOUT)
         if r.status_code != 200:
             return {'success': False,
                     'error': f'ATLAS respondió HTTP {r.status_code}: {r.text[:160]}'}
@@ -540,7 +555,7 @@ def explorar():
     diferencia entre «ATLAS no tiene representantes» y «me equivoqué de
     nombre»."""
     if not disponible():
-        return {'success': False, 'error': 'Falta ATLAS_SUPABASE_KEY en el servidor'}
+        return {'success': False, 'error': 'Falta ATLAS_DATABASE_URL en el servidor'}
     hallazgos, probados = {}, []
     for grupo, candidatos in GRUPOS_PERSONAS.items():
         for recurso in candidatos:
@@ -566,7 +581,7 @@ def explorar():
 def leer_personas(recurso):
     """Filas crudas de una tabla de personas de ATLAS."""
     if not disponible():
-        raise RuntimeError('Falta ATLAS_SUPABASE_KEY en el servidor')
+        raise RuntimeError('Falta ATLAS_DATABASE_URL en el servidor')
     return _atlas_get(recurso, 'select=*')
 
 
@@ -827,7 +842,7 @@ def sincronizar_personas(app, grupos=None, deadline_segundos=90):
     colectivos que ATLAS exponga se quedan quietos salvo que se pidan
     expresamente."""
     if not disponible():
-        return {'success': False, 'error': 'Falta ATLAS_SUPABASE_KEY en el servidor'}
+        return {'success': False, 'error': 'Falta ATLAS_DATABASE_URL en el servidor'}
     if not _lock.acquire(blocking=False):
         return {'success': False, 'error': 'Ya hay una sincronización en curso'}
     try:
@@ -1030,7 +1045,7 @@ def empujar_contacto(app, contacto_id):
     Va en su propio hilo desde quien lo llama: hablar con ATLAS son dos viajes
     de red, y la persona que guardó la ficha no tiene por qué esperarlos."""
     if not disponible():
-        return {'success': False, 'error': 'Falta ATLAS_SUPABASE_KEY'}
+        return {'success': False, 'error': 'Falta ATLAS_DATABASE_URL'}
     filas = app.supabase.get('contacts', {'id': contacto_id}, select='*')
     if not filas:
         return {'success': False, 'error': 'Contacto no encontrado'}

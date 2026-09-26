@@ -34,3 +34,6 @@ Base datos/
 *.sqlite3
 *.accdb
 *.mdb
+# La cosecha traducida lleva asuntos y nombres de remitentes reales: se
+# genera cuando hace falta (tools/importar_quipux_dropbox.py) y no se publica.
+tools/quipux_importado.json

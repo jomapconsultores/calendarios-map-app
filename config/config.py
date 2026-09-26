@@ -34,6 +34,8 @@ class Config:
     REMEMBER_COOKIE_SECURE = os.getenv('FLASK_INSECURE_COOKIES') != '1'
     REMEMBER_COOKIE_SAMESITE = 'Lax'
     REMEMBER_COOKIE_DURATION = timedelta(days=int(os.getenv('REMEMBER_DAYS', '30')))
+    # Conexión directa a PostgreSQL. Si está, reemplaza al servicio REST.
+    DATABASE_URL = os.getenv('DATABASE_URL', '')
     SUPABASE_URL = os.getenv('SUPABASE_URL', '')
     SUPABASE_KEY = os.getenv('SUPABASE_KEY', '')
     GOOGLE_CLIENT_ID = os.getenv('GOOGLE_CLIENT_ID', '')

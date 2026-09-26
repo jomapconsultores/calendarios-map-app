@@ -144,8 +144,7 @@ def comprobar_correo(app):
 
 def _panel_sql(app):
     """La dirección del editor SQL del proyecto, sacada de la propia URL."""
-    ref = (app.supabase.url or '').replace('https://', '').split('.')[0]
-    return f'https://supabase.com/dashboard/project/{ref}/sql'
+    return 'psql en el servidor (docker exec contable-supabase-db-1 psql -U supabase_admin -d calendario)'
 
 
 def main():

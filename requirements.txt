@@ -38,3 +38,4 @@ playwright>=1.40         # ventana de acceso cuando salta el control de la image
 # ejecutar justamente allí: pide «pip install psycopg[binary]» en una máquina
 # donde nadie va a instalar nada a mano.
 psycopg[binary]>=3.1      # aplicar migraciones desde el servidor
+psycopg_pool>=3.2
