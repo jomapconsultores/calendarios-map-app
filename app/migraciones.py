@@ -67,6 +67,22 @@ def numeradas():
                   key=lambda a: os.path.basename(a))
 
 
+def cadena_a_usar(dsn_app=None):
+    """Con qué credencial se aplican. PG_ADMIN_URL manda si está.
+
+    La cadena de la aplicación sirve para leer y escribir FILAS, que es su
+    trabajo, pero no para cambiar la FORMA de las tablas: `app_calendario` no
+    es dueño de ellas y PostgreSQL contesta «must be owner of table». Una
+    migración que añade una columna necesita a alguien que pueda, y ése es el
+    dueño (normalmente `postgres`), que se pone en PG_ADMIN_URL.
+
+    Es a propósito que sean dos: la aplicación corre todo el día con la
+    credencial justa, y la que puede rehacer tablas sólo aparece en el arranque
+    y sólo si se la configura."""
+    admin = (os.getenv('PG_ADMIN_URL') or '').strip()
+    return admin or dsn_app
+
+
 def aplicar_pendientes(dsn, registro=print):
     """Aplica lo que falte. Devuelve un resumen; no lanza nunca.
 
@@ -74,6 +90,7 @@ def aplicar_pendientes(dsn, registro=print):
     que una migración falle, ese texto es lo único que habrá para saberlo.
     """
     salida = {'aplicadas': [], 'fallos': [], 'pendientes': [], 'aviso': None}
+    dsn = cadena_a_usar(dsn)
     if not dsn:
         salida['aviso'] = 'sin DATABASE_URL: no se revisan migraciones'
         return salida
@@ -140,9 +157,18 @@ def aplicar_pendientes(dsn, registro=print):
                     registro(f'[migraciones] {version} aplicada')
                 except Exception as e:
                     con.rollback()
-                    salida['fallos'].append((version, str(e)[:300]))
+                    detalle = str(e)[:300]
+                    # «must be owner» no es un fallo de la migración: es que
+                    # quien la aplica no puede cambiar tablas. Decirlo a secas
+                    # manda a revisar el SQL, que está bien.
+                    if 'must be owner' in detalle or 'permission denied' in detalle:
+                        detalle += ('  → la credencial con la que corre la '
+                                    'aplicación no puede cambiar tablas. Pon '
+                                    'PG_ADMIN_URL con el usuario dueño de la '
+                                    'base (postgres) y vuelve a desplegar.')
+                    salida['fallos'].append((version, detalle))
                     registro(f'[migraciones] {version} FALLÓ, no se aplicó nada '
-                             f'de ese archivo: {str(e)[:300]}')
+                             f'de ese archivo: {detalle}')
                     # Se para en la primera que falla: las siguientes suelen
                     # dar por hecho lo que ésta debía dejar hecho, y seguir
                     # sólo convierte un fallo claro en cinco confusos.
