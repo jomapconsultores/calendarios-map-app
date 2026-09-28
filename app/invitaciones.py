@@ -75,6 +75,40 @@ SMTP_HOST = 'smtp.office365.com'
 SMTP_PORT = 587
 
 GRAPH_SENDMAIL = 'https://graph.microsoft.com/v1.0/me/sendMail'
+GRAPH_SENDMAIL_BUZON = 'https://graph.microsoft.com/v1.0/users/{}/sendMail'
+
+# ------------------------------------------------------------
+#  Mandar sin nadie detrás
+# ------------------------------------------------------------
+# Todo lo de arriba es permiso DELEGADO: la aplicación actúa en nombre de una
+# persona, y ese permiso sólo puede nacer de alguien tecleando un código. Eso
+# no se automatiza —es el diseño de OAuth— y significa que cada cuenta hay que
+# conectarla a mano y volver a conectarla el día que el permiso se caiga.
+#
+# Con credenciales de cliente no hay persona: la aplicación se identifica con
+# su propio secreto, pide un token para sí misma y manda por el buzón que le
+# digan. No hay código que teclear, no hay refresh_token que se caiga, no hay
+# nada que reconectar. Es lo que hace que las cuentas del dominio funcionen
+# solas desde el primer arranque.
+#
+# El precio es que ese permiso lo tiene que consentir un administrador del
+# dominio, y que `Mail.Send` de aplicación alcanza a TODOS los buzones del
+# tenant mientras no se limite con una ApplicationAccessPolicy. Está explicado
+# en .env.example, porque es lo que hay que pedirle a quien administra.
+#
+# Sin estas tres variables no cambia nada: se sigue por el camino delegado.
+MS_TENANT_ID = os.getenv('MS_TENANT_ID', '').strip()
+MS_CLIENT_SECRET = os.getenv('MS_CLIENT_SECRET', '').strip()
+
+# El permiso de aplicación no se pide por nombre: se piden «los que la
+# aplicación tenga consentidos», que es lo que significa /.default.
+SCOPE_APLICACION = 'https://graph.microsoft.com/.default'
+
+# A qué cuentas alcanza. Vacío = a todas las de organización. Las personales
+# quedan fuera SIEMPRE: hotmail, outlook.com y compañía no viven en ningún
+# tenant, y contra ellas las credenciales de cliente no existen.
+MS_DOMINIOS_SOLOS = [x.strip().lower() for x
+                     in os.getenv('MS_DOMINIOS_SOLOS', '').split(',') if x.strip()]
 
 # El final de línea del correo, que no es el del sistema donde corra esto.
 CRLF = '\r\n'
@@ -602,7 +636,80 @@ def destinatarios_de(apt, email_map, organizador, incluir_organizador=False):
 
 
 # ------------------------------------------------------------
-#  Las dos salidas
+#  El permiso que no hay que conectar
+# ------------------------------------------------------------
+# Un solo token para todo el tenant, no uno por cuenta: la aplicación se
+# identifica a sí misma, y el buzón se elige al mandar. Dura una hora y se pide
+# otro; no hay refresh_token porque no hay nada que renovar.
+_TOKEN_APP = {}
+
+
+def manda_sola(email):
+    """Si esa cuenta puede mandar sin que nadie la haya autorizado."""
+    if not (MS_CLIENT_ID and MS_TENANT_ID and MS_CLIENT_SECRET):
+        return False
+    dominio = (email or '').split('@')[-1].lower()
+    if not dominio:
+        return False
+    # Las personales no: no pertenecen a ningún tenant, y el permiso de
+    # aplicación no llega a ellas por mucho que esté bien configurado.
+    if _autoridad_sugerida(email).endswith('/consumers'):
+        return False
+    return (not MS_DOMINIOS_SOLOS) or dominio in MS_DOMINIOS_SOLOS
+
+
+def token_de_aplicacion():
+    """El token de la aplicación, o (None, motivo). Se reaprovecha hasta que
+    le quedan dos minutos, como el de las cuentas."""
+    ahora = datetime.now(timezone.utc)
+    vivo, hasta = _TOKEN_APP.get('graph', (None, None))
+    if vivo and hasta and hasta > ahora:
+        return vivo, None
+    try:
+        r = requests.post(
+            f'https://login.microsoftonline.com/{MS_TENANT_ID}/oauth2/v2.0/token',
+            timeout=20,
+            data={'client_id': MS_CLIENT_ID,
+                  'client_secret': MS_CLIENT_SECRET,
+                  'grant_type': 'client_credentials',
+                  'scope': SCOPE_APLICACION})
+    except Exception as e:
+        return None, f'no se pudo hablar con Microsoft: {str(e)[:150]}'
+    datos = {}
+    try:
+        datos = r.json()
+    except Exception:
+        pass
+    if r.status_code != 200 or not datos.get('access_token'):
+        detalle = datos.get('error_description') or r.text[:200]
+        # Los tres tropiezos de la configuración inicial, dichos por su nombre.
+        # El código de Microsoft no explica ninguno y los tres se arreglan en
+        # sitios distintos.
+        texto = detalle.lower()
+        if 'aadsts7000215' in texto or 'invalid client secret' in texto:
+            return None, ('el secreto de la aplicación no vale o caducó: '
+                          'genera otro en Entra y ponlo en MS_CLIENT_SECRET.')
+        if 'aadsts700016' in texto or 'aadsts900023' in texto:
+            return None, ('MS_CLIENT_ID o MS_TENANT_ID no corresponden a una '
+                          'aplicación de ese dominio.')
+        return None, f'la aplicación no pudo identificarse: {detalle[:160]}'
+    dura = int(datos.get('expires_in') or 3600) - 120
+    _TOKEN_APP['graph'] = (datos['access_token'],
+                           ahora + timedelta(seconds=max(dura, 60)))
+    return datos['access_token'], None
+
+
+def _enviar_sin_persona(cuenta, msg):
+    """Manda por el buzón de `cuenta` con el permiso de la aplicación."""
+    token, error = token_de_aplicacion()
+    if not token:
+        return False, error
+    return _postear_a_graph(GRAPH_SENDMAIL_BUZON.format(cuenta), token, msg,
+                            cuenta)
+
+
+# ------------------------------------------------------------
+#  Las tres salidas
 # ------------------------------------------------------------
 # Graph es la buena y SMTP la de siempre. No es cuestión de gusto: Exchange
 # Online trae un interruptor de dominio —SmtpClientAuthentication— que cierra
@@ -625,6 +732,12 @@ def _enviar_por_graph(app, cuenta, msg):
     token, error = token_de_acceso(app, cuenta, recurso='graph')
     if not token:
         return False, error
+    return _postear_a_graph(GRAPH_SENDMAIL, token, msg, cuenta)
+
+
+def _postear_a_graph(url, token, msg, cuenta):
+    """El envío en sí, que es el mismo con permiso de persona y de aplicación:
+    sólo cambian la dirección y de dónde salió el token."""
     try:
         # Con final de línea CRLF, que es el que manda el RFC 5322.
         # `as_bytes` a secas lo deja en LF, y un MIME con las cabeceras
@@ -632,8 +745,7 @@ def _enviar_por_graph(app, cuenta, msg):
         # acepte y otro lo rechace por malformado. Por SMTP de esto se
         # encargaba smtplib por su cuenta; aquí hay que decirlo.
         crudo = msg.as_bytes(policy=msg.policy.clone(linesep=CRLF))
-        r = requests.post(GRAPH_SENDMAIL, timeout=30,
-                          data=b64encode(crudo),
+        r = requests.post(url, timeout=30, data=b64encode(crudo),
                           headers={'Authorization': f'Bearer {token}',
                                    'Content-Type': 'text/plain'})
     except Exception as e:
@@ -645,6 +757,13 @@ def _enviar_por_graph(app, cuenta, msg):
         detalle = ((r.json() or {}).get('error') or {}).get('message') or ''
     except Exception:
         pass
+    # Un 403 con el permiso de aplicación casi siempre es una de dos, y ninguna
+    # se adivina leyendo «Access is denied»: o nadie ha consentido el permiso,
+    # o hay una política que limita a qué buzones alcanza y éste no está.
+    if r.status_code == 403:
+        return False, (f'el dominio no deja mandar por {cuenta}: falta que un '
+                       'administrador consienta Mail.Send, o el buzón está '
+                       'fuera de la ApplicationAccessPolicy.')
     return False, f'Graph contestó {r.status_code}: {(detalle or r.text)[:180]}'
 
 
@@ -690,17 +809,31 @@ def _enviar_por_smtp(app, cuenta, msg):
 def _entregar(app, cuenta, msg):
     """Saca el mensaje por donde se pueda. Devuelve (se mandó, motivo).
 
-    Si fallan las dos se dicen las dos razones: con una sola, quien lo lee
+    En orden: el permiso de la aplicación, que no depende de que nadie haya
+    conectado nada; el de la persona, para las cuentas que no alcanza el
+    primero; y SMTP, donde siga abierto.
+
+    Si falla todo se dicen TODAS las razones. Con una sola, quien lo lee
     arregla ese lado y se encuentra con que sigue sin salir."""
-    ok, fallo_graph = _enviar_por_graph(app, cuenta, msg)
-    if ok:
-        return True, None
-    ok, fallo_smtp = _enviar_por_smtp(app, cuenta, msg)
-    if ok:
-        return True, None
-    if (fallo_graph or '') == (fallo_smtp or ''):
-        return False, fallo_graph          # el mismo motivo dos veces no informa
-    return False, f'por Graph, {fallo_graph} — por SMTP, {fallo_smtp}'
+    caminos = []
+    if manda_sola(cuenta):
+        caminos.append(('el permiso de la aplicación',
+                        lambda: _enviar_sin_persona(cuenta, msg)))
+    caminos.append(('Graph', lambda: _enviar_por_graph(app, cuenta, msg)))
+    caminos.append(('SMTP', lambda: _enviar_por_smtp(app, cuenta, msg)))
+
+    vistos, motivos = set(), []
+    for nombre, intentar in caminos:
+        ok, fallo = intentar()
+        if ok:
+            return True, None
+        # El mismo motivo dos veces no informa: cuando la cuenta ni siquiera
+        # está autorizada, Graph y SMTP fallan por lo mismo y decirlo dos
+        # veces sólo hace el aviso más largo.
+        if fallo and fallo not in vistos:
+            vistos.add(fallo)
+            motivos.append(f'por {nombre}, {fallo}')
+    return False, ' — '.join(motivos)
 
 
 def enviar_invitacion(app, apt, cuenta, email_map, metodo='REQUEST', secuencia=0,
@@ -750,10 +883,15 @@ def enviar_cancelacion(app, apt, cuenta, email_map, secuencia=1):
 
 
 def cuentas_microsoft(app):
-    """Las cuentas de Microsoft que agendan, con su estado de autorización."""
+    """Las cuentas de Microsoft que agendan, con su estado de autorización.
+
+    `sola` es la que manda con el permiso de la aplicación: no hay nada que
+    conectarle para que salga la invitación, aunque siga sin permiso para leer
+    lo que le contesten."""
     try:
         filas = app.supabase.get('ms_tokens', select='email,refresh_token,token_expiry') or []
     except Exception:
         return []
     return [{'email': f['email'], 'conectada': bool(f.get('refresh_token')),
+             'sola': manda_sola(f['email']),
              'expiry': f.get('token_expiry')} for f in filas]

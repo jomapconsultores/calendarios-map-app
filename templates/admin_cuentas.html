@@ -69,7 +69,12 @@
         <td class="ct-meta">{% if c.proveedor == 'google' %}API de Google Calendar{% else %}Invitación .ics por correo{% endif %}</td>
         <td class="ct-meta">{{ c.calendarios | join(', ') }}</td>
         <td>
-          {% if c.conectada %}<span class="ct-pin ok"><i></i>conectada</span>
+          {# «Manda sola» es un estado distinto de «conectada»: no se le
+             autorizó nada, manda con el permiso de la aplicación. Merece
+             decirse aparte, porque es lo que explica que no haya un botón
+             rojo pidiendo conectarla. #}
+          {% if c.sola %}<span class="ct-pin ok"><i></i>manda sola</span>
+          {% elif c.conectada %}<span class="ct-pin ok"><i></i>conectada</span>
           {% else %}<span class="ct-pin no"><i></i>sin autorizar</span>{% endif %}
           <div class="ct-meta">{{ c.detalle }}</div>
         </td>
@@ -77,7 +82,7 @@
           {% if c.proveedor == 'google' %}
             <a class="ct-btn {{ '' if c.conectada else 'pri' }}" href="/auth/google?cuenta={{ c.email }}">{{ 'Reconectar' if c.conectada else 'Conectar' }}</a>
           {% else %}
-            <button class="ct-btn {{ '' if c.conectada else 'pri' }}" onclick="autorizarMicrosoft('{{ c.email }}')">{{ 'Reconectar' if c.conectada else 'Autorizar' }}</button>
+            <button class="ct-btn {{ '' if c.conectada else 'pri' }}" onclick="autorizarMicrosoft('{{ c.email }}')">{{ 'Autorizar lectura' if c.sola else ('Reconectar' if c.conectada else 'Autorizar') }}</button>
           {% endif %}
         </td>
       </tr>

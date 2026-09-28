@@ -1164,7 +1164,12 @@ def cuentas_microsoft_que_agendan(app):
 
 
 def cuentas_microsoft_pendientes(app):
-    """De las de Microsoft, las que aún no tienen permiso guardado."""
+    """De las de Microsoft, las que no pueden mandar todavía.
+
+    Una cuenta a la que alcanza el permiso de la aplicación NO está pendiente
+    de nada: manda desde el primer arranque, sin que nadie la conecte. Contarla
+    como pendiente era anunciar un problema que no existe, y eso se deja de
+    leer igual que un aviso que nunca se apaga."""
     esperadas = cuentas_microsoft_que_agendan(app)
     if not esperadas:
         return []
@@ -1174,7 +1179,9 @@ def cuentas_microsoft_pendientes(app):
                      if t.get('refresh_token')}
     except Exception:
         return []
-    return [c for c in esperadas if c.strip().lower() not in con_token]
+    return [c for c in esperadas
+            if c.strip().lower() not in con_token
+            and not _invitaciones.manda_sola(c)]
 
 
 # ============================================================
@@ -5847,7 +5854,7 @@ def create_app():
             prov   = proveedor_map.get(c['calendar_id'], 'google')
             fila = cuentas.setdefault(correo, {
                 'email': correo, 'proveedor': prov, 'calendarios': [],
-                'conectada': False, 'expiry': None, 'detalle': ''})
+                'conectada': False, 'sola': False, 'expiry': None, 'detalle': ''})
             fila['calendarios'].append(c.get('name') or c['calendar_id'])
 
         for correo, fila in cuentas.items():
@@ -5859,10 +5866,25 @@ def create_app():
                                    else 'Sin autorizar: sus citas se aprueban pero no llegan al calendario.')
             else:
                 t = ms.get(correo.lower())
-                fila['conectada'] = bool(t and t.get('refresh_token'))
+                tiene_permiso_propio = bool(t and t.get('refresh_token'))
+                fila['sola'] = _invitaciones.manda_sola(correo)
+                # Manda sola = no hay nada que conectar para que la invitación
+                # salga. Lo que puede faltarle es el permiso de LEER lo que le
+                # contesten, que sigue siendo de persona y sí hay que dárselo.
+                fila['conectada'] = tiene_permiso_propio or fila['sola']
                 fila['expiry'] = (t or {}).get('token_expiry')
-                fila['detalle'] = ('Agenda por invitación de correo (.ics).' if fila['conectada']
-                                   else 'Sin autorizar: no puede mandar la invitación desde su dirección.')
+                if fila['sola'] and not tiene_permiso_propio:
+                    fila['detalle'] = ('Manda con el permiso de la aplicación, sin '
+                                       'autorizar nada. Para leer lo que le contesten '
+                                       'sí hay que autorizarla.')
+                elif fila['sola']:
+                    fila['detalle'] = ('Manda con el permiso de la aplicación, y está '
+                                       'autorizada para leer lo que le contesten.')
+                elif tiene_permiso_propio:
+                    fila['detalle'] = 'Agenda por invitación de correo (.ics).'
+                else:
+                    fila['detalle'] = ('Sin autorizar: no puede mandar la invitación '
+                                       'desde su dirección.')
 
         orden = sorted(cuentas.values(), key=lambda f: (f['proveedor'] != 'google', f['email']))
         return render_template('admin_cuentas.html', cuentas=orden,
