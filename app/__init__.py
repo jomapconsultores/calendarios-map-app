@@ -2420,6 +2420,22 @@ def create_app():
     except Exception as e:
         print(f'Supabase error: {e}'); app.supabase = None
 
+    # Y con la base delante, lo que falte por aplicarle. El despliegue estaba
+    # partido en dos —el código sube con un push y la base se tocaba a mano
+    # después—, y olvidar el segundo paso deja la versión nueva corriendo
+    # contra una base vieja sin que nada lo delate. Pasó con la 030, la 032, la
+    # 033 y la 034 (ver migrations/040).
+    #
+    # No tumba el arranque pase lo que pase, y no hace nada si no existe el
+    # registro de migraciones: ver app/migraciones.py, donde está el porqué de
+    # cada cautela. Con MIGRAR_AL_ARRANCAR=0 se apaga.
+    if os.getenv('MIGRAR_AL_ARRANCAR', '1') != '0':
+        try:
+            from app import migraciones as _migraciones
+            _migraciones.aplicar_pendientes(app.config.get('DATABASE_URL'))
+        except Exception as e:
+            print(f'[migraciones] no se pudieron revisar: {str(e)[:200]}')
+
     # Los módulos propios no importan nada de este archivo (para no formar un
     # ciclo): lo que necesitan de aquí se les cuelga de `app`.
     app.obtener_creds_google = lambda cuenta: get_google_creds(app, cuenta)
