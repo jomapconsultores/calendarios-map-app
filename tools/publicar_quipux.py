@@ -17,8 +17,13 @@ Se puede correr tantas veces como haga falta. La clave es el identificador del
 documento, así que una segunda pasada ACTUALIZA las filas en vez de duplicarlas,
 y lo que se haya añadido a la carpeta desde la última vez entra sin más.
 
-Necesita SUPABASE_URL y SUPABASE_KEY en el .env de esta computadora, que son
-las mismas que usa la aplicación.
+Hay dos formas de que lleguen, y se elige sola:
+
+  * POR LA APLICACIÓN (lo normal). Se le mandan a la web, que sí alcanza su
+    base, y ella los guarda. Necesita APP_URL y CRON_SECRET en el .env.
+  * DIRECTO A LA BASE, si esta computadora la alcanza. Necesita SUPABASE_URL y
+    SUPABASE_KEY. Hoy no es el caso: la base del servidor sólo se ve desde
+    dentro, por el nombre de su contenedor.
 
 Uso:
     py tools/publicar_quipux.py --simular    # qué se subiría, sin tocar nada
@@ -71,11 +76,51 @@ def main():
         print('\n(simulación: no se subió nada)')
         return
 
+    subidos = _mandar(documentos)
+    print('\nPublicados %d documento(s). Ya se ven en la web y en el teléfono.'
+          % subidos)
+
+
+def _mandar(documentos):
+    """Los deja donde el servidor pueda leerlos. Devuelve cuántos entraron.
+
+    Primero por la aplicación, que es el camino que funciona hoy: la base del
+    servidor no se alcanza desde fuera —PostgREST está retirado y el host es el
+    de un contenedor de su red interna—, pero la web sí, y ella llega a su
+    base. La vía directa se queda como respaldo para el día que esta
+    computadora sí tenga acceso."""
+    from dotenv import load_dotenv
+    load_dotenv()
+
+    destino = (os.getenv('APP_URL') or 'https://calendario.pensamiento-libre.org').rstrip('/')
+    secreto = os.getenv('CRON_SECRET') or ''
+    if secreto:
+        import json
+        import urllib.error
+        import urllib.request
+        cuerpo = json.dumps({'documentos': documentos}).encode('utf-8')
+        pet = urllib.request.Request(
+            destino + '/quipux/api/publicar', data=cuerpo, method='POST',
+            headers={'Content-Type': 'application/json', 'X-Cron-Secret': secreto})
+        try:
+            with urllib.request.urlopen(pet, timeout=180) as r:
+                datos = json.loads(r.read().decode('utf-8'))
+        except urllib.error.HTTPError as e:
+            detalle = e.read().decode('utf-8', 'ignore')[:300]
+            sys.exit('El servidor contestó %s: %s' % (e.code, detalle))
+        except Exception as e:
+            sys.exit('No se pudo hablar con %s: %s' % (destino, str(e)[:200]))
+        if not datos.get('success'):
+            sys.exit('No se pudo publicar: %s' % datos.get('error'))
+        return datos.get('publicados', 0)
+
+    # Sin CRON_SECRET queda la vía directa, si la base se deja alcanzar.
     from quipux import planificacion
     db = planificacion.cliente_de_la_plataforma()
     if db is None:
-        sys.exit('\nSin SUPABASE_URL/SUPABASE_KEY en el .env no hay a dónde '
-                 'subirlo. Son las mismas que usa la aplicación.')
+        sys.exit('\nNo hay por dónde mandarlo. Pon CRON_SECRET en el .env para '
+                 'que entre por la aplicación (es lo que funciona hoy), o '
+                 'SUPABASE_URL/SUPABASE_KEY si esta computadora alcanza la base.')
 
     resultado = planificacion.publicar(db, documentos)
     if resultado.get('error'):
@@ -83,9 +128,7 @@ def main():
         # nada a que entraran doscientos y se cortara en el lote siguiente.
         print('\nSubidos antes de fallar: %d' % resultado.get('subidos', 0))
         sys.exit('No se pudo terminar: %s' % resultado['error'])
-
-    print('\nPublicados %d documento(s). Ya se ven en la web y en el teléfono.'
-          % resultado.get('subidos', 0))
+    return resultado.get('subidos', 0)
 
 
 if __name__ == '__main__':

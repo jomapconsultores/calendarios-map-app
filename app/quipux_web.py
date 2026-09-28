@@ -453,6 +453,51 @@ def registrar_quipux(app, ctx):
     # ------------------------------------------------------------------
 
     # ------------------------------------------------------------------
+    #  Recibir lo que lee otra computadora
+    # ------------------------------------------------------------------
+    @app.route('/quipux/api/publicar', methods=['POST'])
+    def quipux_publicar():
+        """Guarda los documentos que manda la computadora que sí los ve.
+
+        La recolección —y la carpeta con lo recogido antes— viven en el disco
+        de una computadora de la oficina. El servidor no la alcanza, así que no
+        puede leerla; pero tampoco hace falta que lo haga: basta con que le
+        cuenten lo que hay. Entra la INFORMACIÓN de cada documento, nunca el
+        archivo.
+
+        Va sin sesión, con el secreto del cron en la cabecera, porque quien la
+        llama es un programa y no una persona delante de un navegador. Es el
+        mismo trato que ya tienen los avisos de vencimiento.
+
+        Se puede llamar las veces que haga falta: la clave es el identificador
+        del documento, así que la segunda pasada actualiza en vez de duplicar.
+        """
+        secreto = app.config.get('CRON_SECRET') or ''
+        recibido = request.headers.get('X-Cron-Secret') or request.args.get('secret') or ''
+        if not secreto or recibido != secreto:
+            return jsonify({'success': False, 'error': 'No autorizado'}), 401
+        if not _hay_base(app):
+            return jsonify({'success': False,
+                            'error': 'el servidor no tiene conexión con su base'}), 503
+
+        documentos = (request.get_json(silent=True) or {}).get('documentos') or []
+        if not isinstance(documentos, list) or not documentos:
+            return jsonify({'success': False, 'error': 'No llegó ningún documento'}), 400
+
+        from quipux import planificacion
+        try:
+            resultado = planificacion.publicar(app.supabase, documentos)
+        except Exception as e:
+            return jsonify({'success': False, 'error': str(e)[:300]}), 500
+        if resultado.get('error'):
+            # Se dice cuántos entraron ANTES de fallar: no es lo mismo que no
+            # entrara nada a que se cortara a la mitad.
+            return jsonify({'success': False, 'subidos': resultado.get('subidos', 0),
+                            'error': resultado['error']}), 500
+        return jsonify({'success': True, 'recibidos': len(documentos),
+                        'publicados': resultado.get('subidos', 0)})
+
+    # ------------------------------------------------------------------
     #  La pasada
     # ------------------------------------------------------------------
     @app.route('/quipux/api/recoger', methods=['POST'])
