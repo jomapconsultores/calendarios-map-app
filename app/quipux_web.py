@@ -90,6 +90,8 @@ def _docs_de_la_base(app, ver='pendientes', area='', bandeja='', busca='', tope=
         docs = [d for d in docs if d.get('plazo_fecha')]
     elif ver == 'pendientes':
         docs = [d for d in docs if abierto(d)]
+    elif ver == 'realizados':
+        docs = [d for d in docs if not abierto(d)]
 
     if busca:
         b = busca.lower()
@@ -102,6 +104,64 @@ def _docs_de_la_base(app, ver='pendientes', area='', bandeja='', busca='', tope=
     docs.sort(key=lambda d: (d.get('plazo_fecha') or '9999-99-99',
                              '' if d.get('fecha_doc') is None else str(d['fecha_doc'])))
     return docs[:tope]
+
+
+def _clave(doc):
+    """Qué cuenta como «el mismo documento» entre dos fuentes.
+
+    El número solo no basta: un mismo oficio puede llegar a Planificación y al
+    Observatorio, y ahí son dos entradas legítimas, no un duplicado."""
+    return ((doc.get('numero') or '').strip().upper(),
+            (doc.get('area') or '').strip().upper())
+
+
+def _sumando_la_cosecha(docs, **filtros):
+    """Añade lo que la recolección previa tiene y aquí no.
+
+    COMPLETA, no sustituye: cuando un documento está en las dos partes se
+    queda el de aquí, porque lo trajo el recolector de la ficha del propio
+    sistema —con su enlace y con el plazo que da CuencaDOC— y la cosecha no
+    guardó ni lo uno ni lo otro.
+
+    Que la carpeta no esté no es un error: en el servidor no existe, y ahí
+    esto no hace nada."""
+    try:
+        from quipux import cosecha
+        extra = cosecha.documentos(**filtros)
+    except Exception as e:
+        print(f'[quipux] no se pudo mirar la recolección previa: {str(e)[:120]}')
+        return docs
+    if not extra:
+        return docs
+
+    conocidos = {_clave(d) for d in docs}
+    juntos = docs + [d for d in extra if _clave(d) not in conocidos]
+    # El mismo orden de siempre: lo que vence antes, primero; lo que no tiene
+    # plazo, al final. Hay que rehacerlo porque vienen de dos sitios ya
+    # ordenados cada uno por su cuenta.
+    juntos.sort(key=lambda d: (d.get('plazo_fecha') or '9999-99-99',
+                               '' if d.get('fecha_doc') is None else str(d['fecha_doc'])))
+    return juntos
+
+
+def _todo_lo_que_hay(app, **filtros):
+    """Los documentos que enseñar, vengan de donde vengan.
+
+    Tres sitios, por este orden: el SQLite de esta computadora, que es donde
+    recolecta quien puede; la tabla que esa computadora publica, para el
+    servidor y los teléfonos; y la recolección previa de la carpeta de al lado,
+    que se suma siempre que esté."""
+    from quipux import almacen
+    try:
+        docs = almacen.documentos(**filtros)
+    except Exception:
+        docs = []
+    if not docs and _hay_base(app):
+        try:
+            docs = _docs_de_la_base(app, **filtros)
+        except Exception as e:
+            print(f'[quipux] no se pudo leer de la plataforma: {str(e)[:120]}')
+    return _sumando_la_cosecha(docs, **filtros)
 
 
 def _resumen_de_la_base(app):
@@ -125,12 +185,58 @@ def _resumen_de_la_base(app):
     }
 
 
-def _resumen_mejor(app):
-    """El resumen del SQLite si tiene algo; si no, el de la base.
+def _contar(docs):
+    """El marcador, contado sobre la lista que de verdad se enseña.
 
-    Y si no hay nada en ninguno de los dos, lo dice con esas palabras en vez de
-    pintar ceros: «vacío» y «aquí nunca se ha recogido nada» son dos cosas muy
+    Contarlo aparte con otra consulta es como se llega a que el número de
+    arriba y la lista de abajo no cuadren, y entonces no se sabe cuál de los
+    dos creer."""
+    hoy = date.today().isoformat()
+    abiertos = [d for d in docs if (d.get('estado') or 'abierto') != 'cerrado']
+    fechas = [d.get('actualizado') for d in docs if d.get('actualizado')]
+    return {
+        'total': len(docs),
+        'abiertos': len(abiertos),
+        'con_plazo': len([d for d in abiertos if d.get('plazo_fecha')]),
+        'vencidos': len([d for d in abiertos
+                         if d.get('plazo_fecha') and d['plazo_fecha'] < hoy]),
+        # Lo hecho se cuenta aparte: es la mitad larga de lo que hay, y dentro
+        # del total no se distingue de lo que falta por hacer.
+        'realizados': len(docs) - len(abiertos),
+        'deducidos': len([d for d in abiertos if d.get('plazo_fecha')
+                          and not d.get('plazo_seguro')]),
+        'adjuntos': sum(int(d.get('n_adjuntos') or 0) for d in docs),
+        'areas': sorted({d['area'] for d in docs if d.get('area')}),
+        'ultima_pasada': max(fechas) if fechas else None,
+    }
+
+
+def _resumen_mejor(app):
+    """El resumen del SQLite si tiene algo; si no, el de la base. Y en los dos
+    casos, sumándole la recolección previa de la carpeta de al lado.
+
+    Si no hay nada en ninguna parte, lo dice con esas palabras en vez de pintar
+    ceros: «vacío» y «aquí nunca se ha recogido nada» son dos cosas muy
     distintas, y confundirlas es lo que hacía parecer que el módulo no iba."""
+    try:
+        from quipux import cosecha
+        hay_cosecha = cosecha.hay()
+    except Exception:
+        hay_cosecha = False
+
+    # Con cosecha delante el marcador se cuenta sobre la lista fusionada: es la
+    # única forma de que no salga un total que ninguna de las dos fuentes
+    # explica por sí sola.
+    if hay_cosecha:
+        try:
+            docs = _todo_lo_que_hay(app, ver='todos', tope=100000)
+            if docs:
+                r = _contar(docs)
+                r['origen'] = 'esta computadora y la recolección previa'
+                return r
+        except Exception as e:
+            print(f'[quipux] no se pudo contar lo que hay: {str(e)[:120]}')
+
     local = {}
     try:
         from quipux import almacen
@@ -199,23 +305,12 @@ def registrar_quipux(app, ctx):
     def quipux_documentos():
         if not _permitido():
             return _no()
-        from quipux import almacen
         filtros = dict(
             ver=(request.args.get('ver') or 'pendientes'),
             area=(request.args.get('area') or ''),
             bandeja=(request.args.get('bandeja') or ''),
             busca=(request.args.get('q') or '').strip())
-        try:
-            docs = almacen.documentos(**filtros)
-        except Exception:
-            docs = []
-        # En el servidor el SQLite está vacío: lo recogido vive en la tabla que
-        # publica la computadora. Sin esto la pantalla salía siempre en blanco.
-        if not docs and _hay_base(app):
-            try:
-                docs = _docs_de_la_base(app, **filtros)
-            except Exception as e:
-                print(f'[quipux] no se pudo leer de la plataforma: {str(e)[:120]}')
+        docs = _todo_lo_que_hay(app, **filtros)
         return jsonify({'documentos': docs, 'total': len(docs),
                         'hoy': date.today().isoformat()})
 

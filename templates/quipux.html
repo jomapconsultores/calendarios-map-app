@@ -153,6 +153,7 @@ table.qx{width:100%;border-collapse:collapse;background:#fff;
   <div class="qx-cifra" data-ver="pendientes"><b id="n-abiertos">—</b><span>abiertos</span></div>
   <div class="qx-cifra alerta" data-ver="vencidos"><b id="n-vencidos">—</b><span>vencidos</span></div>
   <div class="qx-cifra aviso" data-ver="con_plazo"><b id="n-plazo">—</b><span>con plazo</span></div>
+  <div class="qx-cifra" data-ver="realizados"><b id="n-hechos">—</b><span>realizados</span></div>
   <div class="qx-cifra" data-ver="todos"><b id="n-total">—</b><span>total</span></div>
   <div class="qx-sello" id="fuente"></div>
 </div>
@@ -415,6 +416,7 @@ async function marcador(){
   document.getElementById('n-abiertos').textContent = r.abiertos ?? 0;
   document.getElementById('n-vencidos').textContent = r.vencidos ?? 0;
   document.getElementById('n-plazo').textContent    = r.con_plazo ?? 0;
+  document.getElementById('n-hechos').textContent   = r.realizados ?? 0;
   document.getElementById('n-total').textContent    = r.total ?? 0;
   TOTAL_DOCS = r.total ?? 0;
 
@@ -472,7 +474,7 @@ document.getElementById('fBusca').addEventListener('input',()=>{
 // entradas eran clones exactas de la primera: se pulsaban y no cambiaba nada.
 (function(){
   const pedido = new URLSearchParams(location.search).get('ver');
-  if (['pendientes','vencidos','con_plazo','todos'].includes(pedido)) {
+  if (['pendientes','vencidos','con_plazo','realizados','todos'].includes(pedido)) {
     VER = pedido;
     const pastilla = document.querySelector('#marcador .qx-cifra[data-ver="'+pedido+'"]');
     if (pastilla) {

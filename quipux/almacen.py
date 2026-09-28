@@ -207,6 +207,8 @@ def documentos(ruta=None, ver='pendientes', area='', bandeja='', busca='', tope=
         donde.append('plazo_fecha IS NOT NULL')
     elif ver == 'pendientes':
         donde.append("estado <> 'cerrado'")
+    elif ver == 'realizados':
+        donde.append("estado = 'cerrado'")
     if area:
         donde.append('area = ?'); params.append(area)
     if bandeja:
@@ -237,6 +239,7 @@ def resumen(ruta=None):
                              "WHERE plazo_fecha IS NOT NULL AND estado <> 'cerrado'"),
             'vencidos': uno("SELECT COUNT(*) FROM documentos WHERE plazo_fecha < ? "
                             "AND plazo_fecha IS NOT NULL AND estado <> 'cerrado'", hoy),
+            'realizados': uno("SELECT COUNT(*) FROM documentos WHERE estado = 'cerrado'"),
             'deducidos': uno("SELECT COUNT(*) FROM documentos WHERE plazo_fecha IS NOT NULL "
                              "AND plazo_seguro = 0 AND estado <> 'cerrado'"),
             'adjuntos': uno('SELECT COALESCE(SUM(n_adjuntos),0) FROM documentos'),
