@@ -101,7 +101,14 @@ def _mandar(documentos):
         cuerpo = json.dumps({'documentos': documentos}).encode('utf-8')
         pet = urllib.request.Request(
             destino + '/quipux/api/publicar', data=cuerpo, method='POST',
-            headers={'Content-Type': 'application/json', 'X-Cron-Secret': secreto})
+            headers={'Content-Type': 'application/json',
+                     'X-Cron-Secret': secreto,
+                     'Accept': 'application/json',
+                     # Delante del dominio hay un Cloudflare que rechaza a
+                     # quien no se presenta: sin esto contesta 403 «error code:
+                     # 1010» y no llega a la aplicación siquiera. El nombre es
+                     # el de esta herramienta, que es lo que de verdad llama.
+                     'User-Agent': 'calendarios-map/publicar-quipux'})
         try:
             with urllib.request.urlopen(pet, timeout=180) as r:
                 datos = json.loads(r.read().decode('utf-8'))
