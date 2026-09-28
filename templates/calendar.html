@@ -96,7 +96,13 @@
           </div>
           <div class="col-md-6">
             <label class="form-label">TEMA *</label>
-            <input id="fTema" class="form-control not-upper" placeholder="Describe el tema..." required>
+            {# Una caja de dos renglones en vez de una línea. El tamaño del
+               campo es lo que dice cuánto se espera que se escriba: en una
+               línea corta se escribe «REUNIÓN» y se pasa a otra cosa. #}
+            <textarea id="fTema" class="form-control not-upper" rows="2"
+                      placeholder="De qué trata: qué se va a revisar, decidir o presentar"
+                      required></textarea>
+            <div class="form-text" id="temaAyuda"></div>
           </div>
         </div>
 
@@ -366,7 +372,8 @@ document.addEventListener('DOMContentLoaded', function () {
   document.getElementById('fDate').min = new Date().toISOString().split('T')[0];
 
   setupAutocomplete('fTitle', 'sugTitle', '/calendar/api/titles', DEFAULTS_T);
-  setupAutocomplete('fEncargado', 'sugEncargado', '/calendar/api/encargados', DEFAULTS_E);
+  setupAutocomplete('fEncargado', 'sugEncargado', '/calendar/api/encargados', DEFAULTS_E, crearEncargado);
+  vigilarTema();
   setupClientAC();
   loadPending();
   loadCiudades();
@@ -587,30 +594,101 @@ function updateRecurrencePreview() {
 }
 
 // ======== AUTOCOMPLETE ========
-function setupAutocomplete(inpId, sugId, url, defs) {
+// `alCrear` distingue las dos listas. Los títulos aprenden solos de lo que se
+// escribe, y está bien: son etiquetas. Los ENCARGADOS son personas, y una
+// persona no se da de alta por haberla tecleado en un formulario — así fue
+// como la misma acabó siendo MAP, MARCO ANTONIO y MARCO. Cuando hay `alCrear`,
+// pulsar el ➕ la da de alta de verdad, para todos, y hasta que eso ocurra el
+// nombre tecleado no vale.
+function setupAutocomplete(inpId, sugId, url, defs, alCrear) {
   let input = document.getElementById(inpId);
   let sug = document.getElementById(sugId);
   let opts = [...defs];
-  fetch(url).then(r => r.json()).then(d => {
+  const recargar = d => {
     d.forEach(v => {
       let val = typeof v === 'string' ? v : (v.name || v.title || v.description || '');
       if (val && !opts.includes(val)) opts.push(val);
     });
-  });
+  };
+  fetch(url).then(r => r.json()).then(recargar);
+  input.opcionesConocidas = () => opts;
+
   input.addEventListener('input', function () {
     let v = this.value.toUpperCase();
     if (v.length < 1) { sug.style.display = 'none'; return; }
     let matches = opts.filter(o => o.toUpperCase().includes(v));
     sug.innerHTML = matches.slice(0, 6).map(m => `<div class="sug-item">${esc(m)}</div>`).join('');
-    if (v && !opts.includes(v)) sug.innerHTML += `<div class="sug-item sug-new">➕ Crear "${esc(v)}"</div>`;
+    if (v && !opts.includes(v)) {
+      sug.innerHTML += alCrear
+        ? `<div class="sug-item sug-new" data-crear="1">➕ Crear a "${esc(v)}" como encargado</div>`
+        : `<div class="sug-item sug-new">➕ Crear "${esc(v)}"</div>`;
+    }
     sug.style.display = 'block';
-    sug.querySelectorAll('.sug-item').forEach(i => i.addEventListener('mousedown', function (e) {
+    sug.querySelectorAll('.sug-item').forEach(i => i.addEventListener('mousedown', async function (e) {
       e.preventDefault();
-      input.value = this.textContent.replace('➕ Crear "', '').replace('"', '');
+      if (this.dataset.crear) {
+        const creado = await alCrear(v);
+        if (!creado) return;                 // el aviso ya lo dio quien lo creó
+        if (!opts.includes(creado)) opts.push(creado);
+        input.value = creado;
+      } else {
+        input.value = this.textContent.replace('➕ Crear "', '').replace('"', '');
+      }
       sug.style.display = 'none';
     }));
   });
   input.addEventListener('blur', () => setTimeout(() => sug.style.display = 'none', 200));
+}
+
+// Alta de un encargado. Pregunta antes: es una lista que ven todos y que se
+// usa para saber quién responde de cada cita, no un desplegable cualquiera.
+async function crearEncargado(nombre) {
+  nombre = (nombre || '').trim().toUpperCase();
+  if (!confirm(`¿Añadir a "${nombre}" a la lista de encargados?\n\n`
+             + 'La verán todos y quedará disponible para futuras citas.')) return null;
+  const r = await fetch('/calendar/api/encargados', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF_TOKEN },
+    body: JSON.stringify({ name: nombre })
+  }).then(x => x.json()).catch(() => ({ success: false, error: 'No se pudo conectar' }));
+  if (!r.success) { alert('❌ ' + (r.error || 'No se pudo crear')); return null; }
+  return r.name;
+}
+
+// Las mismas reglas que aplica el servidor, dichas mientras se escribe. Que
+// el aviso llegue al pulsar GUARDAR, con todo el formulario lleno, es la forma
+// de que se rellene el hueco con cualquier cosa para salir del paso.
+const TEMA_MINIMO_LETRAS = 20, TEMA_MINIMO_PALABRAS = 3;
+
+function revisarTema(tema, title) {
+  const t = (tema || '').trim().replace(/\s+/g, ' ');
+  if (!t) return 'Falta el tema.';
+  if (t.length < TEMA_MINIMO_LETRAS)
+    return `Faltan ${TEMA_MINIMO_LETRAS - t.length} caracteres: explica de qué trata la reunión.`;
+  const palabras = t.split(' ').filter(p => p.length > 1);
+  if (palabras.length < TEMA_MINIMO_PALABRAS)
+    return `El tema necesita al menos ${TEMA_MINIMO_PALABRAS} palabras.`;
+  if (new Set(palabras.map(p => p.toUpperCase())).size < 2)
+    return 'El tema repite la misma palabra: escribe de qué se trata.';
+  if (t.toUpperCase() === (title || '').trim().toUpperCase())
+    return 'El tema no puede ser el título otra vez: el título dice QUÉ es la cita y el tema, DE QUÉ trata.';
+  return '';
+}
+
+function vigilarTema() {
+  const campo = document.getElementById('fTema');
+  const ayuda = document.getElementById('temaAyuda');
+  if (!campo || !ayuda) return;
+  const pintar = () => {
+    const falla = revisarTema(campo.value, document.getElementById('fTitle').value);
+    ayuda.textContent = falla || '✓ Suficiente';
+    ayuda.style.color = falla ? '#b91c1c' : '#15803d';
+    campo.classList.toggle('is-invalid', !!falla && campo.value.trim().length > 0);
+  };
+  campo.addEventListener('input', pintar);
+  document.getElementById('fTitle').addEventListener('input', pintar);
+  window.pintarTema = pintar;
+  pintar();
 }
 
 function setupClientAC() {
@@ -773,6 +851,7 @@ function editAppt(info) {
   document.getElementById('fCalendar').value = p.calendar_id || '';
   document.getElementById('fEncargado').value = p.encargado || '';
   document.getElementById('fTema').value = p.tema || '';
+  if (window.pintarTema) window.pintarTema();
   document.getElementById('fClient').value = p.client_name || '';
   document.getElementById('fEmail').value = p.client_email || '';
   document.getElementById('fNotes').value = p.notes || '';
@@ -823,6 +902,7 @@ function clearForm() {
   ['fTitle','fEncargado','fTema','fClient','fEmail','fNotes','fDate','fTime','fLink','fDireccion','fMapa'].forEach(id => {
     document.getElementById(id).value = '';
   });
+  if (window.pintarTema) window.pintarTema();
   document.getElementById('fCiudad').value = 'CUENCA';
   document.getElementById('fLugar').value = '';
   document.getElementById('fType').value = 'presencial';
@@ -951,6 +1031,24 @@ function saveBooking() {
 
   if (!title || !calId || !encargado || !tema || (!useSessions && (!date || !time))) {
     alert('❌ Completa los campos obligatorios (*)');
+    btn.disabled = false; btn.textContent = '✅ GUARDAR';
+    return;
+  }
+
+  // El encargado tiene que ser uno de la lista. Si se tecleó un nombre nuevo
+  // sin darlo de alta, se dice aquí y no después de haberlo guardado.
+  const conocidos = document.getElementById('fEncargado').opcionesConocidas;
+  if (conocidos && !conocidos().some(o => o.toUpperCase() === encargado)) {
+    alert(`❌ "${encargado}" no está en la lista de encargados.\n\n`
+        + 'Escríbelo y pulsa ➕ Crear para añadirlo, o elige uno de la lista.');
+    btn.disabled = false; btn.textContent = '✅ GUARDAR';
+    return;
+  }
+
+  const temaFalla = revisarTema(tema, title);
+  if (temaFalla) {
+    alert('❌ ' + temaFalla);
+    document.getElementById('fTema').focus();
     btn.disabled = false; btn.textContent = '✅ GUARDAR';
     return;
   }

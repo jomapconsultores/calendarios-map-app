@@ -2241,6 +2241,45 @@ def user_can(permiso):
 # ============================================================
 #  APPOINTMENT BUILDER
 # ============================================================
+# ------------------------------------------------------------
+#  EL TEMA TIENE QUE EXPLICAR ALGO
+#
+#  El tema viaja en la invitación que recibe el cliente y es lo único que dice,
+#  meses después, de qué iba aquella reunión. «REUNIÓN», «VARIOS» o el título
+#  repetido no son un tema: son el hueco rellenado para que el formulario
+#  dejara guardar.
+#
+#  Lo que se exige es poco y es lo mínimo para que sirva: que explique, que no
+#  sea una palabra suelta y que no sea el título otra vez.
+# ------------------------------------------------------------
+TEMA_MINIMO_LETRAS = 20
+TEMA_MINIMO_PALABRAS = 3
+
+
+def _tema_suficiente(tema, title=''):
+    """(vale, motivo). El motivo se le enseña a quien está escribiendo, así que
+    dice qué falta, no que algo «no es válido»."""
+    t = ' '.join((tema or '').split())
+    if not t:
+        return False, 'Falta el tema.'
+    if len(t) < TEMA_MINIMO_LETRAS:
+        return False, (f'El tema necesita al menos {TEMA_MINIMO_LETRAS} '
+                       f'caracteres (lleva {len(t)}). Explica de qué trata la '
+                       'reunión, no sólo cómo se llama.')
+    palabras = [p for p in t.split(' ') if len(p) > 1]
+    if len(palabras) < TEMA_MINIMO_PALABRAS:
+        return False, (f'El tema necesita al menos {TEMA_MINIMO_PALABRAS} '
+                       'palabras: con una sola no se entiende nada meses '
+                       'después.')
+    # «aaa aaa aaa» pasa la cuenta de palabras y no dice nada.
+    if len({p.upper() for p in palabras}) < 2:
+        return False, 'El tema repite la misma palabra: escribe de qué se trata.'
+    if t.strip().upper() == (title or '').strip().upper():
+        return False, ('El tema no puede ser el título otra vez: el título dice '
+                       'QUÉ es la cita y el tema, DE QUÉ trata.')
+    return True, None
+
+
 def _build_appointment(title, cal_id, encargado, tema, client_name, client_email,
                         start_dt, end_dt, tipo, link, lugar, direccion, mapa,
                         ciudad, notificar, notes, user_id):
@@ -2517,7 +2556,8 @@ def create_app():
         p = request.path
         if p.startswith('/static/'):
             response.headers['Cache-Control'] = 'public, max-age=86400, immutable'
-        elif p in ('/calendar/api/titles', '/calendar/api/encargados',
+        elif request.method == 'GET' and p in (
+                   '/calendar/api/titles', '/calendar/api/encargados',
                    '/calendar/api/temas', '/calendar/api/ciudades', '/calendar/api/clients'):
             response.headers['Cache-Control'] = 'private, max-age=60'
         elif p.startswith('/calendar/api/'):
@@ -4092,11 +4132,79 @@ def create_app():
         return jsonify([t['title'] for t in
             app.supabase.get('appointment_titles', select='title')])
 
+    # ------------------------------------------------------------
+    #  QUIÉN SE ENCARGA: una lista corta, y que se elige
+    #
+    #  El encargado que se tecleaba en el formulario entraba SOLO en el
+    #  catálogo al guardar la cita. Nadie daba a nadie de alta a propósito:
+    #  bastaba con escribirlo una vez. Así la misma persona acabó siendo tres
+    #  —MAP, MARCO ANTONIO y MARCO— y el desplegable las ofrecía como si
+    #  fueran gente distinta.
+    #
+    #  No es estética: ese nombre se imprime en la invitación que recibe el
+    #  cliente, sale en el aviso de incumplimiento y es por lo que se agrupa
+    #  cualquier recuento. Tres nombres para una persona son tres responsables
+    #  que no cuadran con nadie.
+    #
+    #  Ahora hay dos actos distintos. Elegir a un encargado es lo de siempre.
+    #  CREARLO es otra cosa, se hace a propósito con el botón, y por eso tiene
+    #  su propia ruta. La lista es una sola y la ven todos: quien se encarga de
+    #  una cita no depende de quién la esté mirando.
+    # ------------------------------------------------------------
+    def _lista_encargados():
+        return [e['name'] for e in
+                (app.supabase.get('encargados', select='name') or [])]
+
+    def _encargado_conocido(nombre):
+        """(vale, motivo). Si el catálogo no se puede leer, NO se bloquea.
+
+        Que la base tropiece no puede impedir agendar: el daño de perder una
+        cita es mayor que el de admitir un nombre sin comprobar."""
+        nombre = (nombre or '').strip().upper()
+        if not nombre:
+            return False, 'Falta decir quién se encarga.'
+        try:
+            filas = app.supabase.get('encargados', select='name')
+        except Exception as e:
+            print(f'[encargados] no se pudo comprobar la lista: {str(e)[:120]}')
+            return True, None
+        if filas is None:
+            return True, None
+        conocidos = {(f.get('name') or '').strip().upper() for f in filas}
+        if nombre in conocidos:
+            return True, None
+        return False, (f'«{nombre}» no está en la lista de encargados. '
+                       'Si es alguien nuevo, créalo con el botón + y vuelve a '
+                       'guardar.')
+
     @app.route('/calendar/api/encargados')
     @login_required
     def api_encargados():
-        return jsonify([e['name'] for e in
-            app.supabase.get('encargados', select='name')])
+        return jsonify(_lista_encargados())
+
+    @app.route('/calendar/api/encargados', methods=['POST'])
+    @login_required
+    def api_crear_encargado():
+        """Dar de alta a alguien, a propósito y de una vez para todos."""
+        if not (is_admin() or user_can('calendar')):
+            return jsonify({'success': False, 'error': 'Sin acceso al Calendario'}), 403
+        nombre = _sanitize((request.get_json() or {}).get('name', ''), 100).upper()
+        if len(nombre) < 3:
+            return jsonify({'success': False,
+                            'error': 'El nombre necesita al menos 3 letras.'})
+        # Que sea un nombre y no lo que quedó a medio escribir en el campo.
+        if not any(c.isalpha() for c in nombre):
+            return jsonify({'success': False,
+                            'error': 'Eso no parece el nombre de una persona.'})
+        existentes = {n.strip().upper() for n in _lista_encargados()}
+        if nombre in existentes:
+            return jsonify({'success': True, 'ya_estaba': True, 'name': nombre,
+                            'encargados': _lista_encargados()})
+        app.supabase.insert_ignore('encargados', {'name': nombre})
+        _auditar_acceso(app, 'encargado.crear', target_email=nombre,
+                        detalle=f'alta de encargado «{nombre}»')
+        return jsonify({'success': True, 'name': nombre,
+                        'encargados': _lista_encargados()})
 
     @app.route('/calendar/api/temas')
     @login_required
@@ -4182,10 +4290,19 @@ def create_app():
             if not is_admin() and not user_has_calendar_access(app, current_user.id, cal_id):
                 return jsonify({'success': False, 'error': 'Sin autorizacion para este calendario'})
 
-            # Upsert lookup tables — insert_ignore skips if already exists
+            # El encargado se ELIGE de la lista; no se inventa al guardar.
+            vale, porque = _encargado_conocido(encargado)
+            if not vale:
+                return jsonify({'success': False, 'error': porque})
+            vale, porque = _tema_suficiente(tema, title)
+            if not vale:
+                return jsonify({'success': False, 'error': porque})
+
+            # Los desplegables que SÍ aprenden solos. El de encargados ya no
+            # está aquí: esa lista es de personas y se da de alta a propósito,
+            # que es como dejó de haber tres Marcos.
             if ciudad:     app.supabase.insert_ignore('ciudades', {'name': ciudad})
             if title:      app.supabase.insert_ignore('appointment_titles', {'title': title})
-            if encargado:  app.supabase.insert_ignore('encargados', {'name': encargado})
             if tema:       app.supabase.insert_ignore('temas', {'description': tema})
             if client_name:
                 app.supabase.insert_ignore('clients',
@@ -4732,12 +4849,28 @@ def create_app():
         if 'title' in cambios and not cambios['title']:
             return jsonify({'success': False, 'error': 'El título es obligatorio'}), 400
 
+        # Las mismas reglas que al agendar. Si sólo se comprobaran al crear,
+        # bastaría con abrir la cita y editarla para colarse.
+        # Sólo si CAMBIA. Una cita vieja puede llevar un encargado que ya no
+        # está en la lista —los que se retiraron al limpiarla—, y no se puede
+        # exigir arreglar eso para mover la hora: quien sólo quiere correr la
+        # reunión media hora se quedaría sin poder guardar.
+        if 'encargado' in cambios and                 cambios['encargado'] != (apt.get('encargado') or '').strip().upper():
+            vale, porque = _encargado_conocido(cambios['encargado'])
+            if not vale:
+                return jsonify({'success': False, 'error': porque}), 400
+        if 'tema' in cambios:
+            vale, porque = _tema_suficiente(
+                cambios['tema'], cambios.get('title') or apt.get('title') or '')
+            if not vale:
+                return jsonify({'success': False, 'error': porque}), 400
+
         # Los desplegables aprenden de lo que se escribe, igual que al agendar:
         # si sólo aprendieran al crear, un título corregido al editar no
-        # volvería a aparecer nunca.
+        # volvería a aparecer nunca. El de encargados no: ése se da de alta a
+        # propósito y por su propia ruta.
         if cambios.get('ciudad'):    app.supabase.insert_ignore('ciudades', {'name': cambios['ciudad']})
         if cambios.get('title'):     app.supabase.insert_ignore('appointment_titles', {'title': cambios['title']})
-        if cambios.get('encargado'): app.supabase.insert_ignore('encargados', {'name': cambios['encargado']})
         if cambios.get('tema'):      app.supabase.insert_ignore('temas', {'description': cambios['tema']})
 
         # El calendario del correo se toca ANTES de guardar: si allí no se pudo,
