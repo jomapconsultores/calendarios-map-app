@@ -5884,7 +5884,14 @@ def create_app():
         cuenta = (request.json or {}).get('cuenta', '').strip().lower()
         if not cuenta or '@' not in cuenta:
             return jsonify({'success': False, 'error': 'Falta la cuenta'}), 400
-        datos, error = _invitaciones.iniciar_autorizacion(app, cuenta)
+        # Un recurso por trámite: Microsoft no deja pedir permisos de dos en el
+        # mismo código. 'graph' es el permiso de MANDAR por la API —el que hace
+        # falta donde el dominio tiene cerrado el SMTP— y 'outlook' el de leer
+        # la bandeja por IMAP. La pantalla los pide uno detrás de otro.
+        recurso = ((request.json or {}).get('recurso') or 'outlook').strip().lower()
+        if recurso not in _invitaciones.RECURSOS:
+            return jsonify({'success': False, 'error': 'Recurso desconocido'}), 400
+        datos, error = _invitaciones.iniciar_autorizacion(app, cuenta, recurso=recurso)
         if error:
             return jsonify({'success': False, 'error': error})
         # El device_code no se le enseña a nadie, y ya no vive sólo en la
@@ -5894,13 +5901,16 @@ def create_app():
         # Microsoft si ya lo habían aprobado: la persona veía «ya puede cerrar
         # esta ventana» y la cuenta seguía sin conectar.
         session['ms_device'] = {'cuenta': cuenta, 'code': datos['device_code'],
-                                'authority': datos['authority']}
+                                'authority': datos['authority'],
+                                'recurso': recurso}
         _invitaciones.apuntar_pendiente(app, cuenta, datos['device_code'],
-                                        datos['authority'], datos['expires_in'])
+                                        datos['authority'], datos['expires_in'],
+                                        recurso)
         return jsonify({'success': True, 'user_code': datos['user_code'],
                         'url': datos['verification_uri'],
                         'expira_en': datos['expires_in'],
-                        'intervalo': datos['interval']})
+                        'intervalo': datos['interval'],
+                        'recurso': recurso})
 
     @app.route('/admin/cuentas/microsoft/completar', methods=['POST'])
     @login_required
@@ -5919,12 +5929,14 @@ def create_app():
             fila = _invitaciones.pendiente(app, cuenta or None)
             if fila:
                 pendiente = {'cuenta': fila['email'], 'code': fila['device_code'],
-                             'authority': fila.get('authority')}
+                             'authority': fila.get('authority'),
+                             'recurso': fila.get('recurso') or 'outlook'}
         if not pendiente:
             return jsonify({'success': False, 'estado': 'error',
                             'error': 'No hay ninguna autorización en curso'})
         estado, error = _invitaciones.completar_autorizacion(
-            app, pendiente['cuenta'], pendiente['code'], pendiente.get('authority'))
+            app, pendiente['cuenta'], pendiente['code'], pendiente.get('authority'),
+            pendiente.get('recurso') or 'outlook')
         if estado == 'ok':
             session.pop('ms_device', None)
             _invitaciones.olvidar_pendiente(app, pendiente['cuenta'])
@@ -5933,8 +5945,12 @@ def create_app():
             # está sin autorizar —en la misma página en la que la tabla ya dice
             # CONECTADA—, y lo razonable es pensar que no funcionó.
             _google_cache.invalidate_prefix('google_status_')
+            recurso_ok = pendiente.get('recurso') or 'outlook'
+            hecho = {'graph': 'permiso de envío concedido',
+                     'outlook': 'permiso de lectura concedido'}[recurso_ok]
             return jsonify({'success': True, 'estado': 'ok',
-                            'mensaje': f"{pendiente['cuenta']}: cuenta autorizada."})
+                            'recurso': recurso_ok,
+                            'mensaje': f"{pendiente['cuenta']}: {hecho}."})
         if estado == 'pendiente':
             return jsonify({'success': False, 'estado': 'pendiente'})
         session.pop('ms_device', None)

@@ -44,17 +44,46 @@ import requests
 # Entra poniendo MS_CLIENT_ID en el entorno.
 MS_CLIENT_ID = os.getenv('MS_CLIENT_ID', '9e5f94bc-e8a4-4e73-b8be-63364c29d753')
 
-# SMTP.Send para mandar la invitación, IMAP para leer lo que contestan y lo que
-# convocan otros. `offline_access` es lo que devuelve el refresh_token: sin él
-# habría que volver a autorizar a mano cada hora.
-MS_SCOPES = ('offline_access '
-             'https://outlook.office.com/SMTP.Send '
-             'https://outlook.office.com/IMAP.AccessAsUser.All')
+# Microsoft emite un token POR RECURSO, y los recursos no se mezclan en una
+# misma petición: un token que vale para Graph no vale para SMTP ni para IMAP.
+# Por eso hay dos juegos de permisos y no uno.
+#
+#   graph     mandar el correo por la API (Mail.Send). Es el camino bueno: no
+#             pasa por el puerto 587 y por tanto no le afecta el interruptor
+#             del tenant que apaga el SMTP autenticado.
+#   outlook   IMAP para leer lo que contestan y lo que convocan otros, y SMTP
+#             como salida de respaldo donde todavía esté permitida.
+#
+# `offline_access` es lo que devuelve el refresh_token: sin él habría que
+# volver a autorizar a mano cada hora. Ambos juegos son ajustables por entorno
+# para poder corregir un permiso sin tocar el código.
+MS_SCOPES_GRAPH = os.getenv(
+    'MS_SCOPES_GRAPH',
+    'offline_access https://graph.microsoft.com/Mail.Send')
+
+MS_SCOPES = os.getenv(
+    'MS_SCOPES',
+    'offline_access '
+    'https://outlook.office.com/SMTP.Send '
+    'https://outlook.office.com/IMAP.AccessAsUser.All')
+
+RECURSOS = {'graph': MS_SCOPES_GRAPH, 'outlook': MS_SCOPES}
 
 AUTORIDAD_POR_DEFECTO = 'https://login.microsoftonline.com/organizations'
 
 SMTP_HOST = 'smtp.office365.com'
 SMTP_PORT = 587
+
+GRAPH_SENDMAIL = 'https://graph.microsoft.com/v1.0/me/sendMail'
+
+# El final de línea del correo, que no es el del sistema donde corra esto.
+CRLF = '\r\n'
+
+# Lo que contesta Exchange Online cuando el tenant tiene apagado el SMTP
+# autenticado. Conviene reconocerlo porque NO es un problema de permiso ni de
+# contraseña —el token es correcto— sino una política del dominio, y decir
+# «autenticación fallida» manda a quien lo lee a revisar lo que está bien.
+SMTP_APAGADO = ('smtpclientauthentication is disabled', '5.7.139')
 
 TZ_NOMBRE = 'America/Guayaquil'
 
@@ -68,14 +97,20 @@ def _fila_token(app, email):
     return filas[0] if filas else None
 
 
-def _guardar_token(app, email, datos, authority=None):
+def _guardar_token(app, email, datos, authority=None, recurso='outlook'):
     """Guarda lo que devolvió Microsoft. Conserva el refresh_token anterior si
     la respuesta no trae uno nuevo: Microsoft no siempre lo rota, y machacarlo
-    con un vacío dejaría la cuenta sin poder renovarse."""
+    con un vacío dejaría la cuenta sin poder renovarse.
+
+    El access_token que se guarda es SIEMPRE el de Outlook, porque es el que
+    lee el IMAP entrante. El de Graph dura una hora y vive en memoria: ponerlo
+    aquí dejaría la lectura de la bandeja entrando con un token de otro
+    recurso, que Outlook rechaza sin decir por qué."""
     fila = _fila_token(app, email)
+    ahora = datetime.now(timezone.utc)
     expiry = None
     if datos.get('expires_in'):
-        expiry = datetime.now(timezone.utc).timestamp() + int(datos['expires_in']) - 60
+        expiry = ahora.timestamp() + int(datos['expires_in']) - 60
         expiry = datetime.fromtimestamp(expiry, timezone.utc).isoformat()
     nuevo = {
         'email': email,
@@ -83,8 +118,14 @@ def _guardar_token(app, email, datos, authority=None):
         'refresh_token': datos.get('refresh_token') or (fila or {}).get('refresh_token'),
         'token_expiry': expiry,
         'authority': authority or (fila or {}).get('authority') or AUTORIDAD_POR_DEFECTO,
-        'actualizado_en': datetime.now(timezone.utc).isoformat(),
+        'actualizado_en': ahora.isoformat(),
     }
+    if recurso == 'graph':
+        dura = int(datos.get('expires_in') or 3600) - 120
+        _TOKENS_GRAPH[email] = (datos.get('access_token'),
+                                ahora + timedelta(seconds=max(dura, 60)))
+        nuevo['access_token'] = (fila or {}).get('access_token')
+        nuevo['token_expiry'] = (fila or {}).get('token_expiry')
     if fila:
         app.supabase.update('ms_tokens', fila['id'], nuevo)
     else:
@@ -121,34 +162,43 @@ def hay_que_volver_a_conectar(datos, detalle=''):
     return any(c in texto for c in CODIGOS_DE_RECONECTAR)
 
 
-def token_de_acceso(app, email):
-    """Un access_token válido para esa cuenta, o (None, motivo).
+# Lo que contesta Microsoft cuando la cuenta está autorizada pero NO para lo
+# que se le está pidiendo: el permiso existe en la aplicación y nadie lo ha
+# consentido todavía. Le pasa a toda cuenta conectada antes de que existiera el
+# envío por Graph: tiene dado el permiso de SMTP e IMAP, y ninguno de Graph.
+CODIGOS_DE_FALTA_PERMISO = ('aadsts65001', 'consent_required', 'invalid_scope',
+                            'aadsts70011', 'aadsts900144')
 
-    Se renueva cuando quedan menos de dos minutos: pedirlo justo en el límite
-    llevaba a que caducara entre que se pide y que el servidor SMTP lo valida.
+
+def falta_consentir(datos, detalle=''):
+    """Si lo que contestó Microsoft significa «este permiso no está dado», y no
+    «el permiso se cayó»: uno se arregla autorizando lo que falta, el otro
+    volviendo a conectar la cuenta entera."""
+    texto = ('%s %s' % ((datos or {}).get('error') or '', detalle or '')).lower()
+    return any(c in texto for c in CODIGOS_DE_FALTA_PERMISO)
+
+
+# El token de Graph no cabe en `ms_tokens`: esa fila guarda UN access_token y
+# es el de Outlook, el que usa el IMAP entrante. Escribir encima el de Graph
+# dejaría la lectura de la bandeja intentando entrar con un token que no vale
+# para ella. Como dura una hora y los envíos son sueltos, vive en memoria del
+# proceso y basta: lo peor que pasa al reiniciar es pedir uno nuevo.
+_TOKENS_GRAPH = {}
+
+
+def _canjear(email, fila, recurso):
+    """Cambia el refresh_token por un access_token del recurso que pidan.
+
+    El refresh_token no está atado a un recurso: el mismo sirve para Graph y
+    para Outlook, siempre que la cuenta haya consentido el permiso de cada uno.
     """
-    fila = _fila_token(app, email)
-    if not fila:
-        return None, f'{email} no está autorizada todavía'
-    if not fila.get('refresh_token'):
-        return None, f'{email} está autorizada sin permiso de renovación; vuelve a conectarla'
-
-    vigente = fila.get('access_token')
-    if vigente and fila.get('token_expiry'):
-        try:
-            caduca = datetime.fromisoformat(fila['token_expiry'].replace('Z', '+00:00'))
-            if caduca > datetime.now(timezone.utc):
-                return vigente, None
-        except Exception:
-            pass
-
     autoridad = fila.get('authority') or AUTORIDAD_POR_DEFECTO
     try:
         r = requests.post(f'{autoridad}/oauth2/v2.0/token', timeout=20, data={
             'client_id': MS_CLIENT_ID,
             'grant_type': 'refresh_token',
             'refresh_token': fila['refresh_token'],
-            'scope': MS_SCOPES,
+            'scope': RECURSOS.get(recurso, MS_SCOPES),
         })
     except Exception as e:
         return None, f'no se pudo hablar con Microsoft: {str(e)[:150]}'
@@ -160,6 +210,17 @@ def token_de_acceso(app, email):
         pass
     if r.status_code != 200 or not datos.get('access_token'):
         detalle = datos.get('error_description') or r.text[:200]
+        # Primero lo que falta por consentir, y sólo después lo que se cayó.
+        # Los dos llegan como `invalid_grant` y decir «el permiso ya no vale»
+        # cuando lo que pasa es que ese permiso NUNCA se pidió manda a revisar
+        # una cuenta que está perfectamente conectada para lo demás.
+        if falta_consentir(datos, detalle):
+            if recurso == 'graph':
+                return None, (f'{email}: falta autorizar el envío por Graph. '
+                              'Entra en Cuentas y pulsa Conectar (son dos '
+                              'códigos; el primero es ése).')
+            return None, (f'{email}: falta autorizar la lectura del correo. '
+                          'Entra en Cuentas y pulsa Conectar.')
         # Cuando el permiso ya no vale, reintentarlo no lo arregla: hace falta
         # que una persona vuelva a autorizar. Se dice así, y no con el código de
         # Microsoft, que estaba saliendo tal cual en la pantalla de cuentas:
@@ -170,7 +231,60 @@ def token_de_acceso(app, email):
             return None, (f'{email}: hay que volver a conectarla — el permiso '
                           f'ya no vale. Entra en Cuentas y pulsa Conectar.')
         return None, f'{email}: {detalle[:200]}'
-    _guardar_token(app, email, datos, autoridad)
+    return datos, None
+
+
+def token_de_acceso(app, email, recurso='outlook'):
+    """Un access_token válido para esa cuenta y ese recurso, o (None, motivo).
+
+    `recurso` es 'outlook' —SMTP e IMAP, que es lo que espera quien llama sin
+    decir nada— o 'graph', para mandar el correo por la API.
+
+    Se renueva cuando quedan menos de dos minutos: pedirlo justo en el límite
+    llevaba a que caducara entre que se pide y que el servidor SMTP lo valida.
+    """
+    fila = _fila_token(app, email)
+    if not fila:
+        return None, f'{email} no está autorizada todavía'
+    if not fila.get('refresh_token'):
+        return None, f'{email} está autorizada sin permiso de renovación; vuelve a conectarla'
+
+    ahora = datetime.now(timezone.utc)
+    if recurso == 'graph':
+        vivo, hasta = _TOKENS_GRAPH.get(email, (None, None))
+        if vivo and hasta and hasta > ahora:
+            return vivo, None
+    else:
+        vigente = fila.get('access_token')
+        if vigente and fila.get('token_expiry'):
+            try:
+                caduca = datetime.fromisoformat(fila['token_expiry'].replace('Z', '+00:00'))
+                if caduca > ahora:
+                    return vigente, None
+            except Exception:
+                pass
+
+    datos, error = _canjear(email, fila, recurso)
+    if error:
+        return None, error
+
+    if recurso == 'graph':
+        dura = int(datos.get('expires_in') or 3600) - 120
+        _TOKENS_GRAPH[email] = (datos['access_token'],
+                                ahora + timedelta(seconds=max(dura, 60)))
+        # El access_token de Graph no se escribe en la fila, pero el
+        # refresh_token sí: Microsoft lo rota, y quedarse con el viejo es
+        # empezar a contar los días hasta que la cuenta se caiga sola.
+        if datos.get('refresh_token'):
+            try:
+                app.supabase.update('ms_tokens', fila['id'], {
+                    'refresh_token': datos['refresh_token'],
+                    'actualizado_en': ahora.isoformat(),
+                })
+            except Exception as e:
+                print(f'[invitaciones] no se pudo guardar el refresh de {email}: {e}')
+    else:
+        _guardar_token(app, email, datos, fila.get('authority') or AUTORIDAD_POR_DEFECTO)
     return datos['access_token'], None
 
 
@@ -182,12 +296,14 @@ def token_de_acceso(app, email):
 # apunte de qué se estaba autorizando, así que nadie volvía a preguntarle a
 # Microsoft si ya lo habían aprobado. Visto desde fuera, la cuenta seguía sin
 # autorizar por mucho que Microsoft dijera «ya puede cerrar esta ventana».
-def apuntar_pendiente(app, email, device_code, authority, expira_en_segundos):
+def apuntar_pendiente(app, email, device_code, authority, expira_en_segundos,
+                      recurso='outlook'):
     caduca = datetime.now(timezone.utc) + timedelta(seconds=int(expira_en_segundos or 900))
     return app.supabase.upsert('ms_autorizaciones', {
         'email': (email or '').strip().lower(),
         'device_code': device_code,
         'authority': authority,
+        'recurso': recurso,
         'pedida_en': datetime.now(timezone.utc).isoformat(),
         'expira_en': caduca.isoformat(),
     }, on_conflict='email')
@@ -201,7 +317,7 @@ def pendiente(app, email=None):
     persona tiene delante."""
     filas = app.supabase.get('ms_autorizaciones',
                              {'email': email.strip().lower()} if email else None,
-                             select='email,device_code,authority,expira_en') or []
+                             select='email,device_code,authority,recurso,expira_en') or []
     ahora = datetime.now(timezone.utc)
     vivas = []
     for f in filas:
@@ -222,18 +338,34 @@ def olvidar_pendiente(app, email):
                                id_col='email')
 
 
-def iniciar_autorizacion(app, email, authority=None):
+def iniciar_autorizacion(app, email, authority=None, recurso='outlook'):
     """Arranca el código de dispositivo. Devuelve lo que hay que enseñar en
-    pantalla: el código, la dirección donde se teclea y cuánto dura."""
+    pantalla: el código, la dirección donde se teclea y cuánto dura.
+
+    Se autoriza un recurso cada vez porque Microsoft no deja pedir permisos de
+    dos en el mismo trámite. Conectar una cuenta del todo son, por tanto, dos
+    códigos seguidos: 'graph' para poder mandar y 'outlook' para poder leer."""
     autoridad = authority or _autoridad_sugerida(email)
     try:
         r = requests.post(f'{autoridad}/oauth2/v2.0/devicecode', timeout=20,
-                          data={'client_id': MS_CLIENT_ID, 'scope': MS_SCOPES})
+                          data={'client_id': MS_CLIENT_ID,
+                                'scope': RECURSOS.get(recurso, MS_SCOPES)})
         datos = r.json()
     except Exception as e:
         return None, f'no se pudo pedir el código a Microsoft: {str(e)[:150]}'
     if not datos.get('device_code'):
-        return None, datos.get('error_description', r.text[:200])
+        detalle = datos.get('error_description', r.text[:200])
+        # Un permiso que la aplicación registrada en Entra no tiene declarado
+        # se rechaza aquí, antes de enseñar código alguno. Con el cliente
+        # público de Thunderbird —el de por defecto— pasa con Graph: sirve para
+        # IMAP y SMTP y no para mandar por la API.
+        if recurso == 'graph' and falta_consentir({}, detalle):
+            return None, (
+                'la aplicación de Microsoft que usa el calendario no tiene el '
+                'permiso Mail.Send de Graph. Hay que registrar una propia en '
+                'Entra con ese permiso y ponerla en MS_CLIENT_ID. '
+                f'({detalle[:120]})')
+        return None, detalle
     return {
         'device_code': datos['device_code'],
         'user_code': datos.get('user_code'),
@@ -241,10 +373,12 @@ def iniciar_autorizacion(app, email, authority=None):
         'expires_in': datos.get('expires_in', 900),
         'interval': datos.get('interval', 5),
         'authority': autoridad,
+        'recurso': recurso,
     }, None
 
 
-def completar_autorizacion(app, email, device_code, authority=None):
+def completar_autorizacion(app, email, device_code, authority=None,
+                           recurso='outlook'):
     """Pregunta si ya tecleó el código. NO espera: devuelve 'pendiente' y quien
     llama vuelve a preguntar. Bloquear aquí dejaría colgado un worker de
     gunicorn durante los quince minutos que dura el código."""
@@ -259,7 +393,7 @@ def completar_autorizacion(app, email, device_code, authority=None):
     except Exception as e:
         return 'error', f'no se pudo hablar con Microsoft: {str(e)[:150]}'
     if datos.get('access_token'):
-        if not _guardar_token(app, email, datos, autoridad):
+        if not _guardar_token(app, email, datos, autoridad, recurso):
             return 'error', (
                 f'{email}: Microsoft dio el permiso, pero no se pudo guardar en '
                 'ms_tokens. Revisa que la tabla exista (migración 033) y que el '
@@ -467,19 +601,106 @@ def destinatarios_de(apt, email_map, organizador, incluir_organizador=False):
     return salida
 
 
-def _conectar_smtp(app, cuenta):
+# ------------------------------------------------------------
+#  Las dos salidas
+# ------------------------------------------------------------
+# Graph es la buena y SMTP la de siempre. No es cuestión de gusto: Exchange
+# Online trae un interruptor de dominio —SmtpClientAuthentication— que cierra
+# el puerto 587 para TODAS las cuentas del tenant, y lo cierra también para
+# quien llega con un token OAuth correcto. Cuando en csccue.gob.ec lo apagaron,
+# las citas se guardaban y los invitados no se enteraban de nada. La API no
+# pasa por ese puerto y no le afecta ese interruptor.
+#
+# SMTP se queda como respaldo porque sigue siendo el único camino donde el
+# permiso de Graph no está consentido —las cuentas conectadas antes de esto— y
+# porque en las cuentas personales de Microsoft funciona sin más.
+def _enviar_por_graph(app, cuenta, msg):
+    """Manda el mensaje ya armado por la API. Devuelve (se mandó, motivo).
+
+    Va el MIME ENTERO en base64, no el JSON de Graph con asunto y cuerpo: el
+    JSON no sabe expresar un `text/calendar` con METHOD:REQUEST como
+    alternativa, y sin eso lo que llega es un correo con un archivo adjunto en
+    vez de una invitación que el calendario del otro reconoce. Mandando el MIME
+    crudo se entrega exactamente lo mismo que salía por SMTP."""
+    token, error = token_de_acceso(app, cuenta, recurso='graph')
+    if not token:
+        return False, error
+    try:
+        # Con final de línea CRLF, que es el que manda el RFC 5322.
+        # `as_bytes` a secas lo deja en LF, y un MIME con las cabeceras
+        # separadas a la manera de Unix es lo que hace que un servidor lo
+        # acepte y otro lo rechace por malformado. Por SMTP de esto se
+        # encargaba smtplib por su cuenta; aquí hay que decirlo.
+        crudo = msg.as_bytes(policy=msg.policy.clone(linesep=CRLF))
+        r = requests.post(GRAPH_SENDMAIL, timeout=30,
+                          data=b64encode(crudo),
+                          headers={'Authorization': f'Bearer {token}',
+                                   'Content-Type': 'text/plain'})
+    except Exception as e:
+        return False, f'no se pudo hablar con Graph: {str(e)[:150]}'
+    if r.status_code in (200, 202):
+        return True, None
+    detalle = ''
+    try:
+        detalle = ((r.json() or {}).get('error') or {}).get('message') or ''
+    except Exception:
+        pass
+    return False, f'Graph contestó {r.status_code}: {(detalle or r.text)[:180]}'
+
+
+def _por_que_no_entra(cuenta, respuesta):
+    """Traduce el portazo de Exchange a algo sobre lo que se pueda actuar.
+
+    El 5.7.139 dice «Authentication unsuccessful», y eso manda a revisar la
+    contraseña y el permiso, que es justo lo que está bien. Lo que pasa es que
+    el dominio tiene apagado el SMTP autenticado, y eso no se arregla desde
+    aquí ni volviendo a conectar la cuenta."""
+    texto = (respuesta or '').lower()
+    if any(m in texto for m in SMTP_APAGADO):
+        return (f'{cuenta}: el dominio tiene apagado el SMTP autenticado '
+                '(SmtpClientAuthentication) y eso cierra el puerto 587 aunque '
+                'el permiso sea correcto.')
+    return f'no se pudo entrar en {cuenta}: {(respuesta or "")[:180]}'
+
+
+def _enviar_por_smtp(app, cuenta, msg):
+    """La salida de siempre: puerto 587 con el token por XOAUTH2."""
     token, error = token_de_acceso(app, cuenta)
     if not token:
-        return None, error
+        return False, error
     cadena = b64encode(f'user={cuenta}\x01auth=Bearer {token}\x01\x01'.encode()).decode()
     try:
-        servidor = smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=25)
-        servidor.starttls(context=ssl.create_default_context())
-        servidor.ehlo()
-        servidor.docmd('AUTH', 'XOAUTH2 ' + cadena)
-        return servidor, None
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=25) as servidor:
+            servidor.starttls(context=ssl.create_default_context())
+            servidor.ehlo()
+            # Se mira lo que contesta el AUTH. Antes no se miraba, y el rechazo
+            # salía más tarde como una excepción del envío: el motivo real
+            # llegaba envuelto en una traza sobre el destinatario, que no tenía
+            # nada que ver.
+            codigo, respuesta = servidor.docmd('AUTH', 'XOAUTH2 ' + cadena)
+            if codigo != 235:
+                return False, _por_que_no_entra(
+                    cuenta, (respuesta or b'').decode('utf-8', 'ignore'))
+            servidor.send_message(msg)
+        return True, None
     except Exception as e:
-        return None, f'no se pudo entrar en {cuenta}: {str(e)[:180]}'
+        return False, _por_que_no_entra(cuenta, str(e))
+
+
+def _entregar(app, cuenta, msg):
+    """Saca el mensaje por donde se pueda. Devuelve (se mandó, motivo).
+
+    Si fallan las dos se dicen las dos razones: con una sola, quien lo lee
+    arregla ese lado y se encuentra con que sigue sin salir."""
+    ok, fallo_graph = _enviar_por_graph(app, cuenta, msg)
+    if ok:
+        return True, None
+    ok, fallo_smtp = _enviar_por_smtp(app, cuenta, msg)
+    if ok:
+        return True, None
+    if (fallo_graph or '') == (fallo_smtp or ''):
+        return False, fallo_graph          # el mismo motivo dos veces no informa
+    return False, f'por Graph, {fallo_graph} — por SMTP, {fallo_smtp}'
 
 
 def enviar_invitacion(app, apt, cuenta, email_map, metodo='REQUEST', secuencia=0,
@@ -515,16 +736,11 @@ def enviar_invitacion(app, apt, cuenta, email_map, metodo='REQUEST', secuencia=0
     msg.add_attachment(ics.encode('utf-8'), maintype='application',
                        subtype='ics', filename='invite.ics')
 
-    servidor, error = _conectar_smtp(app, cuenta)
-    if error:
-        return 0, error
-    try:
-        with servidor:
-            servidor.send_message(msg)
-        return len(destinos), None
-    except Exception as e:
-        print(f'[invitaciones] {cuenta}: {e}')
-        return 0, str(e)[:200]
+    ok, error = _entregar(app, cuenta, msg)
+    if not ok:
+        print(f'[invitaciones] {cuenta}: {error}')
+        return 0, (error or 'no se pudo mandar la invitación')[:400]
+    return len(destinos), None
 
 
 def enviar_cancelacion(app, apt, cuenta, email_map, secuencia=1):

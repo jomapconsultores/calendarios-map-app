@@ -141,9 +141,15 @@ async function post(url, datos) {
   return r.json();
 }
 
-// El código de dispositivo caduca en quince minutos. Se pregunta cada pocos
-// segundos —el intervalo lo dice Microsoft— hasta que confirme o expire; el
-// servidor no espera bloqueado, que dejaría un worker colgado todo ese rato.
+// Autorizar una cuenta son DOS códigos seguidos, no uno. Microsoft da los
+// permisos por recurso y no deja pedir dos recursos en el mismo trámite: el de
+// mandar por la API (Graph) y el de leer la bandeja (IMAP) van por separado.
+//
+// El de mandar se pide primero porque es el que faltaba: donde el dominio tiene
+// apagado el SMTP autenticado, es el ÚNICO camino por el que sale la
+// invitación. Pero si no se puede conceder —la aplicación registrada en Entra
+// no lo tiene declarado— la conexión sigue igualmente con el segundo: quedarse
+// a medias dejaría la cuenta sin poder ni leer, que es peor que antes.
 async function autorizarMicrosoft(cuenta) {
   const caja = document.getElementById('cajaMs');
   document.getElementById('msCuenta').textContent = cuenta;
@@ -151,35 +157,63 @@ async function autorizarMicrosoft(cuenta) {
   caja.hidden = false;
   caja.scrollIntoView({ behavior: 'smooth', block: 'center' });
 
-  const inicio = await post('/admin/cuentas/microsoft/iniciar', { cuenta });
-  if (!inicio.success) {
-    document.getElementById('msEstado').textContent = 'No se pudo empezar: ' + (inicio.error || '');
+  const envio = await rondaMicrosoft(cuenta, 'graph',
+                                     'para MANDAR las invitaciones (1 de 2)');
+  const lectura = await rondaMicrosoft(cuenta, 'outlook',
+                                       'para LEER las respuestas (2 de 2)');
+  const estado = document.getElementById('msEstado');
+  document.getElementById('msCodigo').textContent = '—';
+
+  if (!lectura.ok) { estado.textContent = lectura.error; return; }
+  if (!envio.ok) {
+    estado.textContent = 'Conectada para leer, pero SIN permiso de envío por '
+      + 'Graph: las invitaciones seguirán intentando salir por SMTP, que el '
+      + 'dominio puede tener cerrado. ' + envio.error;
     return;
   }
-  document.getElementById('msCodigo').textContent = inicio.user_code;
-  const enlace = document.getElementById('msUrl');
-  enlace.href = inicio.url;
-  enlace.textContent = inicio.url;
-  document.getElementById('msEstado').textContent = 'Esperando a que lo confirmes…';
+  estado.textContent = cuenta + ': cuenta autorizada para mandar y para leer. Recargando…';
+  setTimeout(() => location.reload(), 1200);
+}
 
-  const cada = (inicio.intervalo || 5) * 1000;
-  const limite = Date.now() + (inicio.expira_en || 900) * 1000;
-  const timer = setInterval(async () => {
-    if (Date.now() > limite) {
-      clearInterval(timer);
-      document.getElementById('msEstado').textContent = 'El código caducó. Vuelve a empezar.';
+// Una ronda: pedir el código, enseñarlo y preguntar cada pocos segundos —el
+// intervalo lo dice Microsoft— hasta que confirme o expire. El servidor no
+// espera bloqueado, que dejaría un worker colgado los quince minutos que dura.
+function rondaMicrosoft(cuenta, recurso, paraQue) {
+  return new Promise(async (listo) => {
+    const estado = document.getElementById('msEstado');
+    document.getElementById('msCodigo').textContent = '…';
+    estado.textContent = 'Pidiendo el código ' + paraQue + '…';
+
+    const inicio = await post('/admin/cuentas/microsoft/iniciar', { cuenta, recurso });
+    if (!inicio.success) {
+      listo({ ok: false, error: 'No se pudo empezar: ' + (inicio.error || '') });
       return;
     }
-    const r = await post('/admin/cuentas/microsoft/completar', {});
-    if (r.estado === 'ok') {
-      clearInterval(timer);
-      document.getElementById('msEstado').textContent = r.mensaje + ' Recargando…';
-      setTimeout(() => location.reload(), 1200);
-    } else if (r.estado === 'error') {
-      clearInterval(timer);
-      document.getElementById('msEstado').textContent = 'No se pudo autorizar: ' + (r.error || '');
-    }
-  }, cada);
+    document.getElementById('msCodigo').textContent = inicio.user_code;
+    const enlace = document.getElementById('msUrl');
+    enlace.href = inicio.url;
+    enlace.textContent = inicio.url;
+    estado.textContent = 'Teclea este código ' + paraQue + '. Esperando a que lo confirmes…';
+
+    const cada = (inicio.intervalo || 5) * 1000;
+    const limite = Date.now() + (inicio.expira_en || 900) * 1000;
+    const timer = setInterval(async () => {
+      if (Date.now() > limite) {
+        clearInterval(timer);
+        listo({ ok: false, error: 'El código caducó. Vuelve a empezar.' });
+        return;
+      }
+      const r = await post('/admin/cuentas/microsoft/completar', { cuenta });
+      if (r.estado === 'ok') {
+        clearInterval(timer);
+        estado.textContent = r.mensaje;
+        listo({ ok: true });
+      } else if (r.estado === 'error') {
+        clearInterval(timer);
+        listo({ ok: false, error: 'No se pudo autorizar: ' + (r.error || '') });
+      }
+    }, cada);
+  });
 }
 
 async function sincronizarEntrantes(boton) {
