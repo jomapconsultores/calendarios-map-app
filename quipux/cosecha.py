@@ -209,6 +209,28 @@ def documentos(ver='pendientes', area='', bandeja='', busca='', tope=800):
     return docs[:tope]
 
 
+def para_publicar():
+    """Los documentos en el formato que espera `planificacion.publicar`.
+
+    Es el mismo contenido con otra forma: allí el plazo va en un diccionario y
+    el remitente se llama `de`, porque así lo entrega el recolector. Traducir
+    aquí —y no allá— deja la publicación sin saber de dónde vino cada
+    documento, que es como debe ser: sube lo que le den.
+
+    Hace falta porque el servidor NO PUEDE leer la carpeta. Está en el disco de
+    una computadora y la máquina donde corre la web no la alcanza; no es un
+    fallo que arreglar, es que no están en el mismo sitio. Lo que viaja es la
+    información —número, asunto, plazo—, nunca los archivos."""
+    salida = []
+    for d in documentos(ver='todos', tope=100000):
+        salida.append({**d,
+                       'de': d.get('remitente'),
+                       'plazo': {'fecha': d.get('plazo_fecha'),
+                                 'origen': d.get('plazo_origen'),
+                                 'seguro': bool(d.get('plazo_seguro'))}})
+    return salida
+
+
 def resumen():
     """El marcador de la cosecha, contado sobre lo abierto, como el del almacén."""
     docs = documentos(ver='todos', tope=100000)

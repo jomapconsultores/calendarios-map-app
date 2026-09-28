@@ -180,6 +180,10 @@ def _resumen_de_la_base(app):
         'con_plazo': len([d for d in abiertos if d.get('plazo_fecha')]),
         'vencidos': len([d for d in abiertos
                          if d.get('plazo_fecha') and d['plazo_fecha'] < hoy]),
+        # Faltaba, y es la mitad larga de lo que hay: sin esto la pastilla de
+        # «realizados» salía en cero en el servidor, que es justo donde no se
+        # puede leer la carpeta y todo llega por esta tabla.
+        'realizados': len(docs) - len(abiertos),
         'ultima_pasada': max(fechas) if fechas else None,
         'origen': 'plataforma',
     }

@@ -240,7 +240,8 @@ async function cargarCompromisos(){
     // la vista que sí tiene algo que enseñar.
     if(TOTAL_DOCS > 0){ cambiarVista('docs'); return; }
     c.innerHTML = VACIO(5, 'Nada por entregar',
-      'Cuando se carguen los documentos, de aquí sale esta lista.');
+      'Esta lista sale de LEER el texto de cada oficio, y eso lo hace la '
+      + 'recolección completa. Los documentos recogidos antes están en Archivo.');
     return;
   }
   c.innerHTML = r.compromisos.map(k=>`<tr>
@@ -270,7 +271,8 @@ async function cargarTareas(){
   if(!r){ c.innerHTML = VACIO(4,'No se pudo cargar',''); return; }
   HOY = r.hoy;
   if(!r.tareas.length){
-    c.innerHTML = VACIO(4, 'Nada pendiente', 'Aún no hay documentos cargados.');
+    c.innerHTML = VACIO(4, 'Nada pendiente',
+      'Lo recogido se ve en Archivo; aquí sólo entra lo que tiene plazo.');
     return;
   }
   c.innerHTML = r.tareas.map(t=>`<tr>
@@ -380,7 +382,13 @@ document.getElementById('fBusca').addEventListener('input',()=>{
 // Los tres enlaces del menú (Pendientes, Vencidos, Todo el archivo) sólo se
 // diferencian en el ?ver= de la URL. Nadie lo leía, así que dos de las tres
 // entradas eran clones exactas de la primera: se pulsaban y no cambiaba nada.
-(function(){
+(async function(){
+  // El marcador PRIMERO, y se espera. Es quien sabe cuántos documentos hay, y
+  // sin ese dato la vista de compromisos no puede decidir si quedarse en
+  // «Nada por entregar» o pasar a la lista que sí tiene algo que enseñar.
+  // Llamarlo después era abrir siempre en la pantalla vacía.
+  await marcador();
+
   const pedido = new URLSearchParams(location.search).get('ver');
   if (['pendientes','vencidos','con_plazo','realizados','todos'].includes(pedido)) {
     VER = pedido;
@@ -394,6 +402,5 @@ document.getElementById('fBusca').addEventListener('input',()=>{
     cambiarVista('compromisos');
   }
 })();
-marcador();
 </script>
 {% endblock %}
