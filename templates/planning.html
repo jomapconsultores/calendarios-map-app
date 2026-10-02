@@ -2303,12 +2303,15 @@ async function abrirAvisosModal() {
     return;
   }
   const hora = String(r.hora_revision).padStart(2, '0') + ':00';
+  const dias = ['lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado', 'domingo'];
+  const diaIncumplidos = dias[r.dia_incumplidos ?? 0];
+  const horasIncumplidos = (r.horas_incumplidos || []).map(h => String(h).padStart(2, '0') + ':00').join(' y ');
   const aQuien = r.reparto_personal
-    ? `✅ Todos los días a las ${hora} se le recuerda a <strong>cada responsable</strong> lo suyo
-       ${r.agenda_diaria ? ', y detrás le sale su <strong>agenda de pendientes</strong> completa' : ''}.
+    ? `✅ Los ${diaIncumplidos} a las ${horasIncumplidos} se le recuerda a <strong>cada responsable</strong> lo suyo
+       ${r.agenda_diaria ? `, y todos los días a las ${hora} le sale su <strong>agenda de pendientes</strong> completa` : ''}.
        Lo que pase de <strong>${r.escalado_dias} día(s)</strong> de retraso y lo que no tenga
        responsable localizable sube a <strong>${esc(r.destino)}</strong>.`
-    : `✅ El correo saldrá a <strong>${esc(r.destino)}</strong> todos los días a las ${hora},
+    : `✅ El correo de incumplidos saldrá a <strong>${esc(r.destino)}</strong> los ${diaIncumplidos} a las ${horasIncumplidos},
        con todo junto (reparto por responsable apagado con <code>AVISO_PERSONAL=0</code>).`;
   // Los incumplimientos sin responsable localizable se dicen aparte y en rojo:
   // son los que HOY no se le están reclamando a nadie, y esconderlos entre los

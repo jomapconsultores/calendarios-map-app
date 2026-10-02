@@ -5049,7 +5049,8 @@ def create_app():
     #
     #  Todo proyecto nace con fecha de vencimiento y sus actividades con la
     #  suya. Cuando el plazo pasa sin que el trabajo esté cerrado, sale un
-    #  correo diario con la lista de incumplidos. Ver app/avisos.py.
+    #  correo los lunes con la lista de incumplidos (la agenda de pendientes
+    #  sigue siendo diaria). Ver app/avisos.py.
     # ============================================================
     @app.route('/planning/api/vencimientos/estado', methods=['GET'])
     @login_required

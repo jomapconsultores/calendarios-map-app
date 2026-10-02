@@ -187,9 +187,9 @@ def main():
               'callárselo.')
         return 1
     if tabla and correo:
-        hora = avisos._conf(app)['hora']
-        print(f'  Todo en pie. La revisión corre cada día a las {hora:02d}:00 '
-              '(hora de Guayaquil)')
+        horas = ' y '.join(f'{h:02d}:00' for h in avisos.HORAS_AVISO_INCUMPLIDOS)
+        print(f'  Todo en pie. La revisión de incumplidos corre los lunes a las '
+              f'{horas} (hora de Guayaquil)')
         print(f'  y avisa a {avisos._conf(app)["destino"]} de lo que esté '
               'incumplido.')
         return 0

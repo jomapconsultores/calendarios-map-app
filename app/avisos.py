@@ -985,6 +985,8 @@ def estado(app):
         'correo_configurado': correo_configurado(app),
         'destino': cf['destino'],
         'hora_revision': cf['hora'],
+        'dia_incumplidos': DIA_AVISO_INCUMPLIDOS,
+        'horas_incumplidos': list(HORAS_AVISO_INCUMPLIDOS),
         'reparto_personal': cf['personal'],
         'escalado_dias': cf['escalado_dias'],
         'agenda_diaria': cf['agenda_diaria'],
@@ -1026,8 +1028,28 @@ def _segundos_hasta(hora):
     return max(60.0, (objetivo - ahora).total_seconds())
 
 
+def _segundos_hasta_dia_hora(dia_semana, hora):
+    """Como _segundos_hasta, pero al próximo día de la semana dado
+    (0=lunes … 6=domingo) a esa hora."""
+    ahora = datetime.now(TZ)
+    objetivo = ahora.replace(hour=hora, minute=0, second=0, microsecond=0)
+    objetivo += timedelta(days=(dia_semana - objetivo.weekday()) % 7)
+    if objetivo <= ahora:
+        objetivo += timedelta(days=7)
+    return max(60.0, (objetivo - ahora).total_seconds())
+
+
+# El reclamo de lo incumplido ya no interrumpe todos los días: solo abre y
+# cierra la semana, el lunes. La de las 15:00 fuerza el reenvío (forzar=True)
+# para que no se calle solo porque a las 7:00 ya avisó de lo mismo — el
+# lunes se reclama dos veces a propósito, no una vez por casualidad.
+DIA_AVISO_INCUMPLIDOS = 0  # lunes
+HORAS_AVISO_INCUMPLIDOS = (7, 15)
+
+
 def start_avisos_vencimiento(app):
-    """Revisa los vencimientos una vez al día, a la hora configurada.
+    """Revisa los vencimientos los lunes a las horas configuradas, y manda la
+    agenda de pendientes todos los días a la hora configurada.
 
     Mismo patrón que los otros trabajos de fondo: con gunicorn sólo un worker
     toma el flock; en Windows (sin fcntl) no arranca y queda la ruta de cron o
@@ -1048,24 +1070,31 @@ def start_avisos_vencimiento(app):
 
     hora = _conf(app)['hora']
 
-    def _bucle():
+    def _bucle_incumplidos():
+        while True:
+            esperas = {h: _segundos_hasta_dia_hora(DIA_AVISO_INCUMPLIDOS, h)
+                       for h in HORAS_AVISO_INCUMPLIDOS}
+            hora_siguiente = min(esperas, key=esperas.get)
+            time.sleep(esperas[hora_siguiente])
+            try:
+                # Las 7:00 avisan solo de lo nuevo; las 15:00 reclaman de
+                # nuevo aunque ya se hubiera avisado esta mañana.
+                revisar_vencimientos(app, forzar=(hora_siguiente != HORAS_AVISO_INCUMPLIDOS[0]))
+            except Exception as e:
+                print(f'[avisos] error en la revisión del lunes: {e}')
+
+    def _bucle_agenda():
         while True:
             time.sleep(_segundos_hasta(hora))
-            # El reclamo de lo incumplido va primero y aparte del listado
-            # completo: son dos correos y por eso se ven como dos cosas.
-            try:
-                revisar_vencimientos(app)
-            except Exception as e:
-                print(f'[avisos] error en la revisión diaria: {e}')
-            # Y su fallo no puede llevarse por delante a la agenda: cada envío
-            # responde de lo suyo.
             try:
                 if _conf(app)['agenda_diaria']:
                     enviar_pendientes(app, evitar_repetir=True)
             except Exception as e:
                 print(f'[avisos] error en la agenda diaria: {e}')
 
-    threading.Thread(target=_bucle, name='avisos-vencimiento', daemon=True).start()
+    threading.Thread(target=_bucle_incumplidos, name='avisos-incumplidos', daemon=True).start()
+    threading.Thread(target=_bucle_agenda, name='avisos-agenda', daemon=True).start()
+    horas_txt = ' y '.join(f'{h:02d}:00' for h in HORAS_AVISO_INCUMPLIDOS)
     agenda = 'con agenda de pendientes' if _conf(app)['agenda_diaria'] else 'sin agenda'
-    print(f'[avisos] revisión diaria de vencimientos activa '
-          f'(a las {hora:02d}:00, {agenda})')
+    print(f'[avisos] incumplidos: lunes a las {horas_txt} · '
+          f'agenda diaria a las {hora:02d}:00 ({agenda})')
