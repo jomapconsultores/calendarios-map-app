@@ -480,6 +480,64 @@ def _componer_personal(hoy, nombre, proyectos, tareas):
     return asunto, cuerpo_html, '\n'.join(lineas)
 
 
+# ============================================================
+#  AVISO DE ASIGNACIÓN
+#
+#  Distinto de todo lo de arriba: esto no sale de la revisión diaria, sale en
+#  el momento, cuando alguien le pone un responsable a una tarea. Si no se
+#  avisa aquí, la persona se entera el día que ya está incumplida — o nunca,
+#  si nadie le dijo que era suya.
+# ============================================================
+_PRIORIDAD_TXT = {
+    'low': '🟢 Baja', 'medium': '🟡 Media', 'high': '🔴 Alta', 'urgent': '🚨 Urgente',
+}
+
+
+def _componer_asignacion(tarea, proyecto, quien_asigna, reasignada):
+    e = _html.escape
+    titulo = tarea.get('title') or '(sin título)'
+    verbo = 'te reasignó' if reasignada else 'te asignó'
+    asunto = f'📌 {quien_asigna} {verbo} una tarea: {titulo}'
+    plazo = _fmt(tarea.get('due_date')) if tarea.get('due_date') else 'sin fecha definida'
+    prioridad = _PRIORIDAD_TXT.get(tarea.get('priority'), tarea.get('priority') or '—')
+    detalle = f"""
+    <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;
+                padding:14px 18px;margin:14px 0;font-family:Arial,sans-serif">
+      <div style="font-size:16px;font-weight:bold;color:#0f172a;margin-bottom:8px">{e(titulo)}</div>
+      <table style="font-size:13px;color:#334155">
+        <tr><td style="padding:2px 14px 2px 0;color:#64748b">Proyecto</td><td>{e(proyecto or 'Sin proyecto')}</td></tr>
+        <tr><td style="padding:2px 14px 2px 0;color:#64748b">Vence</td><td>{plazo}</td></tr>
+        <tr><td style="padding:2px 14px 2px 0;color:#64748b">Prioridad</td><td>{prioridad}</td></tr>
+        <tr><td style="padding:2px 14px 2px 0;color:#64748b">Asignada por</td><td>{e(quien_asigna)}</td></tr>
+      </table>
+    </div>"""
+    cuerpo_html = _sobre(
+        'Tarea reasignada a ti' if reasignada else '📌 Nueva tarea asignada',
+        f'{e(quien_asigna)} {verbo} esta actividad en Planificación',
+        f'{e(quien_asigna)} {verbo} la siguiente actividad. Queda a tu cargo desde ahora:',
+        detalle,
+        'Aviso automático de CalendarioMAP al asignar una tarea.',
+        color='#4f46e5')
+    texto = (f'{quien_asigna} {verbo} una tarea:\n\n{titulo}\n'
+             f'Proyecto: {proyecto or "Sin proyecto"}\nVence: {plazo}\nPrioridad: {prioridad}\n')
+    return asunto, cuerpo_html, texto
+
+
+def notificar_asignacion(app, tarea, proyecto, quien_asigna, reasignada=False):
+    """Manda el aviso de asignación al correo de la tarea.
+
+    No lanza excepción: quien llama ya decidió que crear o reasignar la tarea
+    vale aunque el correo no salga, así que aquí sólo se informa, no se
+    bloquea nada."""
+    destino = (tarea.get('assigned_email') or '').strip()
+    if not destino or not _RE_CORREO.match(destino):
+        return False, 'Sin correo de responsable válido'
+    if not correo_configurado(app):
+        return False, 'Correo no configurado'
+    asunto, html, texto = _componer_asignacion(tarea, proyecto, quien_asigna, reasignada)
+    return enviar_correo(app, asunto, html, texto, [destino])
+
+
 def _titulo_de(tipo, obj):
     return (obj.get('name') if tipo == 'proyecto' else obj.get('title')) or '(sin título)'
 

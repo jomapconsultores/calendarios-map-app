@@ -2080,6 +2080,24 @@ def nombre_de_proyecto(app, pid):
     return filas[0].get('name') if filas else None
 
 
+def _notificar_si_corresponde(app, tarea, project_id, quien, reasignada):
+    """Avisa por correo a quien queda de responsable de una tarea, salvo que
+    se la haya puesto a sí mismo: eso no es un encargo, es una nota propia.
+
+    No puede tumbar la petición que la disparó: crear o reasignar una tarea
+    ya pasó, y que el correo falle no deshace eso."""
+    destino = (tarea.get('assigned_email') or '').strip().lower()
+    quien_correo = (getattr(quien, 'email', '') or '').strip().lower()
+    if not destino or destino == quien_correo:
+        return
+    try:
+        _avisos.notificar_asignacion(
+            app, tarea, nombre_de_proyecto(app, project_id),
+            quien.full_name or quien.email, reasignada=reasignada)
+    except Exception as e:
+        print(f'[avisos] error notificando asignación: {e}')
+
+
 def leer_tareas(app, uid, filtros=None, campos='*'):
     """La ÚNICA forma de leer actividades. Consulta y filtra en un solo gesto.
 
@@ -5376,6 +5394,8 @@ def create_app():
         if r:
             _bitacora.apuntar(app, 'creado', r[0], current_user,
                               nombre_proyecto=nombre_de_proyecto(app, d.get('project_id')))
+            _notificar_si_corresponde(app, r[0], d.get('project_id'), current_user,
+                                      reasignada=False)
         return jsonify({'success': bool(r), 'task': r[0] if r else None})
 
     @app.route('/planning/api/tasks/<tid>', methods=['PATCH'])
@@ -5439,6 +5459,14 @@ def create_app():
             elif reabriendo:
                 _bitacora.apuntar(app, 'reabierto', despues, current_user,
                                   nombre_proyecto=proyecto)
+            # Sólo es una reasignación si de verdad cambió a quién le toca:
+            # tocar otro campo de una tarea que ya era tuya no avisa a nadie.
+            correo_nuevo = (despues.get('assigned_email') or '').strip().lower()
+            correo_previo = (task.get('assigned_email') or '').strip().lower()
+            if (('assigned_to' in d or 'assigned_email' in d)
+                    and correo_nuevo and correo_nuevo != correo_previo):
+                _notificar_si_corresponde(app, despues, task.get('project_id'),
+                                          current_user, reasignada=True)
         return jsonify({'success': ok})
 
     @app.route('/planning/api/tasks/bulk', methods=['POST'])
