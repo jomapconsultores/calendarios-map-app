@@ -75,3 +75,6 @@ class Config:
     # por completo en un despliegue, pon BROWSER_SYNC_ENABLED=0 en su entorno.
     BROWSER_SYNC_ENABLED = os.getenv('BROWSER_SYNC_ENABLED', '1') == '1'
     BROWSER_SYNC_OWNER_EMAIL = os.getenv('BROWSER_SYNC_OWNER_EMAIL', 'jomapconsultores@gmail.com').lower()
+    # El módulo Correo es el de UNA persona: sólo lo ve quien entra con esta
+    # cuenta. No se concede por roles (ver app/correo_web.py).
+    CORREO_DUENO = os.getenv('CORREO_DUENO', 'maposligua@hotmail.com').lower()

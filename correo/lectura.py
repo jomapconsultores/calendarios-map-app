@@ -33,6 +33,11 @@ LARGO_TEXTO = 20_000
 # las siguientes ya sólo traen lo que llegue.
 TOPE_POR_CARPETA = 3000
 
+# Lo marcado se trae aunque sea anterior a la primera pasada: una estrella de
+# hace medio año sigue siendo algo pendiente. Con tope, por si alguien marca
+# por costumbre todo lo que lee.
+TOPE_MARCADOS = 300
+
 
 # ============================================================
 #  UN MENSAJE
@@ -191,19 +196,55 @@ def leer_carpeta(con, db, cuenta, carpeta, alguardar, dias=DIAS_PRIMERA_VEZ):
     valida_antes, ultimo = almacen.marca(db, cuenta, carpeta)
     uids = _por_traer(con, valida_antes, ultimo, valida_ahora, dias)
     leidos = 0
-    for i in range(0, len(uids), LOTE):
-        lote = uids[i:i + LOTE]
-        estado, respuesta = con.uid(
-            'FETCH', ','.join(str(u) for u in lote),
-            f'(UID FLAGS BODY.PEEK[]<0.{TROZO}>)')
-        if estado != 'OK':
-            raise conector.ErrorCorreo(f'{cuenta}: el servidor no entregó el lote')
-        for uid, sin_leer, crudo in _trozos(respuesta):
-            try:
-                alguardar(leer(crudo, sin_leer), uid)
-                leidos += 1
-            except Exception as e:
-                print(f'[correo] {cuenta} {uid}: no se pudo leer ({str(e)[:100]})')
+    for lote in _lotes(uids):
+        leidos += _traer(con, cuenta, lote, alguardar)
         almacen.apuntar_marca(db, cuenta, carpeta, valida_ahora, lote[-1])
         db.commit()
     return leidos
+
+
+def _lotes(uids):
+    for i in range(0, len(uids), LOTE):
+        yield uids[i:i + LOTE]
+
+
+def _traer(con, cuenta, lote, alguardar):
+    estado, respuesta = con.uid(
+        'FETCH', ','.join(str(u) for u in lote),
+        f'(UID FLAGS BODY.PEEK[]<0.{TROZO}>)')
+    if estado != 'OK':
+        raise conector.ErrorCorreo(f'{cuenta}: el servidor no entregó el lote')
+    leidos = 0
+    for uid, sin_leer, crudo in _trozos(respuesta):
+        try:
+            alguardar(leer(crudo, sin_leer), uid)
+            leidos += 1
+        except Exception as e:
+            print(f'[correo] {cuenta} {uid}: no se pudo leer ({str(e)[:100]})')
+    return leidos
+
+
+def _buscar(con, criterio):
+    estado, datos = con.uid('SEARCH', None, criterio)
+    if estado != 'OK' or not datos or not datos[0]:
+        return set()
+    return {int(x) for x in datos[0].split()}
+
+
+def refrescar_banderas(con, db, cuenta, carpeta, alguardar):
+    """Cómo están ahora los mensajes de la carpeta —sin leer, marcados,
+    contestados— y lo marcado que aún no se tenía. La carpeta ya tiene que
+    estar abierta (`leer_carpeta` la deja así).
+
+    Son tres búsquedas que devuelven sólo números: no se baja ningún mensaje
+    otra vez. Devuelve cuántos marcados viejos se trajeron."""
+    sin_leer = _buscar(con, 'UNSEEN')
+    marcados = _buscar(con, 'FLAGGED')
+    contestados = _buscar(con, 'ANSWERED')
+    faltan = sorted(marcados - almacen.uids_de(db, cuenta, carpeta))[-TOPE_MARCADOS:]
+    traidos = 0
+    for lote in _lotes(faltan):
+        traidos += _traer(con, cuenta, lote, alguardar)
+    almacen.apuntar_banderas(db, cuenta, carpeta, sin_leer, marcados, contestados)
+    db.commit()
+    return traidos

@@ -79,6 +79,10 @@ class BaseDeMentira:
                 f.update(data)
         return True
 
+    def delete(self, tabla, id_val, id_col='id'):
+        self.tablas[tabla] = [f for f in self._t(tabla) if f.get(id_col) != id_val]
+        return True
+
     def upsert(self, tabla, filas, on_conflict, timeout=None):
         for d in filas:
             hallada = next((f for f in self._t(tabla) if f.get(on_conflict) == d[on_conflict]), None)
@@ -96,13 +100,21 @@ app.supabase = BaseDeMentira()
 registrar_correo(app, {'is_admin': lambda: True, 'user_can': lambda p: True})
 cliente = app.test_client()
 
+print('\nSólo el dueño')
+_modulo._es_el_dueno = lambda: False
+check('otro usuario, aunque sea administrador, no lo ve',
+      cliente.get('/correo/api/mensajes').status_code, 403)
+check('ni entra a la pantalla', cliente.get('/correo').status_code, 302)
+_modulo._es_el_dueno = lambda: True
+
 PRONTO = (date.today() + timedelta(days=5)).isoformat()
 LUEGO = (date.today() + timedelta(days=9)).isoformat()
 ANTES = (date.today() - timedelta(days=3)).isoformat()
 
 
-def mensaje(id_, plazo=None, quipux=None):
-    vinculos = []
+def mensaje(id_, plazo=None, quipux=None, estado=()):
+    vinculos = [{'tipo': e, 'clave': 'a@gmail.com' if e != 'contestado' else '',
+                 'detalle': None, 'seguro': True} for e in estado]
     if plazo:
         vinculos.append({'tipo': 'plazo', 'clave': plazo, 'detalle': 'fecha escrita',
                          'seguro': False})
@@ -114,8 +126,9 @@ def mensaje(id_, plazo=None, quipux=None):
             'n_adjuntos': 1, 'enlace': 'https://mail.google.com/x', 'vinculos': vinculos}
 
 
-def publicar(mensajes, secreto='secreto'):
-    r = cliente.post('/correo/api/publicar', data=json.dumps({'mensajes': mensajes}),
+def publicar(mensajes, secreto='secreto', completo=False):
+    r = cliente.post('/correo/api/publicar',
+                     data=json.dumps({'mensajes': mensajes, 'completo': completo}),
                      headers={'Content-Type': 'application/json', 'X-Cron-Secret': secreto})
     return r.status_code, r.get_json()
 
@@ -161,6 +174,37 @@ check('«con plazo» sólo enseña lo que está por delante',
       [m['id'] for m in datos['mensajes']], ['a1'])
 datos = cliente.get('/correo/api/mensajes?q=dgpg-2050').get_json()
 check('se busca por número de quipux', [m['id'] for m in datos['mensajes']], ['a2'])
+
+print('\nLo que está por atender')
+base = [mensaje('a1', plazo=PRONTO), mensaje('a2', quipux='DGPG-2050-2026', estado=('marcado',)),
+        mensaje('a3', plazo=ANTES), mensaje('e1', estado=('marcado', 'sin_leer')),
+        mensaje('e2', estado=('sin_leer', 'contestado')), mensaje('e3', estado=('sin_leer',))]
+codigo, r = publicar(base, completo=True)
+check('entra con su estado', (codigo, r['publicados'], r['atendidos']), (200, 6, 0))
+datos = cliente.get('/correo/api/mensajes?tipo=pendiente').get_json()
+check('por atender: marcado o sin leer, y sin contestar',
+      sorted(m['id'] for m in datos['mensajes']), ['a2', 'e1', 'e3'])
+check('con sus cifras', {k: datos['cuenta'][k] for k in ('pendiente', 'marcado', 'sin_leer',
+                                                          'relacionado', 'total')},
+      {'pendiente': 3, 'marcado': 2, 'sin_leer': 3, 'relacionado': 3, 'total': 6})
+datos = cliente.get('/correo/api/mensajes?tipo=marcado').get_json()
+check('los marcados', sorted(m['id'] for m in datos['mensajes']), ['a2', 'e1'])
+
+codigo, r = publicar([mensaje('a1', plazo=PRONTO), mensaje('a2', quipux='DGPG-2050-2026'),
+                      mensaje('a3', plazo=ANTES), mensaje('e3', estado=('sin_leer',))],
+                     completo=True)
+check('lo atendido se retira', r['atendidos'], 2)
+ids = sorted(f['id'] for f in app.supabase.get('correo_mensajes'))
+check('lo que sólo estaba por atender se borra; lo relacionado se queda', ids,
+      ['a1', 'a2', 'a3', 'e3'])
+a2 = next(f for f in app.supabase.get('correo_mensajes') if f['id'] == 'a2')
+check('sin su estado', [v['tipo'] for v in json.loads(a2['vinculos'])], ['quipux'])
+
+codigo, r = publicar([], completo=True)
+check('una lista completa vacía también vale: no queda nada por atender',
+      (codigo, r['atendidos'], len(app.supabase.get('correo_mensajes'))), (200, 1, 3))
+codigo, _ = publicar([])
+check('pero vacía y sin decir que es completa, no', codigo, 400)
 
 print()
 if fallos:

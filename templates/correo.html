@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Correo — CalendarioMAP{% endblock %}
 {% block page_title %}Correo{% endblock %}
-{% block page_sub %}<p class="page-sub">Lo que llega por las nueve cuentas y tiene que ver con algo</p>{% endblock %}
+{% block page_sub %}<p class="page-sub">Lo que está por atender en las nueve cuentas y lo que tiene que ver con algo</p>{% endblock %}
 
 {% block head %}
 <style>
@@ -40,6 +40,11 @@ table.cx{width:100%;border-collapse:collapse;background:#fff;border:1px solid va
 .cx-tag.quipux{background:#eef2ff;color:#4338ca}
 .cx-tag.cita{background:#ecfdf5;color:#047857}
 .cx-tag.plazo{background:#fef3c7;color:#92400e}
+.cx-tag.marcado{background:#fef9c3;color:#a16207}
+.cx-tag.sin_leer{background:#e0f2fe;color:#0369a1}
+.cx-tag.contestado{background:#f1f5f9;color:#64748b}
+.cx-sep{width:1px;align-self:stretch;background:var(--border)}
+tr.nuevo .cx-titulo{color:#0f172a;font-weight:800}
 .cx-tag.dudoso{opacity:.6;border:1px dashed currentColor}
 .cx-vacio{padding:44px 20px;text-align:center;color:#94a3b8;font-size:var(--fs-xs)}
 .cx-vacio strong{display:block;color:#475569;font-size:var(--fs-sm);font-weight:600;margin-bottom:4px}
@@ -49,10 +54,14 @@ table.cx{width:100%;border-collapse:collapse;background:#fff;border:1px solid va
 
 {% block content %}
 <div class="cx-barra">
-  <div class="cx-cifra on" data-tipo=""><b id="n-total">—</b><span>relacionados</span></div>
-  <div class="cx-cifra aviso" data-tipo="plazo"><b id="n-plazo">—</b><span>con plazo</span></div>
+  <div class="cx-cifra aviso" data-tipo="pendiente"><b id="n-pendiente">—</b><span>por atender</span></div>
+  <div class="cx-cifra" data-tipo="marcado"><b id="n-marcado">—</b><span>★ marcados</span></div>
+  <div class="cx-cifra" data-tipo="sin_leer"><b id="n-sin_leer">—</b><span>sin leer</span></div>
+  <div class="cx-sep"></div>
+  <div class="cx-cifra" data-tipo="plazo"><b id="n-plazo">—</b><span>con plazo</span></div>
   <div class="cx-cifra" data-tipo="quipux"><b id="n-quipux">—</b><span>quipux</span></div>
   <div class="cx-cifra" data-tipo="cita"><b id="n-cita">—</b><span>invitaciones</span></div>
+  <div class="cx-cifra" data-tipo=""><b id="n-total">—</b><span>todos</span></div>
   <div class="cx-sello" id="fuente"></div>
 </div>
 
@@ -63,17 +72,30 @@ table.cx{width:100%;border-collapse:collapse;background:#fff;border:1px solid va
 <div style="overflow-x:auto">
   <table class="cx">
     <thead><tr><th style="width:92px">Fecha</th><th>Correo</th>
-      <th style="width:170px">De</th><th style="width:230px">Tiene que ver con</th>
+      <th style="width:170px">De</th><th style="width:230px">Estado y relación</th>
       <th style="width:50px"></th></tr></thead>
     <tbody id="cuerpo"><tr><td colspan="5" class="cx-vacio">Cargando…</td></tr></tbody>
   </table>
 </div>
 
 <script>
-let TIPO = new URLSearchParams(location.search).get('tipo') || '';
+// Se abre en lo que está por atender: es la pregunta de cada mañana.
+let TIPO = new URLSearchParams(location.search).get('tipo') ?? 'pendiente';
 const esc = t => { const d=document.createElement('div'); d.textContent = t==null?'':String(t); return d.innerHTML; };
 const VACIO = (titulo, texto) => `<tr><td colspan="5" class="cx-vacio"><strong>${esc(titulo)}</strong>${esc(texto)}</td></tr>`;
 const NOMBRE = {quipux:'Quipux', cita:'Cita', plazo:'Vence'};
+const ESTADO = {marcado:'★ Marcado', sin_leer:'Sin leer', contestado:'Contestado'};
+const tiene = (m, t) => (m.vinculos || []).some(v => v.tipo === t);
+
+// El estado se dice una vez por clase, con las cuentas juntas: «★ Marcado ·
+// atlas, mposligua0000», no una etiqueta por buzón.
+function etiquetasEstado(m){
+  return Object.keys(ESTADO).filter(t => tiene(m, t)).map(t => {
+    const cuentas = (m.vinculos || []).filter(v => v.tipo === t && v.clave)
+      .map(v => v.clave.split('@')[0]);
+    return `<span class="cx-tag ${t}">${ESTADO[t]}${cuentas.length ? ' · ' + esc(cuentas.join(', ')) : ''}</span>`;
+  }).join('');
+}
 
 function etiqueta(v){
   const dudoso = v.seguro ? '' : ' dudoso';
@@ -94,7 +116,7 @@ async function cargar(){
   const r = await fetch('/correo/api/mensajes?'+p).then(x=>x.json()).catch(()=>null);
   const c = document.getElementById('cuerpo');
   if(!r || r.success === false){ c.innerHTML = VACIO('No se pudo cargar', ''); return; }
-  document.getElementById('n-total').textContent = r.cuenta.total;
+  for (const k of ['total','pendiente','marcado','sin_leer']) document.getElementById('n-'+k).textContent = r.cuenta[k];
   document.getElementById('n-plazo').textContent = r.cuenta.plazo;
   document.getElementById('n-quipux').textContent = r.cuenta.quipux;
   document.getElementById('n-cita').textContent = r.cuenta.cita;
@@ -106,13 +128,13 @@ async function cargar(){
     return;
   }
   if(!r.mensajes.length){ c.innerHTML = VACIO('Nada con este filtro', ''); return; }
-  c.innerHTML = r.mensajes.map(m => `<tr>
+  c.innerHTML = r.mensajes.map(m => `<tr class="${tiene(m,'sin_leer') ? 'nuevo' : ''}">
       <td class="cx-fecha">${esc(fechaCorta(m.fecha))}</td>
       <td><div class="cx-titulo">${esc(m.asunto || '(sin asunto)')}</div>
           <div class="cx-meta">${esc((m.resumen || '').slice(0, 200))}</div>
           <div class="cx-meta">${esc((m.cuentas || '').split(',').map(x=>x.split('@')[0]).join(', '))}${m.n_adjuntos ? ' · ' + m.n_adjuntos + ' adjunto(s)' : ''}</div></td>
       <td class="cx-meta">${esc(m.de || '')}</td>
-      <td>${(m.vinculos || []).map(etiqueta).join('')}</td>
+      <td>${etiquetasEstado(m)}${(m.vinculos || []).filter(v => !ESTADO[v.tipo]).map(etiqueta).join('')}</td>
       <td class="cx-meta">${m.enlace ? `<a href="${esc(m.enlace)}" target="_blank" rel="noopener">abrir</a>` : ''}</td>
     </tr>`).join('');
 }

@@ -14,18 +14,23 @@ Lo que se vigila:
   * que la invitación de calendario se reconozca por su UID, y la cancelación
     como cancelación;
   * que los avisos de la propia plataforma no se tomen por compromisos;
-  * y que al recalcular los vínculos no se pierda el de la cita, que no se
-    puede volver a calcular porque la invitación no se guarda.
+  * que al recalcular los vínculos no se pierda el de la cita, que no se
+    puede volver a calcular porque la invitación no se guarda;
+  * y que lo marcado y lo sin leer se refresquen en cada pasada —lo leído en
+    el teléfono deja de estar pendiente—, que lo marcado de antes se traiga, y
+    que lo pendiente que sube a la plataforma no incluya boletines ni lo que
+    escribe la propia casa.
 """
 import os
 import sys
 import tempfile
+from datetime import date, timedelta
 
 sys.path.insert(0, os.getcwd())
 
 from email.message import EmailMessage
 
-from correo import almacen, lectura, relacion
+from correo import almacen, lectura, publicar, relacion
 
 fallos = []
 
@@ -158,6 +163,84 @@ with almacen.abrir(BD) as db:
     almacen.apuntar_marca(db, 'a@x', 'INBOX', 11, 40)
     almacen.apuntar_marca(db, 'a@x', 'INBOX', 11, 55)
     check('la marca de la carpeta avanza', almacen.marca(db, 'a@x', 'INBOX'), (11, 55))
+
+print('\nMarcados y sin leer')
+
+
+class ImapDeMentira:
+    """Lo justo de imaplib para `refrescar_banderas`: SEARCH y FETCH por UID."""
+    def __init__(self, mensajes, sin_leer, marcados, contestados=()):
+        self.mensajes = mensajes
+        self.banderas = {'UNSEEN': set(sin_leer), 'FLAGGED': set(marcados),
+                         'ANSWERED': set(contestados)}
+        self.pedidos = []
+
+    def uid(self, orden, *args):
+        if orden == 'SEARCH':
+            return 'OK', [' '.join(str(u) for u in sorted(self.banderas[args[1]])).encode()]
+        uids = [int(u) for u in args[0].split(',')]
+        self.pedidos += uids
+        resp = []
+        for u in uids:
+            resp += [(f'1 (UID {u} FLAGS (\\Flagged) BODY[]<0> {{3}}'.encode(),
+                      self.mensajes[u]), b')']
+        return 'OK', resp
+
+
+BD2 = os.path.join(tempfile.mkdtemp(prefix='correo_'), 'estado.db')
+CASA = 'yo@casa.com'
+HOY = date.today()
+reciente = (HOY - timedelta(days=2)).strftime('%a, %d %b %Y 10:00:00 -0500')
+viejo = (HOY - timedelta(days=200)).strftime('%a, %d %b %Y 10:00:00 -0500')
+
+
+def con_fecha(crudo, cuando):
+    return crudo.replace(b'Mon, 05 Oct 2026 10:00:00 -0500', cuando.encode())
+
+
+buzon = {
+    1: con_fecha(mensaje('Revisar contrato', 'Por favor revisa.', mid='<c1@x>'), reciente),
+    2: con_fecha(mensaje('Hola', 'ya está', de=CASA, mid='<c2@x>'), reciente),
+    3: con_fecha(mensaje('Oferta', 'compra', mid='<c3@x>'), reciente).replace(
+        b'Subject:', b'List-Unsubscribe: <mailto:u@x>\nSubject:'),
+    4: con_fecha(mensaje('Viejo marcado', 'pendiente de hace meses', mid='<c4@x>'), viejo),
+    5: con_fecha(mensaje('Pregunta', 'contesta', mid='<c5@x>'), reciente),
+}
+with almacen.abrir(BD2) as db:
+    for uid in (1, 2, 3, 5):
+        almacen.guardar(db, lectura.leer(buzon[uid]), 'b@gmail.com', 'Todos', uid)
+    respuesta = con_fecha(mensaje('RE: Pregunta', 'listo', de=CASA, mid='<r5@x>'), reciente)
+    leido = lectura.leer(respuesta.replace(b'Subject:', b'In-Reply-To: <c5@x>\nSubject:'))
+    almacen.guardar(db, leido, CASA, 'Sent', 1)
+    imap = ImapDeMentira(buzon, sin_leer={1, 2, 3, 5}, marcados={4})
+    traidos = lectura.refrescar_banderas(
+        imap, db, 'b@gmail.com', 'Todos',
+        lambda m, uid: almacen.guardar(db, m, 'b@gmail.com', 'Todos', uid))
+check('lo marcado que no se tenía se trae, y sólo eso', (traidos, imap.pedidos), (1, [4]))
+
+desde = (HOY - timedelta(days=30)).isoformat()
+pend = almacen.con_estado(desde, [CASA], ruta=BD2)
+check('pendiente: ni boletines ni lo de la casa', sorted(m['asunto'] for m in pend),
+      ['Pregunta', 'Revisar contrato', 'Viejo marcado'])
+por = {m['asunto']: m for m in pend}
+check('lo marcado, en qué cuenta', por['Viejo marcado']['marcado_en'], ['b@gmail.com'])
+check('lo sin leer, en qué cuenta', por['Revisar contrato']['sin_leer_en'], ['b@gmail.com'])
+check('se sabe contestado por la respuesta guardada',
+      (por['Pregunta']['contestado'], por['Revisar contrato']['contestado']), (True, False))
+
+with almacen.abrir(BD2) as db:
+    imap = ImapDeMentira(buzon, sin_leer={2, 3}, marcados={4}, contestados={1})
+    lectura.refrescar_banderas(imap, db, 'b@gmail.com', 'Todos', lambda m, uid: None)
+pend = {m['asunto']: m for m in almacen.con_estado(desde, [CASA], ruta=BD2)}
+check('lo leído en el teléfono deja de estar sin leer', sorted(pend), ['Viejo marcado'])
+
+with almacen.abrir(BD2) as db:
+    imap = ImapDeMentira(buzon, sin_leer={1}, marcados=set(), contestados={1})
+    lectura.refrescar_banderas(imap, db, 'b@gmail.com', 'Todos', lambda m, uid: None)
+filas = publicar.para_publicar(ruta=BD2, propias=[CASA])
+check('lo desmarcado ya no sube; lo sin leer, con su estado',
+      [(f['asunto'], sorted((v['tipo'], v['clave']) for v in f['vinculos'])) for f in filas],
+      [('Revisar contrato', [('contestado', ''), ('sin_leer', 'b@gmail.com')])])
 
 print()
 if fallos:

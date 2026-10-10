@@ -9,6 +9,13 @@ los plazos en el cronograma —remitente, asunto, el principio del texto, en qu�
 cuentas está y con qué tiene que ver—, y sólo de los correos que tienen que ver
 con algo: un quipux, una invitación, un plazo. El resto del buzón se queda aquí.
 
+Suben también los que están POR ATENDER —marcados, o llegados sin leer en los
+últimos `DIAS_SIN_LEER` días—, para verlos desde el teléfono. Con lo mismo y
+nada más: remitente, asunto y el principio del texto. Su estado viaja como
+vínculos más (`marcado`, `sin_leer`, `contestado`), con la cuenta como clave,
+y la lista va COMPLETA cada vez: lo que se leyó o se desmarcó desde la última
+publicación el servidor lo quita, porque ya no está en ella.
+
 Entra por la aplicación, con el mismo secreto y la misma puerta que usa
 `tools/publicar_quipux.py`: APP_URL y CRON_SECRET en el .env.
 """
@@ -17,6 +24,7 @@ import json
 import os
 import urllib.error
 import urllib.request
+from datetime import date, timedelta
 from urllib.parse import quote
 
 from . import almacen
@@ -24,8 +32,12 @@ from . import almacen
 # Lo que hace que un correo suba. Los avisos de la plataforma no: ya están en
 # la plataforma, son ella.
 TIPOS = ('quipux', 'cita', 'plazo')
+ESTADOS = ('marcado', 'sin_leer', 'contestado')
 LARGO_RESUMEN = 400
 
+# Lo sin leer más viejo que esto no es un pendiente: es correo que no se va a
+# leer. Lo marcado no caduca: alguien lo marcó para volver a él.
+DIAS_SIN_LEER = 30
 
 def huella(clave):
     """El id público del mensaje. El Message-ID no se usa tal cual: lleva
@@ -43,28 +55,56 @@ def _enlace(clave, cuentas):
             f'#search/rfc822msgid%3A{quote(clave, safe="")}')
 
 
-def para_publicar(ruta=None):
+def _fila(m, vinculos):
+    texto = ' '.join((m.get('texto') or '').split())
+    return {
+        'id': huella(m['clave']),
+        'fecha': m.get('fecha'),
+        'de': (m.get('de') or '')[:300],
+        'asunto': (m.get('asunto') or '')[:500],
+        'resumen': texto[:LARGO_RESUMEN],
+        'cuentas': ','.join(m['cuentas']),
+        'n_adjuntos': len(m.get('adjuntos') or []),
+        'enlace': _enlace(m['clave'], m['cuentas']),
+        'vinculos': vinculos,
+    }
+
+
+def _propias():
+    try:
+        from . import conector
+        return [c['direccion'] for c in conector.cuentas()]
+    except Exception:
+        return []
+
+
+def para_publicar(ruta=None, propias=None):
     salida = {}
     for tipo in TIPOS:
         for m in almacen.vinculados(tipo, tope=5000, ruta=ruta):
             if m['id'] in salida:
                 continue
-            vinculos = [v for v in m['vinculos'] if v['tipo'] in TIPOS]
-            texto = ' '.join((m.get('texto') or '').split())
-            salida[m['id']] = {
-                'id': huella(m['clave']),
-                'fecha': m.get('fecha'),
-                'de': (m.get('de') or '')[:300],
-                'asunto': (m.get('asunto') or '')[:500],
-                'resumen': texto[:LARGO_RESUMEN],
-                'cuentas': ','.join(m['cuentas']),
-                'n_adjuntos': len(m.get('adjuntos') or []),
-                'enlace': _enlace(m['clave'], m['cuentas']),
-                'vinculos': [{'tipo': v['tipo'], 'clave': v['clave'],
-                              'detalle': v.get('detalle'), 'seguro': bool(v['seguro'])}
-                             for v in vinculos],
-            }
-    return sorted(salida.values(), key=lambda x: x['fecha'] or '', reverse=True)
+            salida[m['id']] = (m, [{'tipo': v['tipo'], 'clave': v['clave'],
+                                    'detalle': v.get('detalle'), 'seguro': bool(v['seguro'])}
+                                   for v in m['vinculos'] if v['tipo'] in TIPOS])
+
+    desde = (date.today() - timedelta(days=DIAS_SIN_LEER)).isoformat()
+    propias = _propias() if propias is None else propias
+    for m in almacen.con_estado(desde, propias, ruta=ruta):
+        estado = ([{'tipo': 'marcado', 'clave': c, 'detalle': None, 'seguro': True}
+                   for c in m['marcado_en']]
+                  + [{'tipo': 'sin_leer', 'clave': c, 'detalle': None, 'seguro': True}
+                     for c in m['sin_leer_en'] if (m.get('fecha') or '') >= desde
+                     or m['marcado_en']])
+        if m['contestado']:
+            estado.append({'tipo': 'contestado', 'clave': '', 'detalle': None, 'seguro': True})
+        if m['id'] in salida:
+            salida[m['id']][1].extend(estado)
+        else:
+            salida[m['id']] = (m, estado)
+
+    filas = [_fila(m, vinculos) for m, vinculos in salida.values()]
+    return sorted(filas, key=lambda x: x['fecha'] or '', reverse=True)
 
 
 def mandar(mensajes):
@@ -79,7 +119,10 @@ def mandar(mensajes):
     if not secreto:
         raise RuntimeError('Falta CRON_SECRET en el .env: sin él la plataforma no '
                            'acepta lo que se le manda.')
-    cuerpo = json.dumps({'mensajes': mensajes}, ensure_ascii=False).encode('utf-8')
+    # `completo`: es todo lo que hay por atender, y lo que falte de la vez
+    # anterior ya se atendió.
+    cuerpo = json.dumps({'mensajes': mensajes, 'completo': True},
+                        ensure_ascii=False).encode('utf-8')
     pet = urllib.request.Request(
         destino + '/correo/api/publicar', data=cuerpo, method='POST',
         headers={'Content-Type': 'application/json', 'Accept': 'application/json',

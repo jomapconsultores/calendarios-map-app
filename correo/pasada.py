@@ -24,7 +24,7 @@ def ejecutar(cuenta=None, dias=lectura.DIAS_PRIMERA_VEZ, ruta=None, registro=pri
     with almacen.abrir(ruta) as db:
         for c in cuentas:
             direccion = c['direccion']
-            cuenta_res = {'nuevos': 0, 'leidos': 0, 'carpetas': []}
+            cuenta_res = {'nuevos': 0, 'leidos': 0, 'marcados_viejos': 0, 'carpetas': []}
             resumen['por_cuenta'][direccion] = cuenta_res
             registro(f'[correo] {direccion}…')
 
@@ -46,10 +46,12 @@ def ejecutar(cuenta=None, dias=lectura.DIAS_PRIMERA_VEZ, ruta=None, registro=pri
             try:
                 for carpeta in conector.carpetas_a_leer(con, c):
                     cuenta_res['carpetas'].append(carpeta.strip('"'))
+                    guardar_aqui = lambda m, uid, _c=carpeta: alguardar(m, uid, _c)
                     try:
                         cuenta_res['leidos'] += lectura.leer_carpeta(
-                            con, db, direccion, carpeta,
-                            lambda m, uid, _c=carpeta: alguardar(m, uid, _c), dias)
+                            con, db, direccion, carpeta, guardar_aqui, dias)
+                        cuenta_res['marcados_viejos'] += lectura.refrescar_banderas(
+                            con, db, direccion, carpeta, guardar_aqui)
                     except Exception as e:
                         resumen['fallos'].append(f'{direccion} {carpeta}: {str(e)[:150]}')
             finally:

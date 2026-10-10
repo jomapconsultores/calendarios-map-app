@@ -14,15 +14,42 @@ inmediata), y la tabla publicada si no (el servidor, cualquier teléfono).
 
 Al recibir la publicación, los plazos pasan además al cronograma
 (`correo.cronograma`): es lo que hace que el semáforo los reclame.
+
+Llega también lo POR ATENDER —marcado, o sin leer de los últimos días—, con su
+estado como vínculos `marcado`, `sin_leer` y `contestado` (ver
+`correo.publicar`). Esa parte llega completa cada vez, así que lo que estaba
+por atender y ya no viene se ha atendido: se le quita el estado, y si no tenía
+otra relación, se borra. No se queda en el servidor correo que no hace falta.
 """
 import json
 from datetime import date
 
 from flask import flash, jsonify, redirect, render_template, request
-from flask_login import login_required
+from flask_login import current_user, login_required
 
 TABLA = 'correo_mensajes'
+
+
+def _es_el_dueno():
+    """Sólo el dueño de las nueve cuentas, por su correo de entrada
+    (CORREO_DUENO). Ni ser administrador ni tener un rol basta: un
+    administrador del despacho no tiene por qué leer el correo personal de
+    nadie, y un módulo concedible se acaba concediendo."""
+    from flask import current_app
+    dueno = (current_app.config.get('CORREO_DUENO') or '').strip().lower()
+    return bool(dueno) and current_user.is_authenticated \
+        and (getattr(current_user, 'email', '') or '').strip().lower() == dueno
 TIPOS = ('quipux', 'cita', 'plazo')
+ESTADOS = ('marcado', 'sin_leer', 'contestado')
+
+
+def _tiene(m, tipo):
+    return any(v['tipo'] == tipo for v in m['vinculos'])
+
+
+def _pendiente(m):
+    """Marcado o sin leer, y sin contestar: lo que alguien tiene que mirar."""
+    return (_tiene(m, 'marcado') or _tiene(m, 'sin_leer')) and not _tiene(m, 'contestado')
 
 
 def _hay_base(app):
@@ -67,7 +94,12 @@ def _todo(app):
 
 def _filtrar(mensajes, tipo='', busca=''):
     hoy = date.today().isoformat()
-    if tipo == 'plazo':
+    mensajes = sorted(mensajes, key=lambda m: m.get('fecha') or '', reverse=True)
+    if tipo == 'pendiente':
+        mensajes = [m for m in mensajes if _pendiente(m)]
+    elif tipo == 'relacionado':
+        mensajes = [m for m in mensajes if any(v['tipo'] in TIPOS for v in m['vinculos'])]
+    elif tipo == 'plazo':
         # Lo que tiene plazo POR DELANTE, lo más próximo primero.
         con = []
         for m in mensajes:
@@ -75,8 +107,8 @@ def _filtrar(mensajes, tipo='', busca=''):
             if p and p['clave'] >= hoy:
                 con.append((p['clave'], m))
         mensajes = [m for _, m in sorted(con, key=lambda x: x[0])]
-    elif tipo in TIPOS:
-        mensajes = [m for m in mensajes if any(v['tipo'] == tipo for v in m['vinculos'])]
+    elif tipo in TIPOS + ESTADOS:
+        mensajes = [m for m in mensajes if _tiene(m, tipo)]
     if busca:
         b = busca.lower()
         mensajes = [m for m in mensajes
@@ -87,8 +119,13 @@ def _filtrar(mensajes, tipo='', busca=''):
 
 def _contar(mensajes):
     hoy = date.today().isoformat()
-    cuenta = {t: 0 for t in TIPOS}
+    cuenta = {t: 0 for t in TIPOS + ('marcado', 'sin_leer')}
+    cuenta['pendiente'] = sum(1 for m in mensajes if _pendiente(m))
+    cuenta['relacionado'] = sum(1 for m in mensajes
+                                if any(v['tipo'] in TIPOS for v in m['vinculos']))
     for m in mensajes:
+        for t in ('marcado', 'sin_leer'):
+            cuenta[t] += _tiene(m, t)
         tipos = {v['tipo'] for v in m['vinculos']}
         for t in TIPOS:
             if t in tipos:
@@ -99,13 +136,35 @@ def _contar(mensajes):
     return cuenta
 
 
-def registrar_correo(app, ctx):
-    is_admin = ctx['is_admin']
-    user_can = ctx['user_can']
+def _retirar_atendidos(app, vigentes):
+    """Lo que estaba por atender y no ha vuelto a llegar: se leyó, se
+    desmarcó o pasó de fecha. Si además tenía que ver con un quipux, una cita
+    o un plazo, se queda sin el estado; si no, se borra."""
+    retirados = 0
+    for m in _de_la_base(app):
+        if m['id'] in vigentes or not any(v['tipo'] in ESTADOS for v in m['vinculos']):
+            continue
+        quedan = [v for v in m['vinculos'] if v['tipo'] not in ESTADOS]
+        if quedan:
+            ok = app.supabase.update(TABLA, m['id'], {
+                'vinculos': json.dumps(quedan, ensure_ascii=False)})
+        else:
+            ok = app.supabase.delete(TABLA, m['id'])
+        retirados += bool(ok)
+    return retirados
 
+
+def registrar_correo(app, ctx):
     def _permitido():
-        # Es el correo de UNA persona: no se reparte por roles.
-        return is_admin() or user_can('correo')
+        # Es el correo de UNA persona: no se reparte por roles ni se concede.
+        return _es_el_dueno()
+
+    @app.context_processor
+    def _ve_correo():
+        try:
+            return {'ve_correo': _es_el_dueno()}
+        except Exception:
+            return {'ve_correo': False}
 
     @app.route('/correo')
     @login_required
@@ -143,8 +202,12 @@ def registrar_correo(app, ctx):
         if not _hay_base(app):
             return jsonify({'success': False,
                             'error': 'el servidor no tiene conexión con su base'}), 503
-        mensajes = (request.get_json(silent=True) or {}).get('mensajes') or []
-        if not isinstance(mensajes, list) or not mensajes:
+        cuerpo = request.get_json(silent=True) or {}
+        mensajes = cuerpo.get('mensajes') or []
+        completo = bool(cuerpo.get('completo'))
+        # Una lista vacía sólo vale si es la completa: dice que no queda nada
+        # por atender. Sin `completo`, vacía es un error de quien llama.
+        if not isinstance(mensajes, list) or (not mensajes and not completo):
             return jsonify({'success': False, 'error': 'No llegó ningún mensaje'}), 400
 
         from datetime import datetime, timezone
@@ -171,12 +234,15 @@ def registrar_correo(app, ctx):
                                          'migración 043?'}), 500
             subidos += len(lote)
 
+        atendidos = _retirar_atendidos(app, {f['id'] for f in filas}) if completo else 0
+
         from correo import cronograma
         try:
             crono = cronograma.volcar(app.supabase, mensajes)
         except Exception as e:
             crono = {'error': str(e)[:200]}
         return jsonify({'success': True, 'recibidos': len(mensajes),
-                        'publicados': subidos, 'cronograma': crono})
+                        'publicados': subidos, 'atendidos': atendidos,
+                        'cronograma': crono})
 
     return app

@@ -13,8 +13,9 @@
     python -m correo citas              las invitaciones de calendario
     python -m correo relacionar         recalcula los vínculos con el Quipux
     python -m correo informe            escribe la página y la abre
-    python -m correo publicar [--simular]   sube lo relacionado a la plataforma,
-                                        y sus plazos pasan al cronograma
+    python -m correo pendientes         lo marcado y lo que llegó sin leer
+    python -m correo publicar [--simular]   sube lo relacionado y lo pendiente a
+                                        la plataforma; los plazos pasan al cronograma
     python -m correo diario             todo junto: traer, relacionar, publicar, página
     python -m correo instalar           deja la pasada diaria programada (08:00)
     python -m correo desinstalar        la quita
@@ -53,7 +54,8 @@ def _probar():
 
 
 def _linea(m):
-    marcas = ' '.join(f"[{v['tipo']}:{v['clave']}]" for v in m['vinculos']
+    marcas = ' '.join(f"[{v['tipo']}:{v['clave']}]" if v['clave'] else f"[{v['tipo']}]"
+                      for v in m['vinculos']
                       if v['tipo'] != 'plataforma')
     cuentas = ','.join(c.split('@')[0] for c in m['cuentas'])
     print(f"#{m['id']:<6} {(m['fecha'] or '')[:10]}  {(m['de'] or '')[:30]:30}  "
@@ -97,7 +99,9 @@ def _pasada(cuenta=None, dias=None):
         if c.get('error'):
             print(f'{direccion:38} NO SE PUDO — {c["error"]}')
         else:
-            print(f'{direccion:38} {c["leidos"]:5} leídos, {c["nuevos"]:5} nuevos')
+            viejos = (f', {c["marcados_viejos"]} marcados de antes'
+                      if c.get('marcados_viejos') else '')
+            print(f'{direccion:38} {c["leidos"]:5} leídos, {c["nuevos"]:5} nuevos{viejos}')
     print('-' * 60)
     print(f"Nuevos           : {r['nuevos']}")
     print(f"Quipux conocidos : {r['quipux_conocidos']}")
@@ -113,6 +117,17 @@ def _pasada(cuenta=None, dias=None):
     return 0
 
 
+def _pendientes():
+    from datetime import timedelta
+    from . import publicar
+    desde = (date.today() - timedelta(days=publicar.DIAS_SIN_LEER)).isoformat()
+    mensajes = almacen.con_estado(desde, [c['direccion'] for c in conector.cuentas()])
+    for m in mensajes:
+        estado = (['★ marcado'] if m['marcado_en'] else []) +                  (['sin leer'] if m['sin_leer_en'] else []) +                  (['contestado'] if m['contestado'] else [])
+        m['vinculos'] = [{'tipo': e, 'clave': ''} for e in estado] + m['vinculos']
+    return _listar(mensajes, 'Nada marcado ni sin leer.')
+
+
 def _publicar(simular=False):
     from . import publicar
     mensajes = publicar.para_publicar()
@@ -120,16 +135,19 @@ def _publicar(simular=False):
     for m in mensajes:
         for t in {v['tipo'] for v in m['vinculos']}:
             tipos[t] = tipos.get(t, 0) + 1
-    print(f"Relacionados : {len(mensajes)}  ("
+    print(f"A publicar   : {len(mensajes)}  ("
           + ', '.join(f'{k} {v}' for k, v in sorted(tipos.items())) + ')')
-    if simular or not mensajes:
-        print('No se ha subido nada.' if simular else 'Nada que subir.')
+    # Aunque no haya nada se manda: la lista va completa, y una vacía es la
+    # forma de decir que lo marcado de ayer ya se atendió.
+    if simular:
+        print('No se ha subido nada.')
         return 0
     r = publicar.mandar(mensajes)
     if not r.get('success'):
         print(f"No se pudo publicar: {r.get('error')}", file=sys.stderr)
         return 2
-    print(f"Publicados   : {r.get('publicados', 0)}")
+    print(f"Publicados   : {r.get('publicados', 0)}"
+          + (f"  ·  {r['atendidos']} ya atendido(s), retirado(s)" if r.get('atendidos') else ''))
     crono = r.get('cronograma') or {}
     if crono.get('error'):
         print(f"Cronograma   : no se pudo — {crono['error']}")
@@ -178,6 +196,8 @@ def main(argv=None):
         if orden == 'plazos':
             return _listar(almacen.vinculados('plazo', desde=date.today().isoformat()),
                            'Ningún correo con fecha de entrega por delante.')
+        if orden == 'pendientes':
+            return _pendientes()
         if orden == 'citas':
             return _listar(almacen.vinculados('cita', tope=50), 'Ninguna invitación.')
         if orden == 'relacionar':

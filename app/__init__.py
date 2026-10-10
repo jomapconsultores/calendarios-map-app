@@ -178,9 +178,8 @@ ALL_MODULES = [
     # un sistema ajeno, no información del despacho que se reparta: por eso
     # existe como módulo concedible y no se abre a todo el mundo.
     ('quipux',      '📨 Quipux — documentos de CuencaDOC'),
-    # Los correos de las nueve cuentas que tienen que ver con algo de aquí. Es
-    # el correo de UNA persona: concedible, como el Quipux, y no abierto a todos.
-    ('correo',      '✉️ Correo — lo relacionado de las nueve cuentas'),
+    # El Correo no está aquí a propósito: es el correo personal de UNA persona
+    # y no se concede a nadie, ni a otro administrador (CORREO_DUENO).
 ]
 
 # Niveles de rol (clasificación de negocio). Es una etiqueta/agrupación: el

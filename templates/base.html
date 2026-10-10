@@ -109,8 +109,8 @@
         </a>
         {% endif %}
 
-        {% if is_adm or 'correo' in active_modules %}
-        <a href="/correo" class="rail-btn {{ 'active' if ns.active_key == 'correo' }}" data-panel="correo" data-group title="Correo — Lo que llega y tiene que ver con algo">
+        {% if ve_correo %}
+        <a href="/correo" class="rail-btn {{ 'active' if ns.active_key == 'correo' }}" data-panel="correo" data-group title="Correo — Lo que está por atender en las nueve cuentas">
           <span class="rail-ic">✉️</span><span class="rail-label">Correo</span>
         </a>
         {% endif %}
@@ -238,11 +238,13 @@
         </section>
         {% endif %}
 
-        {% if is_adm or 'correo' in active_modules %}
+        {% if ve_correo %}
         <section class="panel-page {{ 'active' if ns.active_key == 'correo' }}" data-page="correo">
           <div class="panel-head"><span class="panel-head-ic">✉️</span><span><span class="panel-title">Correo</span><span class="panel-sub">Las nueve cuentas, atadas a lo demás</span></span></div>
           <ul class="panel-links">
-            <li><a href="/correo"><span class="pl-t">✉️ Todo lo relacionado</span><span class="pl-d">Correos que citan un quipux, invitan o ponen plazo</span></a></li>
+            <li><a href="/correo"><span class="pl-t">📌 Por atender</span><span class="pl-d">Marcados o sin leer, y sin contestar</span></a></li>
+            <li><a href="/correo?tipo=marcado"><span class="pl-t">★ Marcados</span><span class="pl-d">La estrella de Gmail, la bandera de Outlook</span></a></li>
+            <li><a href="/correo?tipo=relacionado"><span class="pl-t">✉️ Todo lo relacionado</span><span class="pl-d">Correos que citan un quipux, invitan o ponen plazo</span></a></li>
             <li><a href="/correo?tipo=plazo"><span class="pl-t">⏰ Con plazo</span><span class="pl-d">Fechas de entrega escritas en el correo</span></a></li>
             <li><a href="/correo?tipo=quipux"><span class="pl-t">📨 Sobre un quipux</span><span class="pl-d">Correos que citan un documento de CuencaDOC</span></a></li>
             <li><a href="/correo?tipo=cita"><span class="pl-t">📅 Invitaciones</span><span class="pl-d">Reuniones que llegaron por correo</span></a></li>

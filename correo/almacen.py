@@ -49,7 +49,9 @@ CREATE TABLE IF NOT EXISTS copias (
   cuenta      TEXT NOT NULL,
   carpeta     TEXT NOT NULL,
   uid         INTEGER NOT NULL,
-  sin_leer    INTEGER DEFAULT 0,      -- como estaba al traerlo; no se vuelve a mirar
+  sin_leer    INTEGER DEFAULT 0,      -- como está en su buzón, a la última pasada
+  marcado     INTEGER DEFAULT 0,      -- la estrella de Gmail, la bandera de Outlook
+  contestado  INTEGER DEFAULT 0,      -- lo que el propio buzón marca como respondido
   PRIMARY KEY (cuenta, carpeta, uid)
 );
 CREATE INDEX IF NOT EXISTS copia_msg ON copias (mensaje_id);
@@ -107,10 +109,21 @@ def abrir(ruta=None):
     con.row_factory = sqlite3.Row
     try:
         con.executescript(ESQUEMA)
+        _columnas_nuevas(con)
         yield con
         con.commit()
     finally:
         con.close()
+
+
+def _columnas_nuevas(con):
+    """`CREATE TABLE IF NOT EXISTS` no añade columnas a una tabla que ya
+    existe: las que llegaron después se ponen aquí, a la base de quien ya
+    venía leyendo correo."""
+    tiene = {r['name'] for r in con.execute('PRAGMA table_info(copias)')}
+    for columna in ('marcado', 'contestado'):
+        if columna not in tiene:
+            con.execute(f'ALTER TABLE copias ADD COLUMN {columna} INTEGER DEFAULT 0')
 
 
 def clave_de(mensaje):
@@ -167,6 +180,22 @@ def guardar(con, mensaje, cuenta, carpeta, uid):
           mensaje_id=excluded.mensaje_id, sin_leer=excluded.sin_leer
     """, (mensaje_id, cuenta, carpeta, int(uid), 1 if mensaje.get('sin_leer') else 0))
     return mensaje_id, nuevo
+
+
+def uids_de(con, cuenta, carpeta):
+    return {r['uid'] for r in con.execute(
+        'SELECT uid FROM copias WHERE cuenta=? AND carpeta=?', (cuenta, carpeta))}
+
+
+def apuntar_banderas(con, cuenta, carpeta, sin_leer, marcados, contestados):
+    """Cómo está cada copia de esa carpeta, según lo que acaba de decir el
+    servidor. Lo leído en el teléfono o desmarcado en el navegador deja de
+    figurar como pendiente en la pasada siguiente."""
+    con.executemany(
+        'UPDATE copias SET sin_leer=?, marcado=?, contestado=? '
+        'WHERE cuenta=? AND carpeta=? AND uid=?',
+        [(int(u in sin_leer), int(u in marcados), int(u in contestados), cuenta, carpeta, u)
+         for u in uids_de(con, cuenta, carpeta)])
 
 
 def guardar_vinculos(con, mensaje_id, vinculos, tipos=None):
@@ -261,6 +290,42 @@ def vinculados(tipo, clave=None, desde=None, tope=200, ruta=None):
     args.append(int(tope))
     with abrir(ruta) as con:
         return _con_cuentas(con, con.execute(sql, args).fetchall())
+
+
+def con_estado(desde, propias=(), ruta=None):
+    """Lo que está por atender: lo marcado, sea de cuando sea, y lo que
+    llegó sin leer desde `desde`. Nunca boletines, y nunca lo que escribió una
+    cuenta de la casa: eso no espera a nadie.
+
+    Cada mensaje lleva en qué cuentas está marcado y en cuáles sin leer, y si
+    ya se contestó: porque el buzón lo dice o porque en lo guardado hay una
+    respuesta de una cuenta de la casa a ese mensaje."""
+    propias = [p.lower() for p in propias]
+    huecos = ','.join('?' * len(propias)) or "''"
+    sql = f"""
+        SELECT m.*,
+          (SELECT group_concat(DISTINCT c.cuenta) FROM copias c
+             WHERE c.mensaje_id = m.id AND c.marcado = 1) AS marcado_en,
+          (SELECT group_concat(DISTINCT c.cuenta) FROM copias c
+             WHERE c.mensaje_id = m.id AND c.sin_leer = 1) AS sin_leer_en,
+          (EXISTS (SELECT 1 FROM copias c WHERE c.mensaje_id = m.id AND c.contestado = 1)
+           OR EXISTS (SELECT 1 FROM mensajes r WHERE r.hilo = m.clave
+                        AND r.de_correo IN ({huecos}))) AS contestado
+        FROM mensajes m
+        WHERE m.masivo = 0
+          AND m.de_correo NOT IN ({huecos})
+          AND (EXISTS (SELECT 1 FROM copias c WHERE c.mensaje_id = m.id AND c.marcado = 1)
+               OR (m.fecha >= ? AND EXISTS (SELECT 1 FROM copias c
+                     WHERE c.mensaje_id = m.id AND c.sin_leer = 1)))
+        ORDER BY m.fecha DESC"""
+    with abrir(ruta) as con:
+        filas = con.execute(sql, [*propias, *propias, desde]).fetchall()
+        salida = _con_cuentas(con, filas)
+    for d in salida:
+        d['marcado_en'] = sorted(filter(None, (d.get('marcado_en') or '').split(',')))
+        d['sin_leer_en'] = sorted(filter(None, (d.get('sin_leer_en') or '').split(',')))
+        d['contestado'] = bool(d.get('contestado'))
+    return salida
 
 
 def todos_para_relacionar(ruta=None):
