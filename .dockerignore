@@ -5,6 +5,9 @@ __pycache__/
 .env
 *.log
 test_*.py
+*.bak*
+# La app del celular (Capacitor) se compila aparte; el servidor no la usa.
+movil/
 
 # Copias de bases de datos reunidas desde el disco. El Dockerfile hace
 # «COPY . .», así que sin esto viajarían dentro de la imagen hasta el servidor
