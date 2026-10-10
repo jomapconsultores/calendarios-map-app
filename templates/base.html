@@ -47,6 +47,7 @@
   {% elif path.startswith('/planning') or path.startswith('/cronograma') %}{% set ns.active_key = 'planning' %}
   {% elif path.startswith('/directorio') %}{% set ns.active_key = 'directorio' %}
   {% elif path.startswith('/quipux') %}{% set ns.active_key = 'quipux' %}
+  {% elif path.startswith('/correo') %}{% set ns.active_key = 'correo' %}
   {% elif path.startswith('/profile') %}{% set ns.active_key = 'profile' %}
   {% elif path.startswith('/admin/users') %}{% set ns.active_key = 'users' %}
   {% elif path.startswith('/admin/database') %}{% set ns.active_key = 'database' %}
@@ -105,6 +106,12 @@
         <a href="/quipux" class="rail-btn {{ 'active' if ns.active_key == 'quipux' }}" data-panel="quipux" data-group title="Quipux — Los documentos y sus plazos">
           <span class="rail-ic">📨</span><span class="rail-label">Quipux</span>
           <span class="nav-badge tono-aviso" data-badge="quipux" title="Documentos vencidos"></span>
+        </a>
+        {% endif %}
+
+        {% if is_adm or 'correo' in active_modules %}
+        <a href="/correo" class="rail-btn {{ 'active' if ns.active_key == 'correo' }}" data-panel="correo" data-group title="Correo — Lo que llega y tiene que ver con algo">
+          <span class="rail-ic">✉️</span><span class="rail-label">Correo</span>
         </a>
         {% endif %}
 
@@ -227,6 +234,18 @@
             <li><a href="/quipux?ver=pendientes"><span class="pl-t">📨 Pendientes</span><span class="pl-d">Lo abierto, por orden de plazo</span></a></li>
             <li><a href="/quipux?ver=vencidos"><span class="pl-t">⏰ Vencidos</span><span class="pl-d">Lo que ya pasó de fecha</span></a></li>
             <li><a href="/quipux?ver=todos"><span class="pl-t">🗃️ Todo el archivo</span><span class="pl-d">Incluido lo archivado</span></a></li>
+          </ul>
+        </section>
+        {% endif %}
+
+        {% if is_adm or 'correo' in active_modules %}
+        <section class="panel-page {{ 'active' if ns.active_key == 'correo' }}" data-page="correo">
+          <div class="panel-head"><span class="panel-head-ic">✉️</span><span><span class="panel-title">Correo</span><span class="panel-sub">Las nueve cuentas, atadas a lo demás</span></span></div>
+          <ul class="panel-links">
+            <li><a href="/correo"><span class="pl-t">✉️ Todo lo relacionado</span><span class="pl-d">Correos que citan un quipux, invitan o ponen plazo</span></a></li>
+            <li><a href="/correo?tipo=plazo"><span class="pl-t">⏰ Con plazo</span><span class="pl-d">Fechas de entrega escritas en el correo</span></a></li>
+            <li><a href="/correo?tipo=quipux"><span class="pl-t">📨 Sobre un quipux</span><span class="pl-d">Correos que citan un documento de CuencaDOC</span></a></li>
+            <li><a href="/correo?tipo=cita"><span class="pl-t">📅 Invitaciones</span><span class="pl-d">Reuniones que llegaron por correo</span></a></li>
           </ul>
         </section>
         {% endif %}

@@ -1,0 +1,125 @@
+{% extends "base.html" %}
+{% block title %}Correo — CalendarioMAP{% endblock %}
+{% block page_title %}Correo{% endblock %}
+{% block page_sub %}<p class="page-sub">Lo que llega por las nueve cuentas y tiene que ver con algo</p>{% endblock %}
+
+{% block head %}
+<style>
+/* ===== CORREO =====
+   La misma densidad que el Quipux: esta pantalla responde a «¿qué me ha
+   llegado que tenga que ver con lo que llevo?», y la respuesta son unas
+   decenas de líneas que tienen que caber de un vistazo. */
+.cx-barra{display:flex;flex-wrap:wrap;gap:14px;align-items:center;background:#fff;
+  border:1px solid var(--border);border-radius:10px;padding:8px 14px;margin-bottom:8px}
+.cx-cifra{display:flex;align-items:baseline;gap:5px;cursor:pointer;padding:2px 0;
+  border-bottom:2px solid transparent;transition:.12s}
+.cx-cifra:hover{border-bottom-color:#cbd5e1}
+.cx-cifra.on{border-bottom-color:var(--primary)}
+.cx-cifra b{font-size:var(--fs-lg);font-weight:700;color:#1e293b;font-variant-numeric:tabular-nums}
+.cx-cifra span{font-size:var(--fs-2xs);color:#64748b;text-transform:uppercase;
+  letter-spacing:.04em;font-weight:600}
+.cx-cifra.aviso b{color:#d97706}
+.cx-sello{margin-left:auto;font-size:var(--fs-2xs);color:#94a3b8}
+.cx-filtros{display:flex;gap:6px;margin:8px 0}
+.cx-filtros input{flex:1;min-width:180px;border:1px solid var(--border);border-radius:7px;
+  padding:4px 8px;font-size:var(--fs-2xs);height:28px;color:#475569}
+.cx-filtros input:focus{outline:none;border-color:var(--primary)}
+table.cx{width:100%;border-collapse:collapse;background:#fff;border:1px solid var(--border);
+  border-radius:10px;overflow:hidden}
+.cx th{background:#f8fafc;color:#64748b;text-align:left;padding:7px 10px;
+  border-bottom:1px solid var(--border);font-size:var(--fs-3xs);text-transform:uppercase;
+  letter-spacing:.05em;font-weight:700;white-space:nowrap}
+.cx td{padding:9px 10px;border-bottom:1px solid #f1f5f9;vertical-align:top;
+  font-size:var(--fs-xs);color:#334155;line-height:1.45}
+.cx tbody tr:last-child td{border-bottom:none}
+.cx-fecha{font-variant-numeric:tabular-nums;white-space:nowrap;color:#64748b;font-size:var(--fs-2xs)}
+.cx-titulo{font-weight:600;color:#1e293b}
+.cx-meta{color:#94a3b8;font-size:var(--fs-3xs);margin-top:2px;line-height:1.4}
+.cx-tag{display:inline-block;padding:1px 6px;border-radius:4px;font-size:var(--fs-3xs);
+  font-weight:700;margin:0 4px 3px 0;white-space:nowrap}
+.cx-tag.quipux{background:#eef2ff;color:#4338ca}
+.cx-tag.cita{background:#ecfdf5;color:#047857}
+.cx-tag.plazo{background:#fef3c7;color:#92400e}
+.cx-tag.dudoso{opacity:.6;border:1px dashed currentColor}
+.cx-vacio{padding:44px 20px;text-align:center;color:#94a3b8;font-size:var(--fs-xs)}
+.cx-vacio strong{display:block;color:#475569;font-size:var(--fs-sm);font-weight:600;margin-bottom:4px}
+@media (max-width:760px){ .cx th:nth-child(3),.cx td:nth-child(3){display:none} }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="cx-barra">
+  <div class="cx-cifra on" data-tipo=""><b id="n-total">—</b><span>relacionados</span></div>
+  <div class="cx-cifra aviso" data-tipo="plazo"><b id="n-plazo">—</b><span>con plazo</span></div>
+  <div class="cx-cifra" data-tipo="quipux"><b id="n-quipux">—</b><span>quipux</span></div>
+  <div class="cx-cifra" data-tipo="cita"><b id="n-cita">—</b><span>invitaciones</span></div>
+  <div class="cx-sello" id="fuente"></div>
+</div>
+
+<div class="cx-filtros">
+  <input id="fBusca" type="text" placeholder="Buscar por asunto, remitente o número de quipux…">
+</div>
+
+<div style="overflow-x:auto">
+  <table class="cx">
+    <thead><tr><th style="width:92px">Fecha</th><th>Correo</th>
+      <th style="width:170px">De</th><th style="width:230px">Tiene que ver con</th>
+      <th style="width:50px"></th></tr></thead>
+    <tbody id="cuerpo"><tr><td colspan="5" class="cx-vacio">Cargando…</td></tr></tbody>
+  </table>
+</div>
+
+<script>
+let TIPO = new URLSearchParams(location.search).get('tipo') || '';
+const esc = t => { const d=document.createElement('div'); d.textContent = t==null?'':String(t); return d.innerHTML; };
+const VACIO = (titulo, texto) => `<tr><td colspan="5" class="cx-vacio"><strong>${esc(titulo)}</strong>${esc(texto)}</td></tr>`;
+const NOMBRE = {quipux:'Quipux', cita:'Cita', plazo:'Vence'};
+
+function etiqueta(v){
+  const dudoso = v.seguro ? '' : ' dudoso';
+  const titulo = v.detalle ? ` title="${esc(v.detalle)}"` : '';
+  const clave = v.tipo === 'cita' ? (v.detalle || '').slice(0, 60) : v.clave;
+  return `<span class="cx-tag ${esc(v.tipo)}${dudoso}"${titulo}>${NOMBRE[v.tipo]||esc(v.tipo)} · ${esc(clave)}</span>`;
+}
+
+function fechaCorta(iso){
+  if(!iso) return '';
+  const d = new Date(iso);
+  return isNaN(d) ? iso.slice(0,10) : d.toLocaleDateString('es-EC', {day:'2-digit', month:'2-digit', year:'numeric'});
+}
+
+async function cargar(){
+  document.querySelectorAll('.cx-cifra').forEach(c => c.classList.toggle('on', c.dataset.tipo === TIPO));
+  const p = new URLSearchParams({tipo: TIPO, q: document.getElementById('fBusca').value.trim()});
+  const r = await fetch('/correo/api/mensajes?'+p).then(x=>x.json()).catch(()=>null);
+  const c = document.getElementById('cuerpo');
+  if(!r || r.success === false){ c.innerHTML = VACIO('No se pudo cargar', ''); return; }
+  document.getElementById('n-total').textContent = r.cuenta.total;
+  document.getElementById('n-plazo').textContent = r.cuenta.plazo;
+  document.getElementById('n-quipux').textContent = r.cuenta.quipux;
+  document.getElementById('n-cita').textContent = r.cuenta.cita;
+  document.getElementById('fuente').textContent =
+    (r.ultima ? 'al ' + fechaCorta(r.ultima) + ' · ' : '') + 'desde ' + r.origen;
+  if(!r.cuenta.total){
+    c.innerHTML = VACIO('Aún no ha llegado nada',
+      ' El correo se lee en la computadora con «py -m correo» y se publica con «py -m correo publicar».');
+    return;
+  }
+  if(!r.mensajes.length){ c.innerHTML = VACIO('Nada con este filtro', ''); return; }
+  c.innerHTML = r.mensajes.map(m => `<tr>
+      <td class="cx-fecha">${esc(fechaCorta(m.fecha))}</td>
+      <td><div class="cx-titulo">${esc(m.asunto || '(sin asunto)')}</div>
+          <div class="cx-meta">${esc((m.resumen || '').slice(0, 200))}</div>
+          <div class="cx-meta">${esc((m.cuentas || '').split(',').map(x=>x.split('@')[0]).join(', '))}${m.n_adjuntos ? ' · ' + m.n_adjuntos + ' adjunto(s)' : ''}</div></td>
+      <td class="cx-meta">${esc(m.de || '')}</td>
+      <td>${(m.vinculos || []).map(etiqueta).join('')}</td>
+      <td class="cx-meta">${m.enlace ? `<a href="${esc(m.enlace)}" target="_blank" rel="noopener">abrir</a>` : ''}</td>
+    </tr>`).join('');
+}
+
+document.querySelectorAll('.cx-cifra').forEach(c => c.addEventListener('click', () => { TIPO = c.dataset.tipo; cargar(); }));
+let espera;
+document.getElementById('fBusca').addEventListener('input', () => { clearTimeout(espera); espera = setTimeout(cargar, 250); });
+cargar();
+</script>
+{% endblock %}

@@ -67,6 +67,7 @@ from . import browser_sync as _browser_sync
 from .directorio import registrar_directorio
 from .cronograma import registrar_cronograma
 from .quipux_web import registrar_quipux
+from .correo_web import registrar_correo
 from . import atlas_sync as _atlas
 from . import avisos as _avisos
 from . import semaforo as _semaforo
@@ -177,6 +178,9 @@ ALL_MODULES = [
     # un sistema ajeno, no información del despacho que se reparta: por eso
     # existe como módulo concedible y no se abre a todo el mundo.
     ('quipux',      '📨 Quipux — documentos de CuencaDOC'),
+    # Los correos de las nueve cuentas que tienen que ver con algo de aquí. Es
+    # el correo de UNA persona: concedible, como el Quipux, y no abierto a todos.
+    ('correo',      '✉️ Correo — lo relacionado de las nueve cuentas'),
 ]
 
 # Niveles de rol (clasificación de negocio). Es una etiqueta/agrupación: el
@@ -5830,6 +5834,9 @@ def create_app():
     # Lo que llega del Municipio por CuencaDOC. La recolección corre en la
     # computadora de la persona; esto es sólo la pantalla donde se mira.
     registrar_quipux(app, _ctx_modulos)
+    # Los correos relacionados. Se leen en la computadora de la persona; aquí
+    # se reciben, se enseñan y sus plazos pasan al cronograma.
+    registrar_correo(app, _ctx_modulos)
 
     # Contadores del menú. Se cachean por usuario: el navegador los pide en cada
     # pantalla y sin esto serían cuatro consultas por página vista.

@@ -31,6 +31,11 @@ lxml>=5.0                # lectura del HTML de las bandejas y las fichas
 # recorrido de las bandejas y las descargas siguen yendo por HTTP, que es
 # veinte veces más rápido. Usa el Chrome ya instalado, no descarga otro.
 playwright>=1.40         # ventana de acceso cuando salta el control de la imagen
+# Correo — también corre en la PC: lee las nueve cuentas con las credenciales
+# del conector de correo (~/.claude/tools/gmail-mcp). Gmail entra con la clave
+# del llavero (keyring, arriba); Microsoft, con el token que renueva MSAL.
+msal>=1.28               # token de Outlook / Exchange Online para IMAP
+msal-extensions>=1.1     # la caché de ese token, cifrada con la cuenta de Windows
 
 # Migraciones. `tools/aplicar_migracion.py` habla con PostgreSQL por conexión
 # directa, y el único sitio con acceso a la base es el servidor — donde corre

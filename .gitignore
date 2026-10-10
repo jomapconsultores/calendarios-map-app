@@ -37,3 +37,7 @@ Base datos/
 # La cosecha traducida lleva asuntos y nombres de remitentes reales: se
 # genera cuando hace falta (tools/importar_quipux_dropbox.py) y no se publica.
 tools/quipux_importado.json
+
+# El lanzador de la pasada diaria del correo: lo escribe «py -m correo instalar»
+# con las rutas de la computadora donde se instala.
+correo/CORREO_DIARIO.cmd
