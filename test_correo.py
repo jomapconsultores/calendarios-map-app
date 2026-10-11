@@ -228,6 +228,26 @@ check('lo sin leer, en qué cuenta', por['Revisar contrato']['sin_leer_en'], ['b
 check('se sabe contestado por la respuesta guardada',
       (por['Pregunta']['contestado'], por['Revisar contrato']['contestado']), (True, False))
 
+check('lo automático se reconoce por la dirección',
+      [almacen.automatico(d) for d in ('googleplay-noreply@google.com',
+                                       'notifications@rambox.app',
+                                       'recommendations@discover.pinterest.com',
+                                       'updates@email.grok.com', 'ana@cuenca.gob.ec',
+                                       'gescalera@cee.uned.es')],
+      [True, True, True, True, False, False])
+with almacen.abrir(BD2) as db:
+    aviso = con_fecha(mensaje('Tu suscripción', 'x', de='Google <googleone-noreply@google.com>',
+                              mid='<g1@x>'), reciente)
+    almacen.guardar(db, lectura.leer(aviso), 'b@gmail.com', 'Todos', 6)
+    almacen.guardar(db, lectura.leer(con_fecha(
+        mensaje('Recibo', 'x', de='no-reply@stripe.com', mid='<g2@x>'), reciente)),
+        'b@gmail.com', 'Todos', 7)
+    imap = ImapDeMentira(buzon, sin_leer={1, 2, 3, 5, 6, 7}, marcados={4, 7})
+    lectura.refrescar_banderas(imap, db, 'b@gmail.com', 'Todos', lambda m, uid: None)
+pend = sorted(m['asunto'] for m in almacen.con_estado(desde, [CASA], ruta=BD2))
+check('lo sin leer automático no cuenta; lo automático marcado, sí', pend,
+      ['Pregunta', 'Recibo', 'Revisar contrato', 'Viejo marcado'])
+
 with almacen.abrir(BD2) as db:
     imap = ImapDeMentira(buzon, sin_leer={2, 3}, marcados={4}, contestados={1})
     lectura.refrescar_banderas(imap, db, 'b@gmail.com', 'Todos', lambda m, uid: None)

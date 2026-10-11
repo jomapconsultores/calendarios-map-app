@@ -21,6 +21,7 @@ con esas tres cosas iguales son, a efectos prácticos, el mismo.
 import hashlib
 import json
 import os
+import re
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime
@@ -292,6 +293,20 @@ def vinculados(tipo, clave=None, desde=None, tope=200, ruta=None):
         return _con_cuentas(con, con.execute(sql, args).fetchall())
 
 
+# Los avisos que manda una máquina: «noreply», notificaciones, recomendaciones,
+# novedades. No traen la cabecera de boletín —por eso `masivo` no los aparta— y
+# no esperan nada de nadie. Se miran en la parte de la dirección antes de la
+# arroba: `googleplay-noreply@`, `notifications@rambox.app`,
+# `recommendations@discover.pinterest.com`, `updates@email.grok.com`.
+RE_AUTOMATICO = re.compile(
+    r'(no-?reply|no_reply|do-?not-?reply|notification|notificacion|recommendation'
+    r'|updates?$|news|marketing|promo|mailer-daemon|postmaster|gemini-notes)', re.I)
+
+
+def automatico(de_correo):
+    return bool(RE_AUTOMATICO.search((de_correo or '').split('@')[0]))
+
+
 def con_estado(desde, propias=(), ruta=None):
     """Lo que está por atender: lo marcado, sea de cuando sea, y lo que
     llegó sin leer desde `desde`. Nunca boletines, y nunca lo que escribió una
@@ -299,7 +314,10 @@ def con_estado(desde, propias=(), ruta=None):
 
     Cada mensaje lleva en qué cuentas está marcado y en cuáles sin leer, y si
     ya se contestó: porque el buzón lo dice o porque en lo guardado hay una
-    respuesta de una cuenta de la casa a ese mensaje."""
+    respuesta de una cuenta de la casa a ese mensaje.
+
+    Lo sin leer de un remitente automático (`automatico`) no cuenta. Lo
+    marcado sí, venga de quien venga: si alguien lo marcó, es que le importa."""
     propias = [p.lower() for p in propias]
     huecos = ','.join('?' * len(propias)) or "''"
     sql = f"""
@@ -325,7 +343,7 @@ def con_estado(desde, propias=(), ruta=None):
         d['marcado_en'] = sorted(filter(None, (d.get('marcado_en') or '').split(',')))
         d['sin_leer_en'] = sorted(filter(None, (d.get('sin_leer_en') or '').split(',')))
         d['contestado'] = bool(d.get('contestado'))
-    return salida
+    return [d for d in salida if d['marcado_en'] or not automatico(d.get('de_correo'))]
 
 
 def todos_para_relacionar(ruta=None):
