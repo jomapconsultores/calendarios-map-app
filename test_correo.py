@@ -30,7 +30,7 @@ sys.path.insert(0, os.getcwd())
 
 from email.message import EmailMessage
 
-from correo import almacen, lectura, publicar, relacion
+from correo import almacen, ews, lectura, publicar, relacion
 
 fallos = []
 
@@ -279,6 +279,65 @@ with almacen.abrir(BD2) as db:
     almacen.apuntar_cuenta(db, 'a@x')
 check('al volver a entrar se borra la falla', almacen.estado_cuentas(BD2)[0]['a@x']['falla_desde'],
       None)
+
+print('\nBuzones por EWS')
+import base64
+import xml.etree.ElementTree as ET
+
+
+def item_ews(ident, leido, bandera=None, verbo=None):
+    ext = ''.join(
+        f'<t:ExtendedProperty><t:ExtendedFieldURI PropertyTag="{tag}" PropertyType="Integer"/>'
+        f'<t:Value>{val}</t:Value></t:ExtendedProperty>'
+        for tag, val in (('0x1090', bandera), ('0x1081', verbo)) if val is not None)
+    return (f'<t:Message><t:ItemId Id="{ident}"/><t:IsRead>{leido}</t:IsRead>{ext}'
+            '</t:Message>')
+
+
+class ExchangeDeMentira:
+    """Contesta FindItem (recientes o marcados) y GetItem con el MIME."""
+    def __init__(self, recientes, marcados, mimes):
+        self.recientes, self.marcados, self.mimes, self.pedidos = recientes, marcados, mimes, []
+
+    def __call__(self, token, direccion, cuerpo):
+        ns = ('xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types" '
+              'xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages"')
+        if cuerpo.startswith('<m:FindItem'):
+            items = self.marcados if '0x1090' in cuerpo.split('Restriction')[1] else self.recientes
+            if 'sentitems' in cuerpo:
+                items = []
+            return ET.fromstring(f'<r {ns}><m:RootFolder IncludesLastItemInRange="true">'
+                                 f'<t:Items>{"".join(items)}</t:Items></m:RootFolder></r>')
+        ids = [x.split('"')[0] for x in cuerpo.split('<t:ItemId Id="')[1:]]
+        self.pedidos += ids
+        return ET.fromstring(f'<r {ns}>' + ''.join(
+            f'<t:Message><t:ItemId Id="{i}"/><t:MimeContent>'
+            f'{base64.b64encode(self.mimes[i]).decode()}</t:MimeContent></t:Message>'
+            for i in ids) + '</r>')
+
+
+BD3 = os.path.join(tempfile.mkdtemp(prefix='correo_'), 'ews.db')
+ews._token = lambda cuenta: 'token'
+ews._llamar = ExchangeDeMentira(
+    [item_ews('AAA', 'false'), item_ews('BBB', 'true', verbo=102)],
+    [item_ews('CCC', 'true', bandera=2)],
+    {'AAA': con_fecha(mensaje('Tutoría', 'mañana', mid='<e1@x>'), reciente),
+     'BBB': con_fecha(mensaje('Matrícula', 'listo', mid='<e2@x>'), reciente),
+     'CCC': con_fecha(mensaje('Tesis', 'pendiente', mid='<e3@x>'), viejo)})
+cuenta_ews = {'direccion': 'u@uned.es', 'proveedor': 'microsoft', 'via': 'ews'}
+with almacen.abrir(BD3) as db:
+    r = ews.leer_cuenta(cuenta_ews, db,
+                        lambda m, uid, carpeta: almacen.guardar(db, m, 'u@uned.es', carpeta, uid))
+check('trae lo reciente y lo marcado de antes', (r['leidos'], r['marcados_viejos']), (2, 1))
+pend = {m['asunto']: m for m in almacen.con_estado(desde, [], ruta=BD3)}
+check('con su estado: sin leer, marcado; lo contestado no está pendiente',
+      (sorted(pend), pend['Tutoría']['sin_leer_en'], pend['Tesis']['marcado_en'],
+       pend['Matrícula']['contestado'] if 'Matrícula' in pend else None),
+      (['Tesis', 'Tutoría'], ['u@uned.es'], ['u@uned.es'], None))
+ews._llamar.pedidos = []
+with almacen.abrir(BD3) as db:
+    ews.leer_cuenta(cuenta_ews, db, lambda m, uid, carpeta: None)
+check('la segunda pasada no vuelve a bajar nada', ews._llamar.pedidos, [])
 
 print()
 if fallos:

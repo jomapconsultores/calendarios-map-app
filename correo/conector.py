@@ -41,7 +41,9 @@ def carpeta_del_conector():
 
 
 def cuentas():
-    """Las cuentas dadas de alta, con su proveedor siempre puesto."""
+    """Las cuentas dadas de alta, con su proveedor siempre puesto. Las de
+    `cuentas_ews.json` —Exchange con el IMAP cerrado, ver `ews.py`— van al
+    final, marcadas con `via: ews`."""
     ruta = os.path.join(carpeta_del_conector(), 'cuentas.json')
     if not os.path.exists(ruta):
         raise ErrorCorreo(
@@ -49,7 +51,13 @@ def cuentas():
             'conector de correo; para otra carpeta, pon CORREO_CONECTOR.')
     with open(ruta, encoding='utf-8') as f:
         lista = json.load(f).get('cuentas', [])
-    return [{**c, 'proveedor': c.get('proveedor') or 'gmail'} for c in lista]
+    salida = [{**c, 'proveedor': c.get('proveedor') or 'gmail'} for c in lista]
+    ruta_ews = os.path.join(carpeta_del_conector(), 'cuentas_ews.json')
+    if os.path.exists(ruta_ews):
+        with open(ruta_ews, encoding='utf-8') as f:
+            salida += [{**c, 'proveedor': 'microsoft', 'via': 'ews'}
+                       for c in json.load(f).get('cuentas', [])]
+    return salida
 
 
 def elegir(nombre=None):
@@ -80,6 +88,12 @@ def _oauth_ms():
 def como_renovar(cuenta):
     """Qué hacer cuando la cuenta deja de entrar, dicho para quien lo va a hacer."""
     carpeta = carpeta_del_conector()
+    if cuenta.get('via') == 'ews':
+        return ('Vuelve a autorizarla: en ' + carpeta + ' ejecuta  '
+                f'.venv\\Scripts\\python.exe alta_microsoft.py {cuenta["direccion"]} x org  '
+                'y sigue el código en microsoft.com/devicelogin. Al final dirá que IMAP '
+                'falla: es lo esperado, esta cuenta se lee por EWS. Si aun así no '
+                'entra, puede que Microsoft haya cerrado EWS.')
     if cuenta['proveedor'] == 'microsoft':
         tipo = 'personal' if 'consumers' in (cuenta.get('authority') or '') else 'org'
         return ('Vuelve a autorizarla: en ' + carpeta + ' ejecuta  '

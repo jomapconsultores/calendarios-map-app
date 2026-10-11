@@ -10,7 +10,7 @@ token de Microsoft hay que renovarlo—, se dice cuál y se sigue con las demás
 """
 import time
 
-from . import almacen, conector, lectura, relacion
+from . import almacen, conector, ews, lectura, relacion
 
 
 def ejecutar(cuenta=None, dias=lectura.DIAS_PRIMERA_VEZ, ruta=None, registro=print):
@@ -36,6 +36,19 @@ def ejecutar(cuenta=None, dias=lectura.DIAS_PRIMERA_VEZ, ruta=None, registro=pri
                     cuenta_res['nuevos'] += 1
                     resumen['nuevos'] += 1
                 resumen['copias'] += 1
+
+            if c.get('via') == 'ews':
+                try:
+                    r = ews.leer_cuenta(c, db, alguardar, dias)
+                except conector.ErrorCorreo as e:
+                    resumen['fallos'].append(str(e))
+                    cuenta_res['error'] = str(e)
+                    almacen.apuntar_cuenta(db, direccion, str(e))
+                    db.commit()
+                    continue
+                cuenta_res.update(r)
+                almacen.apuntar_cuenta(db, direccion)
+                continue
 
             try:
                 con = conector.conectar(c)

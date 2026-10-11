@@ -43,6 +43,12 @@ def _probar():
     malas = 0
     for c in conector.cuentas():
         try:
+            if c.get('via') == 'ews':
+                from . import ews
+                ews._token(c)
+                carpetas = [f'{x} (por EWS)' for x in ews.CARPETAS]
+                print(f"  OK     {c['direccion']:38} lee: {', '.join(carpetas)}")
+                continue
             con = conector.conectar(c)
             carpetas = conector.carpetas_a_leer(con, c)
             con.logout()
