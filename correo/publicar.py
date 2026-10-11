@@ -107,7 +107,22 @@ def para_publicar(ruta=None, propias=None):
     return sorted(filas, key=lambda x: x['fecha'] or '', reverse=True)
 
 
-def mandar(mensajes):
+def estado_cuentas(ruta=None):
+    """Cómo entró cada cuenta de la lista, para el aviso de la pantalla. Sólo
+    las que están dadas de alta: una que se dio de baja no es una que falla."""
+    from . import conector
+    apuntadas, ultima = almacen.estado_cuentas(ruta)
+    lista = []
+    for c in conector.cuentas():
+        a = apuntadas.get(c['direccion']) or {}
+        lista.append({'cuenta': c['direccion'], 'proveedor': c['proveedor'],
+                      'ultimo_ok': a.get('ultimo_ok'), 'falla_desde': a.get('falla_desde'),
+                      'error': a.get('error'),
+                      'como_renovar': conector.como_renovar(c) if a.get('falla_desde') else None})
+    return {'ultima_pasada': ultima, 'cuentas': lista}
+
+
+def mandar(mensajes, cuentas=None):
     """Los deja en la plataforma. Devuelve la respuesta del servidor."""
     try:
         from dotenv import load_dotenv
@@ -121,7 +136,7 @@ def mandar(mensajes):
                            'acepta lo que se le manda.')
     # `completo`: es todo lo que hay por atender, y lo que falte de la vez
     # anterior ya se atendió.
-    cuerpo = json.dumps({'mensajes': mensajes, 'completo': True},
+    cuerpo = json.dumps({'mensajes': mensajes, 'completo': True, 'cuentas': cuentas},
                         ensure_ascii=False).encode('utf-8')
     pet = urllib.request.Request(
         destino + '/correo/api/publicar', data=cuerpo, method='POST',

@@ -142,10 +142,15 @@ def _publicar(simular=False):
     if simular:
         print('No se ha subido nada.')
         return 0
-    r = publicar.mandar(mensajes)
+    cuentas = publicar.estado_cuentas()
+    r = publicar.mandar(mensajes, cuentas)
     if not r.get('success'):
         print(f"No se pudo publicar: {r.get('error')}", file=sys.stderr)
         return 2
+    for c in cuentas['cuentas']:
+        if c['falla_desde']:
+            print(f"NO ENTRA     : {c['cuenta']} desde {c['falla_desde'][:16]} — "
+                  f"{(c['error'] or '')[:100]}")
     print(f"Publicados   : {r.get('publicados', 0)}"
           + (f"  ·  {r['atendidos']} ya atendido(s), retirado(s)" if r.get('atendidos') else ''))
     crono = r.get('cronograma') or {}

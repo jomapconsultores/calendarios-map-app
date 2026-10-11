@@ -77,6 +77,20 @@ def _oauth_ms():
     return oauth_ms
 
 
+def como_renovar(cuenta):
+    """Qué hacer cuando la cuenta deja de entrar, dicho para quien lo va a hacer."""
+    carpeta = carpeta_del_conector()
+    if cuenta['proveedor'] == 'microsoft':
+        tipo = 'personal' if 'consumers' in (cuenta.get('authority') or '') else 'org'
+        return ('Vuelve a autorizarla: en ' + carpeta + ' ejecuta  '
+                f'.venv\\Scripts\\python.exe alta_microsoft.py {cuenta["direccion"]} '
+                f'{cuenta.get("alias") or ""} {tipo}  y sigue el código en '
+                'microsoft.com/devicelogin.')
+    return ('Crea una contraseña de aplicación nueva en '
+            'myaccount.google.com/apppasswords (con esa cuenta abierta) y dala de alta: '
+            'en ' + carpeta + ' ejecuta  .venv\\Scripts\\python.exe setup_cuenta.py')
+
+
 def tiene_credencial(cuenta):
     try:
         if cuenta['proveedor'] == 'microsoft':

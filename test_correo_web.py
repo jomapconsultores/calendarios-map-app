@@ -126,9 +126,10 @@ def mensaje(id_, plazo=None, quipux=None, estado=()):
             'n_adjuntos': 1, 'enlace': 'https://mail.google.com/x', 'vinculos': vinculos}
 
 
-def publicar(mensajes, secreto='secreto', completo=False):
+def publicar(mensajes, secreto='secreto', completo=False, cuentas=None):
     r = cliente.post('/correo/api/publicar',
-                     data=json.dumps({'mensajes': mensajes, 'completo': completo}),
+                     data=json.dumps({'mensajes': mensajes, 'completo': completo,
+                                      'cuentas': cuentas}),
                      headers={'Content-Type': 'application/json', 'X-Cron-Secret': secreto})
     return r.status_code, r.get_json()
 
@@ -205,6 +206,25 @@ check('una lista completa vacía también vale: no queda nada por atender',
       (codigo, r['atendidos'], len(app.supabase.get('correo_mensajes'))), (200, 1, 3))
 codigo, _ = publicar([])
 check('pero vacía y sin decir que es completa, no', codigo, 400)
+
+print('\nCuentas que no entran')
+datos = cliente.get('/correo/api/mensajes').get_json()
+check('sin estado publicado, ninguna alerta', (datos['cuentas']['fallan'], datos['cuentas']['sin_pasada']),
+      ([], None))
+hoy = date.today().isoformat()
+publicar([], completo=True, cuentas={'ultima_pasada': hoy + 'T08:00:00', 'cuentas': [
+    {'cuenta': 'a@gmail.com', 'falla_desde': None},
+    {'cuenta': 'b@csccue.gob.ec', 'falla_desde': '2026-10-12T08:00:00', 'error': 'no deja entrar',
+     'como_renovar': 'alta_microsoft.py'}]})
+datos = cliente.get('/correo/api/mensajes').get_json()
+check('la que no entra sale en la alerta, con cómo renovarla',
+      [(c['cuenta'], c['como_renovar']) for c in datos['cuentas']['fallan']],
+      [('b@csccue.gob.ec', 'alta_microsoft.py')])
+check('con pasada de hoy, no hay aviso de retraso', datos['cuentas']['sin_pasada'], None)
+hace = (date.today() - timedelta(days=4)).isoformat()
+publicar([], completo=True, cuentas={'ultima_pasada': hace + 'T08:00:00', 'cuentas': []})
+datos = cliente.get('/correo/api/mensajes').get_json()
+check('cuatro días sin pasada, se avisa', datos['cuentas']['sin_pasada'], 4)
 
 print()
 if fallos:

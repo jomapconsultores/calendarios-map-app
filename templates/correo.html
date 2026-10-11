@@ -46,6 +46,11 @@ table.cx{width:100%;border-collapse:collapse;background:#fff;border:1px solid va
 .cx-sep{width:1px;align-self:stretch;background:var(--border)}
 tr.nuevo .cx-titulo{color:#0f172a;font-weight:800}
 .cx-tag.dudoso{opacity:.6;border:1px dashed currentColor}
+.cx-alerta{background:#fef2f2;border:1px solid #fecaca;color:#991b1b;border-radius:10px;
+  padding:8px 14px;margin-bottom:8px;font-size:var(--fs-xs);line-height:1.5}
+.cx-alerta b{font-weight:700}
+.cx-alerta .cx-como{color:#7f1d1d;font-size:var(--fs-2xs);margin-top:2px;word-break:break-word}
+.cx-alerta.tarde{background:#fffbeb;border-color:#fde68a;color:#92400e}
 .cx-vacio{padding:44px 20px;text-align:center;color:#94a3b8;font-size:var(--fs-xs)}
 .cx-vacio strong{display:block;color:#475569;font-size:var(--fs-sm);font-weight:600;margin-bottom:4px}
 @media (max-width:760px){ .cx th:nth-child(3),.cx td:nth-child(3){display:none} }
@@ -53,6 +58,7 @@ tr.nuevo .cx-titulo{color:#0f172a;font-weight:800}
 {% endblock %}
 
 {% block content %}
+<div id="alertas"></div>
 <div class="cx-barra">
   <div class="cx-cifra aviso" data-tipo="pendiente"><b id="n-pendiente">—</b><span>por atender</span></div>
   <div class="cx-cifra" data-tipo="marcado"><b id="n-marcado">—</b><span>★ marcados</span></div>
@@ -110,12 +116,29 @@ function fechaCorta(iso){
   return isNaN(d) ? iso.slice(0,10) : d.toLocaleDateString('es-EC', {day:'2-digit', month:'2-digit', year:'numeric'});
 }
 
+// Lo que falta antes que lo que hay: una cuenta que no entra deja la lista
+// incompleta sin que se note, y eso es lo primero que hay que saber.
+function alertas(c){
+  const caja = document.getElementById('alertas');
+  if(!c){ caja.innerHTML = ''; return; }
+  const fallan = (c.fallan || []).map(f => `<div class="cx-alerta">
+      ⚠ <b>${esc(f.cuenta)}</b> no entra desde el ${esc(fechaCorta(f.falla_desde))}: su correo no se está leyendo.
+      <div class="cx-como">${esc((f.error || '').slice(0, 160))}</div>
+      ${f.como_renovar ? `<div class="cx-como">${esc(f.como_renovar)}</div>` : ''}
+    </div>`);
+  if(c.sin_pasada) fallan.unshift(`<div class="cx-alerta tarde">
+      ⏸ La última lectura del correo fue el <b>${esc(fechaCorta(c.ultima_pasada))}</b>, hace ${c.sin_pasada} días:
+      la computadora que lo lee no ha hecho la pasada desde entonces.</div>`);
+  caja.innerHTML = fallan.join('');
+}
+
 async function cargar(){
   document.querySelectorAll('.cx-cifra').forEach(c => c.classList.toggle('on', c.dataset.tipo === TIPO));
   const p = new URLSearchParams({tipo: TIPO, q: document.getElementById('fBusca').value.trim()});
   const r = await fetch('/correo/api/mensajes?'+p).then(x=>x.json()).catch(()=>null);
   const c = document.getElementById('cuerpo');
   if(!r || r.success === false){ c.innerHTML = VACIO('No se pudo cargar', ''); return; }
+  alertas(r.cuentas);
   for (const k of ['total','pendiente','marcado','sin_leer']) document.getElementById('n-'+k).textContent = r.cuenta[k];
   document.getElementById('n-plazo').textContent = r.cuenta.plazo;
   document.getElementById('n-quipux').textContent = r.cuenta.quipux;

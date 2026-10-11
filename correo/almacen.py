@@ -82,6 +82,16 @@ CREATE TABLE IF NOT EXISTS vinculos (
 );
 CREATE INDEX IF NOT EXISTS vinc_tipo ON vinculos (tipo, clave);
 
+-- Si cada cuenta entra. `falla_desde` es la primera pasada en que dejó de
+-- entrar, y no se mueve mientras siga sin entrar: lo que importa es desde
+-- cuándo falta ese buzón, no que hoy también falló.
+CREATE TABLE IF NOT EXISTS cuentas (
+  cuenta      TEXT PRIMARY KEY,
+  ultimo_ok   TEXT,
+  falla_desde TEXT,
+  error       TEXT
+);
+
 CREATE TABLE IF NOT EXISTS pasadas (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
   cuando      TEXT,
@@ -218,6 +228,31 @@ def guardar_vinculos(con, mensaje_id, vinculos, tipos=None):
         VALUES (?,?,?,?,?)
     """, [(mensaje_id, v['tipo'], v['clave'], v.get('detalle'),
            1 if v.get('seguro') else 0) for v in vinculos])
+
+
+def apuntar_cuenta(con, cuenta, error=None):
+    """Si la cuenta entró en esta pasada (`error` vacío) o no, y por qué."""
+    ahora = datetime.now().isoformat(timespec='seconds')
+    if not error:
+        con.execute("""
+            INSERT INTO cuentas (cuenta, ultimo_ok, falla_desde, error) VALUES (?,?,NULL,NULL)
+            ON CONFLICT(cuenta) DO UPDATE SET
+              ultimo_ok=excluded.ultimo_ok, falla_desde=NULL, error=NULL
+        """, (cuenta, ahora))
+    else:
+        con.execute("""
+            INSERT INTO cuentas (cuenta, ultimo_ok, falla_desde, error) VALUES (?,NULL,?,?)
+            ON CONFLICT(cuenta) DO UPDATE SET
+              falla_desde=COALESCE(cuentas.falla_desde, excluded.falla_desde),
+              error=excluded.error
+        """, (cuenta, ahora, str(error)[:300]))
+
+
+def estado_cuentas(ruta=None):
+    with abrir(ruta) as con:
+        cuentas = {r['cuenta']: dict(r) for r in con.execute('SELECT * FROM cuentas')}
+        ultima = con.execute('SELECT cuando FROM pasadas ORDER BY id DESC LIMIT 1').fetchone()
+    return cuentas, (ultima[0] if ultima else None)
 
 
 def apuntar_pasada(con, resumen):

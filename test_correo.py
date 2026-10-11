@@ -262,6 +262,24 @@ check('lo desmarcado ya no sube; lo sin leer, con su estado',
       [(f['asunto'], sorted((v['tipo'], v['clave']) for v in f['vinculos'])) for f in filas],
       [('Revisar contrato', [('contestado', ''), ('sin_leer', 'b@gmail.com')])])
 
+print('\nSi cada cuenta entra')
+with almacen.abrir(BD2) as db:
+    almacen.apuntar_cuenta(db, 'a@x', 'no deja entrar (AUTHENTICATIONFAILED)')
+    primera = db.execute("SELECT falla_desde FROM cuentas WHERE cuenta='a@x'").fetchone()[0]
+    db.execute("UPDATE cuentas SET falla_desde='2026-10-01T08:00:00' WHERE cuenta='a@x'")
+    almacen.apuntar_cuenta(db, 'a@x', 'otra vez')
+    almacen.apuntar_cuenta(db, 'b@x')
+cuentas, _ = almacen.estado_cuentas(BD2)
+check('la falla guarda desde cuándo, y no se mueve si sigue fallando',
+      (bool(primera), cuentas['a@x']['falla_desde'], cuentas['a@x']['error']),
+      (True, '2026-10-01T08:00:00', 'otra vez'))
+check('la que entra no tiene falla', (cuentas['b@x']['falla_desde'], bool(cuentas['b@x']['ultimo_ok'])),
+      (None, True))
+with almacen.abrir(BD2) as db:
+    almacen.apuntar_cuenta(db, 'a@x')
+check('al volver a entrar se borra la falla', almacen.estado_cuentas(BD2)[0]['a@x']['falla_desde'],
+      None)
+
 print()
 if fallos:
     print(f'{len(fallos)} FALLA(N)')

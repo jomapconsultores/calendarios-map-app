@@ -42,7 +42,10 @@ def ejecutar(cuenta=None, dias=lectura.DIAS_PRIMERA_VEZ, ruta=None, registro=pri
             except conector.ErrorCorreo as e:
                 resumen['fallos'].append(str(e))
                 cuenta_res['error'] = str(e)
+                almacen.apuntar_cuenta(db, direccion, str(e))
+                db.commit()
                 continue
+            almacen.apuntar_cuenta(db, direccion)
             try:
                 for carpeta in conector.carpetas_a_leer(con, c):
                     cuenta_res['carpetas'].append(carpeta.strip('"'))

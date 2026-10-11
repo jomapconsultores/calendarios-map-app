@@ -28,6 +28,12 @@ from flask import flash, jsonify, redirect, render_template, request
 from flask_login import current_user, login_required
 
 TABLA = 'correo_mensajes'
+# Si cada cuenta entra, tal como lo vio la última pasada. En `app_config`, como
+# el estado de Google: es una sola fila que se sobrescribe, y no merece tabla.
+CLAVE_CUENTAS = 'correo_cuentas'
+# Sin pasada en más de esto, la pantalla avisa: la computadora que lee el
+# correo lleva días apagada, o la tarea dejó de correr.
+DIAS_SIN_PASADA = 2
 
 
 def _es_el_dueno():
@@ -90,6 +96,47 @@ def _todo(app):
         except Exception as e:
             print(f'[correo] no se pudo leer de la plataforma: {str(e)[:120]}')
     return mensajes, origen
+
+
+def _guardar_cuentas(app, estado):
+    valor = json.dumps(estado, ensure_ascii=False)
+    try:
+        if app.supabase.get('app_config', {'key': CLAVE_CUENTAS}, select='key'):
+            app.supabase.update('app_config', CLAVE_CUENTAS, {'value': valor}, id_col='key')
+        else:
+            app.supabase.insert('app_config', {'key': CLAVE_CUENTAS, 'value': valor})
+    except Exception as e:
+        print(f'[correo] no se pudo guardar el estado de las cuentas: {str(e)[:120]}')
+
+
+def _cuentas(app, origen):
+    """{'ultima_pasada', 'cuentas': [...], 'sin_pasada': días o None}. Las
+    que no entran y si hace días que no hay pasada: lo que tiene que saltar a
+    la vista antes que la lista."""
+    estado = {}
+    if origen == 'esta computadora':
+        try:
+            from correo import publicar
+            estado = publicar.estado_cuentas()
+        except Exception as e:
+            print(f'[correo] no se pudo leer el estado de las cuentas: {str(e)[:120]}')
+    elif _hay_base(app):
+        try:
+            filas = app.supabase.get('app_config', {'key': CLAVE_CUENTAS}, select='value')
+            if filas and filas[0].get('value'):
+                estado = json.loads(filas[0]['value'])
+        except Exception:
+            pass
+    ultima = estado.get('ultima_pasada')
+    dias = None
+    if ultima:
+        try:
+            dias = (date.today() - date.fromisoformat(ultima[:10])).days
+        except ValueError:
+            pass
+    return {'ultima_pasada': ultima,
+            'fallan': [c for c in estado.get('cuentas') or [] if c.get('falla_desde')],
+            'sin_pasada': dias if dias is not None and dias > DIAS_SIN_PASADA else None}
 
 
 def _filtrar(mensajes, tipo='', busca=''):
@@ -184,6 +231,7 @@ def registrar_correo(app, ctx):
                          (request.args.get('q') or '').strip())
         fechas = [m.get('actualizado') or m.get('fecha') for m in mensajes]
         return jsonify({'mensajes': lista[:400], 'cuenta': _contar(mensajes),
+                        'cuentas': _cuentas(app, origen),
                         'origen': origen, 'hoy': date.today().isoformat(),
                         'ultima': max((f for f in fechas if f), default=None)})
 
@@ -235,6 +283,8 @@ def registrar_correo(app, ctx):
             subidos += len(lote)
 
         atendidos = _retirar_atendidos(app, {f['id'] for f in filas}) if completo else 0
+        if isinstance(cuerpo.get('cuentas'), dict):
+            _guardar_cuentas(app, cuerpo['cuentas'])
 
         from correo import cronograma
         try:
