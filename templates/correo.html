@@ -121,7 +121,9 @@ async function cargar(){
   document.getElementById('n-quipux').textContent = r.cuenta.quipux;
   document.getElementById('n-cita').textContent = r.cuenta.cita;
   document.getElementById('fuente').textContent =
-    (r.ultima ? 'al ' + fechaCorta(r.ultima) + ' · ' : '') + 'desde ' + r.origen;
+    (r.ultima ? 'al ' + fechaCorta(r.ultima) + ' ' +
+      new Date(r.ultima).toLocaleTimeString('es-EC', {hour:'2-digit', minute:'2-digit'}) + ' · ' : '') +
+    'desde ' + r.origen;
   if(!r.cuenta.total){
     c.innerHTML = VACIO('Aún no ha llegado nada',
       ' El correo se lee en la computadora con «py -m correo» y se publica con «py -m correo publicar».');
@@ -143,5 +145,9 @@ document.querySelectorAll('.cx-cifra').forEach(c => c.addEventListener('click', 
 let espera;
 document.getElementById('fBusca').addEventListener('input', () => { clearTimeout(espera); espera = setTimeout(cargar, 250); });
 cargar();
+// La computadora publica cada 15 minutos: la pantalla abierta se pone al día
+// sola cada 2, y al volver a ella desde otra pestaña o del bloqueo del teléfono.
+setInterval(() => { if (!document.hidden) cargar(); }, 120000);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) cargar(); });
 </script>
 {% endblock %}

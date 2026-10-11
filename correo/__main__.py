@@ -17,7 +17,7 @@
     python -m correo publicar [--simular]   sube lo relacionado y lo pendiente a
                                         la plataforma; los plazos pasan al cronograma
     python -m correo diario             todo junto: traer, relacionar, publicar, página
-    python -m correo instalar           deja la pasada diaria programada (08:00)
+    python -m correo instalar           deja la pasada programada (cada 15 minutos)
     python -m correo desinstalar        la quita
 
 `relacionar` es para después de recoger quipux nuevos: un correo que citaba un
@@ -159,8 +159,8 @@ def _publicar(simular=False):
 
 
 def _diario():
-    """Lo que hace la tarea de cada mañana. Si publicar falla —sin internet, el
-    servidor caído—, lo leído se queda guardado y se publica al día siguiente."""
+    """Lo que hace la tarea programada. Si publicar falla —sin internet, el
+    servidor caído—, lo leído se queda guardado y se publica en la siguiente."""
     from . import informe, pasada
     _pasada()
     r = pasada.relacionar_de_nuevo()
